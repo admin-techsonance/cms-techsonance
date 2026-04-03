@@ -1,0 +1,1 @@
+ALTER TABLE `projects` ADD `is_active` integer DEFAULT true;
