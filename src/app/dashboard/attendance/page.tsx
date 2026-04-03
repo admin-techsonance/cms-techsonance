@@ -17,7 +17,23 @@ import {
   ChevronRight,
   Filter,
   RefreshCw,
+  MoreHorizontal,
+  Edit,
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { StatsSkeleton, InlineTableSkeleton } from '@/components/ui/dashboard-skeleton';
 import {
   Table,
@@ -50,6 +66,7 @@ interface AttendanceRecord {
   location: string | null;
   tagUid: string | null;
   createdAt: string;
+  _source?: string;
   employee: {
     id: number;
     firstName: string;
@@ -83,6 +100,16 @@ export default function AttendancePage() {
   const [loading, setLoading] = useState(true);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [search, setSearch] = useState('');
+  
+  // Edit Modal State
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<AttendanceRecord | null>(null);
+  const [editForm, setEditForm] = useState({
+    timeIn: '',
+    timeOut: '',
+    status: '',
+  });
+  const [isSaving, setIsSaving] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [methodFilter, setMethodFilter] = useState<string>('all');
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -167,6 +194,52 @@ export default function AttendancePage() {
     await Promise.all([fetchTodaySummary(), fetchRecords()]);
     setRefreshing(false);
     toast.success('Attendance data refreshed');
+  };
+
+  const openEditDialog = (record: AttendanceRecord) => {
+    setEditingRecord(record);
+    setEditForm({
+      timeIn: record.timeIn || '',
+      timeOut: record.timeOut || '',
+      status: record.status || 'present',
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  const handleEditSave = async () => {
+    if (!editingRecord) return;
+    setIsSaving(true);
+    try {
+      const token = localStorage.getItem('session_token');
+      const response = await fetch(`/api/attendance/${editingRecord.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          timeIn: editForm.timeIn,
+          timeOut: editForm.timeOut,
+          status: editForm.status,
+          _source: editingRecord._source || editingRecord.checkInMethod === 'legacy' ? 'legacy' : 'nfc',
+          date: editingRecord.date,
+        }),
+      });
+
+      if (response.ok) {
+        toast.success('Attendance record updated');
+        setIsEditDialogOpen(false);
+        fetchRecords(); // refresh the list
+      } else {
+        const error = await response.json();
+        toast.error(error.error || 'Failed to update record');
+      }
+    } catch (error) {
+      console.error('Save error', error);
+      toast.error('An unexpected error occurred');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const isAdmin = currentUser && hasFullAccess(currentUser.role as UserRole);
@@ -384,6 +457,7 @@ export default function AttendancePage() {
                     <TableHead>Duration</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Method</TableHead>
+                    {isAdmin && <TableHead className="text-right">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -417,6 +491,24 @@ export default function AttendancePage() {
                       <TableCell className="text-sm">{formatDuration(record.duration)}</TableCell>
                       <TableCell>{getStatusBadge(record.status)}</TableCell>
                       <TableCell>{getMethodBadge(record.checkInMethod)}</TableCell>
+                      {isAdmin && (
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" className="h-8 w-8 p-0">
+                                <span className="sr-only">Open menu</span>
+                                <MoreHorizontal className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => openEditDialog(record)}>
+                                <Edit className="mr-2 h-4 w-4" />
+                                Edit Record
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -452,6 +544,71 @@ export default function AttendancePage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Edit Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Edit Attendance</DialogTitle>
+            <DialogDescription>
+              Make changes to {editingRecord?.employee?.firstName}'s attendance for{' '}
+              {editingRecord?.date ? new Date(editingRecord.date).toLocaleDateString('en-IN', {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric'
+              }) : ''}. Duration runs concurrently in the background based on updated times.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <label htmlFor="timeIn" className="text-sm font-medium">Check In Time (HH:mm)</label>
+              <Input
+                id="timeIn"
+                type="time"
+                step="60"
+                value={editForm.timeIn?.substring(0, 5) || ''}
+                onChange={(e) => setEditForm(prev => ({ ...prev, timeIn: e.target.value + ':00' }))}
+              />
+            </div>
+            <div className="grid gap-2">
+              <label htmlFor="timeOut" className="text-sm font-medium">Check Out Time (HH:mm)</label>
+              <Input
+                id="timeOut"
+                type="time"
+                step="60"
+                value={editForm.timeOut?.substring(0, 5) || ''}
+                onChange={(e) => setEditForm(prev => ({ ...prev, timeOut: e.target.value ? e.target.value + ':00' : '' }))}
+              />
+            </div>
+            <div className="grid gap-2">
+              <label htmlFor="status" className="text-sm font-medium">Status</label>
+              <Select
+                value={editForm.status}
+                onValueChange={(val) => setEditForm(prev => ({ ...prev, status: val }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="present">Present</SelectItem>
+                  <SelectItem value="late">Late</SelectItem>
+                  <SelectItem value="absent">Absent</SelectItem>
+                  <SelectItem value="half_day">Half Day</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditDialogOpen(false)} disabled={isSaving}>
+              Cancel
+            </Button>
+            <Button onClick={handleEditSave} disabled={isSaving}>
+              {isSaving ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Save changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
