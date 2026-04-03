@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Users, FolderKanban, DollarSign, UserCog, Loader2, ClipboardList, Calendar, AlertCircle } from 'lucide-react';
 import { isDeveloperRole, hasFullAccess, type UserRole } from '@/lib/permissions';
+import { ContentSkeleton } from '@/components/ui/dashboard-skeleton';
 
 interface DashboardStats {
   activeClients: number;
@@ -215,11 +216,7 @@ export default function DashboardPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <ContentSkeleton />;
   }
 
   // Developer Dashboard

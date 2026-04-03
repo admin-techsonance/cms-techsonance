@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Search, Loader2, Mail, Phone, Building2, Eye } from 'lucide-react';
+import { Plus, Search, Mail, Phone, Building2, Eye } from 'lucide-react';
+import { InlineTableSkeleton } from '@/components/ui/dashboard-skeleton';
 import { ClientFormDialog } from '@/components/clients/client-form-dialog';
 import Link from 'next/link';
 import {
@@ -96,9 +97,7 @@ export default function ClientsPage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex justify-center items-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <InlineTableSkeleton rows={5} columns={7} />
           ) : filteredClients.length === 0 ? (
             <div className="text-center py-8">
               <Building2 className="mx-auto h-12 w-12 text-muted-foreground" />

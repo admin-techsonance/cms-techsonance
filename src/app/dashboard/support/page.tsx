@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Loader2, MessageSquare, AlertCircle, CheckCircle2, Clock, Eye } from 'lucide-react';
+import { Plus, MessageSquare, AlertCircle, CheckCircle2, Clock, Eye } from 'lucide-react';
+import { InlineTableSkeleton } from '@/components/ui/dashboard-skeleton';
 import {
   Table,
   TableBody,
@@ -127,9 +128,7 @@ export default function SupportPage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <InlineTableSkeleton rows={5} columns={6} />
           ) : tickets.length === 0 ? (
             <div className="text-center py-8">
               <MessageSquare className="mx-auto h-12 w-12 text-muted-foreground" />

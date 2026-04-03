@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Plus, Upload, Download, Check, X, FileText, Filter, Calendar, DollarSign, Receipt } from 'lucide-react';
+import { ContentSkeleton } from '@/components/ui/dashboard-skeleton';
 import { toast } from 'sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -418,11 +419,7 @@ export default function ReimbursementsPage() {
     };
 
     if (loading) {
-        return (
-            <div className="flex items-center justify-center h-64">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-        );
+        return <ContentSkeleton />;
     }
 
     const isAdmin = currentUser && hasFullAccess(currentUser.role);

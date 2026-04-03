@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, Trash2, Loader2, Calendar, Clock, Edit, Eye, Users } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -68,6 +69,8 @@ interface DailyReportProject {
   isExtraWork: boolean;
   dailyReportId: number;
   createdAt: string;
+  firstName?: string;
+  lastName?: string;
 }
 
 interface Employee {
@@ -556,6 +559,8 @@ export default function DailyUpdatePage() {
   useEffect(() => {
     if (currentUser) {
       fetchMyHistory();
+      fetchExtraWork();
+      fetchCoveredWork();
     }
   }, [currentUser, historyMonth, historyFilterType, historyStartDate, historyEndDate]);
 
@@ -707,8 +712,16 @@ export default function DailyUpdatePage() {
                   <TableBody>
                     {loading ? (
                       <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8">
-                          <Loader2 className="h-6 w-6 animate-spin mx-auto" />
+                        <TableCell colSpan={5} className="py-4">
+                          <div className="space-y-3">
+                            {Array.from({ length: 5 }).map((_, i) => (
+                              <div key={i} className="flex items-center gap-4">
+                                {Array.from({ length: 5 }).map((_, j) => (
+                                  <Skeleton key={j} className="h-5 w-full" />
+                                ))}
+                              </div>
+                            ))}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ) : allDailyReports.length === 0 ? (
@@ -973,6 +986,7 @@ export default function DailyUpdatePage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    {isAdmin && <TableHead>Employee</TableHead>}
                     <TableHead>Project</TableHead>
                     <TableHead>Description</TableHead>
                     <TableHead>Time (hrs)</TableHead>
@@ -982,13 +996,18 @@ export default function DailyUpdatePage() {
                 <TableBody>
                   {extraWorkReports.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={4} className="text-center text-muted-foreground">
+                      <TableCell colSpan={isAdmin ? 5 : 4} className="text-center text-muted-foreground">
                         No extra work found. Apply filters to search.
                       </TableCell>
                     </TableRow>
                   ) : (
                     extraWorkReports.map((report) => (
                       <TableRow key={report.id}>
+                        {isAdmin && (
+                          <TableCell className="font-medium text-primary">
+                            {report.firstName} {report.lastName}
+                          </TableCell>
+                        )}
                         <TableCell className="font-medium">
                           {getProjectName(report.projectId)}
                         </TableCell>
@@ -1055,6 +1074,7 @@ export default function DailyUpdatePage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    {isAdmin && <TableHead>Employee</TableHead>}
                     <TableHead>Project</TableHead>
                     <TableHead>Description</TableHead>
                     <TableHead>Time (hrs)</TableHead>
@@ -1064,13 +1084,18 @@ export default function DailyUpdatePage() {
                 <TableBody>
                   {coveredWorkReports.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={4} className="text-center text-muted-foreground">
+                      <TableCell colSpan={isAdmin ? 5 : 4} className="text-center text-muted-foreground">
                         No covered work found. Apply filters to search.
                       </TableCell>
                     </TableRow>
                   ) : (
                     coveredWorkReports.map((report) => (
                       <TableRow key={report.id}>
+                        {isAdmin && (
+                          <TableCell className="font-medium text-primary">
+                            {report.firstName} {report.lastName}
+                          </TableCell>
+                        )}
                         <TableCell className="font-medium">
                           {getProjectName(report.projectId)}
                         </TableCell>

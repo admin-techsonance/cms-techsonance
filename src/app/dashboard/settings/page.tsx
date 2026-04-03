@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2, Save, Building2, Palette, Users, Plug, Plus, Key } from 'lucide-react';
+import { DetailedPageSkeleton } from '@/components/ui/dashboard-skeleton';
 import { toast } from 'sonner';
 
 interface CompanySettings {
@@ -196,11 +197,7 @@ export default function SettingsPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <DetailedPageSkeleton />;
   }
 
   return (

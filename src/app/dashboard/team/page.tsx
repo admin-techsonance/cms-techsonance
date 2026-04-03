@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Search, Loader2, UserCog, Eye, Edit, Trash2 } from 'lucide-react';
+import { Plus, Search, UserCog, Eye, Edit, Trash2 } from 'lucide-react';
+import { InlineTableSkeleton } from '@/components/ui/dashboard-skeleton';
 import Link from 'next/link';
 import { hasFullAccess, type UserRole } from '@/lib/permissions';
 import { AddEmployeeDialog } from '@/components/team/add-employee-dialog';
@@ -247,9 +248,7 @@ export default function TeamPage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex justify-center items-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
+            <InlineTableSkeleton rows={6} columns={7} />
           ) : filteredEmployees.length === 0 ? (
             <div className="text-center py-8">
               <UserCog className="mx-auto h-12 w-12 text-muted-foreground" />

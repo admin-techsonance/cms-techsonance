@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Plus, Loader2, DollarSign, TrendingUp, CreditCard, Eye, Download, Send, FileText, Users, ShoppingCart, Receipt, CheckCircle, Clock, AlertCircle, Trash2, Pencil, Printer } from 'lucide-react';
+import { InlineTableSkeleton } from '@/components/ui/dashboard-skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
@@ -1252,9 +1253,7 @@ export default function FinancePage() {
               </CardHeader>
               <CardContent>
                 {loading ? (
-                  <div className="flex justify-center py-8">
-                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                  </div>
+                  <InlineTableSkeleton rows={4} columns={5} />
                 ) : expenses.length === 0 ? (
                   <div className="text-center py-8">
                     <Receipt className="mx-auto h-12 w-12 text-muted-foreground" />
@@ -1424,9 +1423,7 @@ export default function FinancePage() {
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="flex justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                </div>
+                <InlineTableSkeleton rows={5} columns={7} />
               ) : invoices.length === 0 ? (
                 <div className="text-center py-8">
                   <FileText className="mx-auto h-12 w-12 text-muted-foreground" />

@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Loader2, FileText, Image, Newspaper, Eye } from 'lucide-react';
+import { Plus, FileText, Image, Newspaper, Eye } from 'lucide-react';
+import { InlineTableSkeleton } from '@/components/ui/dashboard-skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
@@ -162,9 +163,7 @@ export default function ContentPage() {
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="flex justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                </div>
+                <InlineTableSkeleton rows={4} columns={6} />
               ) : blogs.length === 0 ? (
                 <div className="text-center py-8">
                   <Newspaper className="mx-auto h-12 w-12 text-muted-foreground" />
@@ -226,9 +225,7 @@ export default function ContentPage() {
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="flex justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                </div>
+                <InlineTableSkeleton rows={4} columns={5} />
               ) : pages.length === 0 ? (
                 <div className="text-center py-8">
                   <FileText className="mx-auto h-12 w-12 text-muted-foreground" />
@@ -286,9 +283,7 @@ export default function ContentPage() {
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="flex justify-center py-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                </div>
+                <InlineTableSkeleton rows={3} columns={4} />
               ) : portfolio.length === 0 ? (
                 <div className="text-center py-8">
                   <Image className="mx-auto h-12 w-12 text-muted-foreground" />

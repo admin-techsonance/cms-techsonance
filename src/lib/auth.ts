@@ -50,16 +50,19 @@ export async function getCurrentUser(request: NextRequest): Promise<User | null>
         role: users.role,
         avatarUrl: users.avatarUrl,
         phone: users.phone,
+        isActive: users.isActive,
       })
       .from(users)
       .where(eq(users.id, session[0].userId))
       .limit(1);
 
-    if (user.length === 0) {
+    if (user.length === 0 || !user[0].isActive) {
       return null;
     }
 
-    return user[0] as User;
+    // Omit isActive from the returned User type to match the interface
+    const { isActive, ...returnUser } = user[0];
+    return returnUser as User;
   } catch (error) {
     console.error('getCurrentUser error:', error);
     return null;

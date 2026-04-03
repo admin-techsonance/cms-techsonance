@@ -6,7 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Edit, Loader2, Calendar, DollarSign, Users } from 'lucide-react';
+import { ArrowLeft, Edit, Calendar, DollarSign, Users } from 'lucide-react';
+import { DetailedPageSkeleton } from '@/components/ui/dashboard-skeleton';
 import { ProjectFormDialog } from '@/components/projects/project-form-dialog';
 import { ProjectTasksBoard } from '@/components/projects/project-tasks-board';
 import { ProjectMilestones } from '@/components/projects/project-milestones';
@@ -98,11 +99,7 @@ export default function ProjectDetailPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <DetailedPageSkeleton />;
   }
 
   if (!project) {

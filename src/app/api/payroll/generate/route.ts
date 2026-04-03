@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { payroll, employees, attendance, users, sessions } from '@/db/schema';
+import { payroll, employees, attendance, attendanceRecords, users, sessions } from '@/db/schema';
 import { eq, and, gte, lte, inArray } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
 import { hasFullAccess, type UserRole } from '@/lib/permissions';
@@ -78,8 +78,8 @@ export async function POST(request: NextRequest) {
 
         // Process each employee
         for (const employee of employeesToProcess) {
-            // Fetch attendance records for this employee in the date range
-            const attendanceRecords = await db.select().from(attendance).where(
+            // 1. Fetch legacy attendance records
+            const legacyRecords = await db.select().from(attendance).where(
                 and(
                     eq(attendance.employeeId, employee.id),
                     gte(attendance.date, dateStart),
@@ -87,15 +87,37 @@ export async function POST(request: NextRequest) {
                 )
             );
 
+            // 2. Fetch new NFC/manual attendance records
+            // We import attendanceRecords for this inside the DB schema
+            const nfcRecords = await db.select().from(attendanceRecords).where(
+                and(
+                    eq(attendanceRecords.employeeId, employee.id),
+                    gte(attendanceRecords.date, dateStart),
+                    lte(attendanceRecords.date, dateEnd)
+                )
+            );
+
+            // Deduplicate: if an NFC record exists for a date, prefer it over legacy
+            const mergedRecordsMap = new Map();
+            for (const rec of legacyRecords) {
+                mergedRecordsMap.set(rec.date, rec);
+            }
+            for (const rec of nfcRecords) {
+                mergedRecordsMap.set(rec.date, rec);
+            }
+
+            const allAttendanceForEmployee = Array.from(mergedRecordsMap.values());
+
             // Calculate attendance metrics
             let presentDays = 0;
             let halfDays = 0;
             let leaveDays = 0;
             let absentDays = 0;
 
-            for (const record of attendanceRecords) {
+            for (const record of allAttendanceForEmployee) {
                 switch (record.status) {
                     case 'present':
+                    case 'late': // Counting late as present for baseline salary
                         presentDays++;
                         break;
                     case 'half_day':

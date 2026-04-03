@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Calendar, Target, Loader2, TrendingUp } from 'lucide-react';
+import { Plus, Calendar, Target, TrendingUp } from 'lucide-react';
+import { StatsSkeleton, KanbanSkeleton } from '@/components/ui/dashboard-skeleton';
+import { Skeleton } from '@/components/ui/skeleton';
 import { KanbanBoard } from '@/components/tasks/kanban-board';
 import { SprintPlanningDialog } from '@/components/tasks/sprint-planning-dialog';
 import { TaskDialog } from '@/components/tasks/task-dialog';
@@ -227,8 +229,13 @@ export default function TasksPage() {
 
   if (loading) {
     return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-1/4" />
+          <Skeleton className="h-4 w-1/3" />
+        </div>
+        <StatsSkeleton />
+        <KanbanSkeleton />
       </div>
     );
   }

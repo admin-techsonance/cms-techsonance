@@ -8,6 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Search, Star, StarOff, Loader2, MessageSquare, Plus, Trash2 } from 'lucide-react';
+import { ContentSkeleton } from '@/components/ui/dashboard-skeleton';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -406,11 +408,7 @@ export default function InquiryPage() {
   };
 
   if (loading && !currentUser) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <ContentSkeleton />;
   }
 
   const canCreate = currentUser && hasPermission(currentUser.role, 'inquiry', 'canCreate');
@@ -687,8 +685,16 @@ export default function InquiryPage() {
                 <TableBody>
                   {loading ? (
                     <TableRow>
-                      <TableCell colSpan={canEdit || canDelete ? 9 : 8} className="text-center py-8">
-                        <Loader2 className="h-6 w-6 animate-spin mx-auto" />
+                      <TableCell colSpan={canEdit || canDelete ? 9 : 8} className="py-4">
+                        <div className="space-y-3">
+                          {Array.from({ length: 5 }).map((_, i) => (
+                            <div key={i} className="flex items-center gap-4">
+                              {Array.from({ length: 6 }).map((_, j) => (
+                                <Skeleton key={j} className="h-5 w-full" />
+                              ))}
+                            </div>
+                          ))}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ) : inquiries.length === 0 ? (

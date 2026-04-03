@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Search, Loader2, LayoutList, LayoutGrid, Eye, Edit, Trash2, Download, Filter, X } from 'lucide-react';
+import { Plus, Search, LayoutList, LayoutGrid, Eye, Edit, Trash2, Download, Filter, X } from 'lucide-react';
+import { KanbanSkeleton, TableSkeleton } from '@/components/ui/dashboard-skeleton';
 import { ProjectFormDialog } from '@/components/projects/project-form-dialog';
 import { ProjectKanban } from '@/components/projects/project-kanban';
 import { isDeveloperRole, hasFullAccess, type UserRole } from '@/lib/permissions';
@@ -457,9 +458,7 @@ export default function ProjectsPage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center items-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
+        view === 'kanban' ? <KanbanSkeleton /> : <TableSkeleton columns={7} rows={6} />
       ) : (
         <>
           {view === 'kanban' ? (
