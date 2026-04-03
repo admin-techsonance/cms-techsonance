@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Plus, Loader2, MessageSquare, X, AlertCircle, CheckCircle2, Clock, Eye, Edit, Trash2, Users } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -644,8 +645,16 @@ export default function HelpDeskPage() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin mx-auto" />
+                  <TableCell colSpan={7} className="py-4">
+                    <div className="space-y-3">
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <div key={i} className="flex items-center gap-4">
+                          {Array.from({ length: 7 }).map((_, j) => (
+                            <Skeleton key={j} className="h-5 w-full" />
+                          ))}
+                        </div>
+                      ))}
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : ticketsData.length === 0 ? (

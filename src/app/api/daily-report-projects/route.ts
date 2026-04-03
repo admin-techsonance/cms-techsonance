@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { dailyReportProjects, dailyReports, projects } from '@/db/schema';
+import { dailyReportProjects, dailyReports, projects, users } from '@/db/schema';
 import { eq, and, gte, lte, desc } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
 import { safeErrorMessage } from '@/lib/constants';
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
 
 export async function GET(request: NextRequest) {
   try {
@@ -59,7 +60,10 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
 
-    let conditions = [eq(dailyReports.userId, user.id)];
+    let conditions = [];
+    if (!hasFullAccess(user.role as UserRole)) {
+      conditions.push(eq(dailyReports.userId, user.id));
+    }
 
     if (dailyReportId) {
       conditions.push(eq(dailyReportProjects.dailyReportId, parseInt(dailyReportId)));
@@ -96,9 +100,12 @@ export async function GET(request: NextRequest) {
       isCoveredWork: dailyReportProjects.isCoveredWork,
       isExtraWork: dailyReportProjects.isExtraWork,
       createdAt: dailyReportProjects.createdAt,
+      firstName: users.firstName,
+      lastName: users.lastName,
     })
       .from(dailyReportProjects)
       .innerJoin(dailyReports, eq(dailyReportProjects.dailyReportId, dailyReports.id))
+      .innerJoin(users, eq(dailyReports.userId, users.id))
       .where(and(...conditions))
       .orderBy(desc(dailyReportProjects.createdAt))
       .limit(limit)

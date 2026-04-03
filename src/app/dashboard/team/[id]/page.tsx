@@ -6,7 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Edit, Loader2, Calendar, Award, Trash2, Plus, Briefcase, X } from 'lucide-react';
+import { ArrowLeft, Edit, Calendar, Award, Trash2, Plus, Briefcase, X } from 'lucide-react';
+import { DetailedPageSkeleton } from '@/components/ui/dashboard-skeleton';
 import { EditEmployeeDialog } from '@/components/team/edit-employee-dialog';
 import { AssignProjectsDialog } from '@/components/team/assign-projects-dialog';
 import { hasFullAccess, type UserRole } from '@/lib/permissions';
@@ -225,11 +226,7 @@ export default function EmployeeDetailPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <DetailedPageSkeleton />;
   }
 
   if (!employee || !user) {

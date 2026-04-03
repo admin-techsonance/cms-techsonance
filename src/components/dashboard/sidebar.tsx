@@ -20,6 +20,8 @@ import {
   HelpCircle,
   Wallet,
   Receipt,
+  Fingerprint,
+  Wifi,
 } from 'lucide-react';
 import { User } from '@/lib/auth';
 
@@ -44,6 +46,8 @@ const navigation = [
   { name: 'Help Desk', href: '/dashboard/help-desk', icon: HelpCircle, roles: ['admin', 'project_manager', 'developer'] },
   { name: 'Inquiry', href: '/dashboard/inquiry', icon: Search, roles: ['admin', 'project_manager', 'business_development', 'developer'] },
   { name: 'Reimbursements', href: '/dashboard/reimbursements', icon: Receipt, roles: ['admin', 'hr_manager', 'cms_administrator', 'project_manager', 'business_development', 'developer', 'qa_engineer', 'devops_engineer', 'ui_ux_designer', 'digital_marketing', 'business_analyst'] },
+  { name: 'Attendance', href: '/dashboard/attendance', icon: Fingerprint, roles: ['admin', 'hr_manager', 'cms_administrator', 'project_manager', 'business_development', 'developer', 'qa_engineer', 'devops_engineer', 'ui_ux_designer', 'digital_marketing', 'business_analyst'] },
+  { name: 'NFC Readers', href: '/dashboard/attendance/readers', icon: Wifi, roles: ['admin', 'cms_administrator', 'hr_manager'] },
 ];
 
 export function DashboardSidebar({ user }: DashboardSidebarProps) {

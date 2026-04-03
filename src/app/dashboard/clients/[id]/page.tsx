@@ -6,7 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Mail, Phone, Building2, MapPin, Edit, Loader2, FolderKanban, MessageSquare } from 'lucide-react';
+import { ArrowLeft, Mail, Phone, Building2, MapPin, Edit, FolderKanban, MessageSquare } from 'lucide-react';
+import { DetailedPageSkeleton } from '@/components/ui/dashboard-skeleton';
 import { ClientFormDialog } from '@/components/clients/client-form-dialog';
 import { ClientCommunicationPanel } from '@/components/clients/client-communication-panel';
 import Link from 'next/link';
@@ -95,11 +96,7 @@ export default function ClientDetailPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <DetailedPageSkeleton />;
   }
 
   if (!client) {

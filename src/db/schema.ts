@@ -1,4 +1,4 @@
-import { sqliteTable, integer, text } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, integer, text, real } from 'drizzle-orm/sqlite-core';
 
 // Authentication & Users
 export const users = sqliteTable('users', {
@@ -149,6 +149,7 @@ export const employees = sqliteTable('employees', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   userId: integer('user_id').references(() => users.id).notNull(),
   employeeId: text('employee_id').notNull().unique(),
+  nfcCardId: text('nfc_card_id').unique(),
   department: text('department').notNull(),
   designation: text('designation').notNull(),
   dateOfJoining: text('date_of_joining').notNull(),
@@ -521,6 +522,54 @@ export const reimbursements = sqliteTable('reimbursements', {
   reviewedBy: integer('reviewed_by').references(() => users.id),
   reviewedAt: text('reviewed_at'),
   adminComments: text('admin_comments'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+// NFC & IOT Devices Schema Integration
+
+export const nfcTags = sqliteTable('nfc_tags', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  tagUid: text('tag_uid').notNull().unique(),
+  employeeId: integer('employee_id').references(() => employees.id),
+  status: text('status').notNull(),
+  enrolledAt: text('enrolled_at').notNull(),
+  enrolledBy: integer('enrolled_by').references(() => users.id),
+  lastUsedAt: text('last_used_at'),
+  readerId: text('reader_id'),
+  createdAt: text('created_at').notNull(),
+});
+
+export const attendanceRecords = sqliteTable('attendance_records', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  employeeId: integer('employee_id').notNull().references(() => employees.id),
+  date: text('date').notNull(),
+  timeIn: text('time_in').notNull(),
+  timeOut: text('time_out'),
+  locationLatitude: real('location_latitude'),
+  locationLongitude: real('location_longitude'),
+  duration: integer('duration'),
+  status: text('status').notNull(),
+  checkInMethod: text('check_in_method').notNull(),
+  readerId: text('reader_id'),
+  location: text('location'),
+  tagUid: text('tag_uid'),
+  idempotencyKey: text('idempotency_key').unique(),
+  syncedAt: text('synced_at'),
+  metadata: text('metadata'),
+  createdAt: text('created_at').notNull(),
+});
+
+export const readerDevices = sqliteTable('reader_devices', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  readerId: text('reader_id').notNull().unique(),
+  name: text('name').notNull(),
+  location: text('location').notNull(),
+  type: text('type').notNull(),
+  status: text('status').notNull(),
+  ipAddress: text('ip_address'),
+  lastHeartbeat: text('last_heartbeat'),
+  config: text('config'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
 });

@@ -1,18 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { attendance, employees } from '@/db/schema';
-import { eq, and, desc, asc, gte, lte } from 'drizzle-orm';
+import { attendance, attendanceRecords, employees, users } from '@/db/schema';
+import { eq, and, gte, lte, desc } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
-import { hasFullAccess, type UserRole } from '@/lib/permissions';
-import {
-  ATTENDANCE_STATUSES,
-  DEFAULT_PAGE_SIZE,
-  MAX_PAGE_SIZE,
-  isValidEnum,
-  isValidDate,
-  isValidTimestamp,
-  safeErrorMessage,
-} from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,171 +11,196 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-    const employeeId = searchParams.get('employeeId');
-    const status = searchParams.get('status');
-    const startDate = searchParams.get('startDate');
-    const endDate = searchParams.get('endDate');
-    const aggregate = searchParams.get('aggregate');
-    const month = searchParams.get('month');
-    const year = searchParams.get('year');
-
-    // Single record by ID
-    if (id) {
-      if (isNaN(parseInt(id))) {
-        return NextResponse.json({ 
-          error: "Valid ID is required",
-          code: "INVALID_ID" 
-        }, { status: 400 });
-      }
-
-      const record = await db.select()
-        .from(attendance)
-        .where(eq(attendance.id, parseInt(id)))
-        .limit(1);
-
-      if (record.length === 0) {
-        return NextResponse.json({ 
-          error: 'Attendance record not found',
-          code: 'NOT_FOUND' 
-        }, { status: 404 });
-      }
-
-      return NextResponse.json(record[0], { status: 200 });
-    }
-
-    // Monthly aggregation
-    if (aggregate === 'monthly' && month && year) {
-      const monthNum = parseInt(month);
-      const yearNum = parseInt(year);
-
-      if (isNaN(monthNum) || isNaN(yearNum) || monthNum < 1 || monthNum > 12) {
-        return NextResponse.json({ 
-          error: "Valid month (1-12) and year are required for aggregation",
-          code: "INVALID_DATE_PARAMS" 
-        }, { status: 400 });
-      }
-
-      const startOfMonth = new Date(yearNum, monthNum - 1, 1).toISOString().split('T')[0];
-      const endOfMonth = new Date(yearNum, monthNum, 0).toISOString().split('T')[0];
-
-      let conditions = [
-        gte(attendance.date, startOfMonth),
-        lte(attendance.date, endOfMonth)
-      ];
-
-      if (employeeId) {
-        if (isNaN(parseInt(employeeId))) {
-          return NextResponse.json({ 
-            error: "Valid employee ID is required",
-            code: "INVALID_EMPLOYEE_ID" 
-          }, { status: 400 });
-        }
-        conditions.push(eq(attendance.employeeId, parseInt(employeeId)));
-      }
-
-      const records = await db.select()
-        .from(attendance)
-        .where(and(...conditions));
-
-      const summary = records.reduce((acc, record) => {
-        acc[record.status] = (acc[record.status] || 0) + 1;
-        acc.total = (acc.total || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>);
-
-      return NextResponse.json({
-        month: monthNum,
-        year: yearNum,
-        employeeId: employeeId ? parseInt(employeeId) : null,
-        summary,
-        records: records.length
-      }, { status: 200 });
-    }
-
-    // List with pagination and filters
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? String(DEFAULT_PAGE_SIZE)), MAX_PAGE_SIZE);
+    const searchParams = request.nextUrl.searchParams;
+    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
     const offset = parseInt(searchParams.get('offset') ?? '0');
-    const sort = searchParams.get('sort') ?? 'date';
-    const order = searchParams.get('order') ?? 'desc';
+    const startDate = searchParams.get('start_date');
+    const endDate = searchParams.get('end_date');
+    const employeeId = searchParams.get('employee_id');
+    const readerId = searchParams.get('reader_id');
+    const status = searchParams.get('status');
+    const source = searchParams.get('source'); // 'nfc', 'legacy', or null for both
 
-    let conditions = [];
-
-    // Non-admin users can only see their own attendance
-    if (!hasFullAccess(user.role as UserRole)) {
-      const userEmployee = await db.select()
-        .from(employees)
-        .where(eq(employees.userId, user.id))
-        .limit(1);
-
-      if (userEmployee.length === 0) {
-        return NextResponse.json([], { status: 200 });
-      }
-      conditions.push(eq(attendance.employeeId, userEmployee[0].id));
-    } else if (employeeId) {
-      if (isNaN(parseInt(employeeId))) {
-        return NextResponse.json({ 
-          error: "Valid employee ID is required",
-          code: "INVALID_EMPLOYEE_ID" 
-        }, { status: 400 });
-      }
-      conditions.push(eq(attendance.employeeId, parseInt(employeeId)));
-    }
-
-    if (status) {
-      if (!isValidEnum(status, ATTENDANCE_STATUSES)) {
-        return NextResponse.json({ 
-          error: `Invalid status. Must be one of: ${ATTENDANCE_STATUSES.join(', ')}`,
-          code: "INVALID_STATUS" 
-        }, { status: 400 });
-      }
-      conditions.push(eq(attendance.status, status));
-    }
-
+    // Validate common params
     if (startDate) {
-      if (!isValidDate(startDate)) {
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(startDate)) {
         return NextResponse.json({ 
-          error: "Invalid start date format. Use ISO date string (YYYY-MM-DD)",
-          code: "INVALID_START_DATE" 
+          error: 'Invalid start_date format. Expected YYYY-MM-DD',
+          code: 'INVALID_DATE_FORMAT'
         }, { status: 400 });
       }
-      conditions.push(gte(attendance.date, startDate));
     }
 
     if (endDate) {
-      if (!isValidDate(endDate)) {
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(endDate)) {
         return NextResponse.json({ 
-          error: "Invalid end date format. Use ISO date string (YYYY-MM-DD)",
-          code: "INVALID_END_DATE" 
+          error: 'Invalid end_date format. Expected YYYY-MM-DD',
+          code: 'INVALID_DATE_FORMAT'
         }, { status: 400 });
       }
-      conditions.push(lte(attendance.date, endDate));
     }
 
-    let query = db.select().from(attendance);
-
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
+    if (status) {
+      const validStatuses = ['present', 'absent', 'late', 'half_day'];
+      if (!validStatuses.includes(status)) {
+        return NextResponse.json({ 
+          error: 'Invalid status. Must be one of: present, absent, late, half_day',
+          code: 'INVALID_STATUS'
+        }, { status: 400 });
+      }
     }
 
-    const orderColumn = sort === 'checkIn' ? attendance.checkIn :
-                       sort === 'checkOut' ? attendance.checkOut :
-                       sort === 'status' ? attendance.status :
-                       attendance.date;
+    let parsedEmployeeId: number | null = null;
+    if (employeeId) {
+      parsedEmployeeId = parseInt(employeeId);
+      if (isNaN(parsedEmployeeId)) {
+        return NextResponse.json({ 
+          error: 'Invalid employee_id',
+          code: 'INVALID_EMPLOYEE_ID'
+        }, { status: 400 });
+      }
+    }
 
-    query = query.orderBy(
-      order === 'asc' ? asc(orderColumn) : desc(orderColumn)
-    );
+    // ── Query 1: New attendanceRecords table (NFC + manual entries) ──
+    let nfcResults: any[] = [];
+    if (source !== 'legacy') {
+      const nfcConditions = [];
+      if (startDate) nfcConditions.push(gte(attendanceRecords.date, startDate));
+      if (endDate) nfcConditions.push(lte(attendanceRecords.date, endDate));
+      if (parsedEmployeeId !== null) nfcConditions.push(eq(attendanceRecords.employeeId, parsedEmployeeId));
+      if (readerId) nfcConditions.push(eq(attendanceRecords.readerId, readerId));
+      if (status) nfcConditions.push(eq(attendanceRecords.status, status));
 
-    const results = await query.limit(limit).offset(offset);
+      let nfcQuery = db
+        .select({
+          id: attendanceRecords.id,
+          employeeId: attendanceRecords.employeeId,
+          date: attendanceRecords.date,
+          timeIn: attendanceRecords.timeIn,
+          timeOut: attendanceRecords.timeOut,
+          locationLatitude: attendanceRecords.locationLatitude,
+          locationLongitude: attendanceRecords.locationLongitude,
+          duration: attendanceRecords.duration,
+          status: attendanceRecords.status,
+          checkInMethod: attendanceRecords.checkInMethod,
+          readerId: attendanceRecords.readerId,
+          location: attendanceRecords.location,
+          tagUid: attendanceRecords.tagUid,
+          idempotencyKey: attendanceRecords.idempotencyKey,
+          syncedAt: attendanceRecords.syncedAt,
+          metadata: attendanceRecords.metadata,
+          createdAt: attendanceRecords.createdAt,
+          employee: {
+            id: employees.id,
+            firstName: users.firstName,
+            lastName: users.lastName,
+            email: users.email,
+            department: employees.department,
+            photoUrl: users.avatarUrl,
+            status: employees.status
+          }
+        })
+        .from(attendanceRecords)
+        .leftJoin(employees, eq(attendanceRecords.employeeId, employees.id))
+        .leftJoin(users, eq(employees.userId, users.id))
+        .orderBy(desc(attendanceRecords.date), desc(attendanceRecords.timeIn))
+        .limit(limit + offset); // Fetch enough for merging
 
-    return NextResponse.json(results, { status: 200 });
+      if (nfcConditions.length > 0) {
+        nfcQuery = nfcQuery.where(and(...nfcConditions)) as any;
+      }
 
-  } catch (error) {
-    console.error('GET error:', error);
+      nfcResults = (await nfcQuery).map(r => ({ ...r, _source: 'nfc' }));
+    }
+
+    // ── Query 2: Old attendance table (legacy CMS entries) ──
+    let legacyResults: any[] = [];
+    if (source !== 'nfc' && !readerId) { // Legacy table has no readerId, skip if filtering by reader
+      const legacyConditions = [];
+      if (startDate) legacyConditions.push(gte(attendance.date, startDate));
+      if (endDate) legacyConditions.push(lte(attendance.date, endDate));
+      if (parsedEmployeeId !== null) legacyConditions.push(eq(attendance.employeeId, parsedEmployeeId));
+      if (status) legacyConditions.push(eq(attendance.status, status));
+
+      let legacyQuery = db
+        .select({
+          id: attendance.id,
+          employeeId: attendance.employeeId,
+          date: attendance.date,
+          checkIn: attendance.checkIn,
+          checkOut: attendance.checkOut,
+          status: attendance.status,
+          notes: attendance.notes,
+          empId: employees.id,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          email: users.email,
+          department: employees.department,
+          photoUrl: users.avatarUrl,
+          empStatus: employees.status,
+        })
+        .from(attendance)
+        .leftJoin(employees, eq(attendance.employeeId, employees.id))
+        .leftJoin(users, eq(employees.userId, users.id))
+        .orderBy(desc(attendance.date))
+        .limit(limit + offset);
+
+      if (legacyConditions.length > 0) {
+        legacyQuery = legacyQuery.where(and(...legacyConditions)) as any;
+      }
+
+      const rawLegacy = await legacyQuery;
+
+      // Normalize legacy records to match the new schema shape
+      legacyResults = rawLegacy.map(r => ({
+        id: r.id,
+        employeeId: r.employeeId,
+        date: r.date,
+        timeIn: r.checkIn,
+        timeOut: r.checkOut,
+        locationLatitude: null,
+        locationLongitude: null,
+        duration: (r.checkIn && r.checkOut)
+          ? Math.floor((new Date(r.checkOut).getTime() - new Date(r.checkIn).getTime()) / 60000)
+          : null,
+        status: r.status,
+        checkInMethod: 'legacy',
+        readerId: null,
+        location: null,
+        tagUid: null,
+        idempotencyKey: null,
+        syncedAt: null,
+        metadata: r.notes ? JSON.stringify({ notes: r.notes }) : null,
+        createdAt: r.checkIn || r.date,
+        employee: {
+          id: r.empId,
+          firstName: r.firstName,
+          lastName: r.lastName,
+          email: r.email,
+          department: r.department,
+          photoUrl: r.photoUrl,
+          status: r.empStatus,
+        },
+        _source: 'legacy',
+      }));
+    }
+
+    // ── Merge, sort by date descending, and paginate ──
+    const merged = [...nfcResults, ...legacyResults]
+      .sort((a, b) => {
+        const dateCompare = (b.date || '').localeCompare(a.date || '');
+        if (dateCompare !== 0) return dateCompare;
+        return (b.timeIn || '').localeCompare(a.timeIn || '');
+      })
+      .slice(offset, offset + limit);
+
+    return NextResponse.json(merged, { status: 200 });
+  } catch (error: any) {
+    console.error('GET attendance error:', error);
     return NextResponse.json({ 
-      error: safeErrorMessage(error)
+      error: 'Internal server error: ' + error.message 
     }, { status: 500 });
   }
 }
@@ -197,390 +212,158 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
+    if (user.role !== 'cms_administrator' && user.role !== 'hr_manager') {
+      return NextResponse.json({ 
+        error: 'Insufficient permissions. Only admin or hr can create manual attendance entries',
+        code: 'FORBIDDEN'
+      }, { status: 403 });
+    }
+
     const body = await request.json();
-    const isAdmin = hasFullAccess(user.role as UserRole);
 
-    // Validate required fields
-    if (!body.date) {
+    if ('userId' in body || 'user_id' in body) {
       return NextResponse.json({ 
-        error: "Date is required",
-        code: "MISSING_DATE" 
+        error: "User ID cannot be provided in request body",
+        code: "USER_ID_NOT_ALLOWED" 
       }, { status: 400 });
     }
 
-    if (!body.status) {
+    const { employeeId, date, timeIn, timeOut, duration, location, readerId, notes, status } = body;
+
+    if (!employeeId) {
       return NextResponse.json({ 
-        error: "Status is required",
-        code: "MISSING_STATUS" 
+        error: 'employeeId is required',
+        code: 'MISSING_EMPLOYEE_ID'
       }, { status: 400 });
     }
 
-    // Validate date format
-    if (!isValidDate(body.date)) {
+    if (!date) {
       return NextResponse.json({ 
-        error: "Invalid date format. Use ISO date string (YYYY-MM-DD)",
-        code: "INVALID_DATE" 
+        error: 'date is required',
+        code: 'MISSING_DATE'
       }, { status: 400 });
     }
 
-    // Validate status enum
-    if (!isValidEnum(body.status, ATTENDANCE_STATUSES)) {
+    if (!timeIn) {
       return NextResponse.json({ 
-        error: `Invalid status. Must be one of: ${ATTENDANCE_STATUSES.join(', ')}`,
-        code: "INVALID_STATUS" 
+        error: 'timeIn is required',
+        code: 'MISSING_TIME_IN'
       }, { status: 400 });
     }
 
-    // Determine employee ID based on role
-    let employeeIdNum: number;
+    if (!status) {
+      return NextResponse.json({ 
+        error: 'status is required',
+        code: 'MISSING_STATUS'
+      }, { status: 400 });
+    }
 
-    if (isAdmin && body.employeeId) {
-      // Admin/HR can log attendance for any employee
-      employeeIdNum = parseInt(body.employeeId);
-      if (isNaN(employeeIdNum)) {
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(date)) {
+      return NextResponse.json({ 
+        error: 'Invalid date format. Expected YYYY-MM-DD',
+        code: 'INVALID_DATE_FORMAT'
+      }, { status: 400 });
+    }
+
+    try {
+      new Date(timeIn).toISOString();
+    } catch (e) {
+      return NextResponse.json({ 
+        error: 'Invalid timeIn format. Expected ISO timestamp',
+        code: 'INVALID_TIME_IN'
+      }, { status: 400 });
+    }
+
+    if (timeOut) {
+      try {
+        new Date(timeOut).toISOString();
+      } catch (e) {
         return NextResponse.json({ 
-          error: "Employee ID must be a valid number",
-          code: "INVALID_EMPLOYEE_ID" 
+          error: 'Invalid timeOut format. Expected ISO timestamp',
+          code: 'INVALID_TIME_OUT'
         }, { status: 400 });
       }
-    } else {
-      // Employees log their own attendance
-      const userEmployee = await db.select()
-        .from(employees)
-        .where(eq(employees.userId, user.id))
-        .limit(1);
-
-      if (userEmployee.length === 0) {
-        return NextResponse.json({ 
-          error: "Employee record not found for current user",
-          code: "EMPLOYEE_NOT_FOUND" 
-        }, { status: 404 });
-      }
-      employeeIdNum = userEmployee[0].id;
     }
 
-    // Validate employee exists
-    const employeeExists = await db.select()
+    const validStatuses = ['present', 'absent', 'late', 'half_day'];
+    if (!validStatuses.includes(status)) {
+      return NextResponse.json({ 
+        error: 'Invalid status. Must be one of: present, absent, late, half_day',
+        code: 'INVALID_STATUS'
+      }, { status: 400 });
+    }
+
+    if (duration !== undefined && duration !== null) {
+      if (typeof duration !== 'number' || duration < 0) {
+        return NextResponse.json({ 
+          error: 'Duration must be a non-negative integer',
+          code: 'INVALID_DURATION'
+        }, { status: 400 });
+      }
+    }
+
+    const employeeExists = await db
+      .select()
       .from(employees)
-      .where(eq(employees.id, employeeIdNum))
+      .where(eq(employees.id, employeeId))
       .limit(1);
 
     if (employeeExists.length === 0) {
       return NextResponse.json({ 
-        error: "Employee not found",
-        code: "EMPLOYEE_NOT_FOUND" 
-      }, { status: 404 });
-    }
-
-    // Validate checkIn timestamp if provided
-    if (body.checkIn && !isValidTimestamp(body.checkIn)) {
-      return NextResponse.json({ 
-        error: "Invalid checkIn timestamp format. Use ISO timestamp",
-        code: "INVALID_CHECK_IN" 
+        error: 'Employee not found',
+        code: 'EMPLOYEE_NOT_FOUND'
       }, { status: 400 });
     }
 
-    // Validate checkOut timestamp if provided
-    if (body.checkOut && !isValidTimestamp(body.checkOut)) {
-      return NextResponse.json({ 
-        error: "Invalid checkOut timestamp format. Use ISO timestamp",
-        code: "INVALID_CHECK_OUT" 
-      }, { status: 400 });
-    }
-
-    // Validate checkOut is after checkIn if both provided
-    if (body.checkIn && body.checkOut) {
-      const checkInDate = new Date(body.checkIn);
-      const checkOutDate = new Date(body.checkOut);
-      if (checkOutDate <= checkInDate) {
-        return NextResponse.json({ 
-          error: "Check-out time must be after check-in time",
-          code: "INVALID_TIME_RANGE" 
-        }, { status: 400 });
-      }
-    }
-
-    // Check for existing attendance — upsert if found
-    const existingRecord = await db.select()
-      .from(attendance)
+    const existingAttendance = await db
+      .select()
+      .from(attendanceRecords)
       .where(
         and(
-          eq(attendance.employeeId, employeeIdNum),
-          eq(attendance.date, body.date)
+          eq(attendanceRecords.employeeId, employeeId),
+          eq(attendanceRecords.date, date)
         )
       )
       .limit(1);
 
-    if (existingRecord.length > 0) {
-      // Update existing record instead of rejecting
-      const updated = await db.update(attendance)
-        .set({
-          status: body.status,
-          checkIn: body.checkIn || existingRecord[0].checkIn,
-          checkOut: body.checkOut || existingRecord[0].checkOut,
-          notes: body.notes?.trim() || existingRecord[0].notes,
-        })
-        .where(eq(attendance.id, existingRecord[0].id))
-        .returning();
-
-      return NextResponse.json(updated[0], { status: 200 });
+    if (existingAttendance.length > 0) {
+      return NextResponse.json({ 
+        error: 'Attendance record already exists for this employee on this date',
+        code: 'DUPLICATE_ENTRY'
+      }, { status: 400 });
     }
 
-    // Create new record
-    const insertData = {
-      employeeId: employeeIdNum,
-      date: body.date,
-      status: body.status,
-      checkIn: body.checkIn || null,
-      checkOut: body.checkOut || null,
-      notes: body.notes?.trim() || null
-    };
+    let calculatedDuration = duration;
+    if (!calculatedDuration && timeOut) {
+      const timeInMs = new Date(timeIn).getTime();
+      const timeOutMs = new Date(timeOut).getTime();
+      calculatedDuration = Math.floor((timeOutMs - timeInMs) / 1000 / 60);
+    }
 
-    const newRecord = await db.insert(attendance)
-      .values(insertData)
+    const metadata = notes ? JSON.stringify({ notes, createdBy: user.id }) : JSON.stringify({ createdBy: user.id });
+
+    const newAttendance = await db.insert(attendanceRecords)
+      .values({
+        employeeId,
+        date,
+        timeIn,
+        timeOut: timeOut || null,
+        duration: calculatedDuration || null,
+        status,
+        checkInMethod: 'manual',
+        location: location || null,
+        readerId: readerId || null,
+        metadata,
+        createdAt: new Date().toISOString()
+      })
       .returning();
 
-    return NextResponse.json(newRecord[0], { status: 201 });
-
-  } catch (error) {
-    console.error('POST error:', error);
+    return NextResponse.json(newAttendance[0], { status: 201 });
+  } catch (error: any) {
+    console.error('POST attendance error:', error);
     return NextResponse.json({ 
-      error: safeErrorMessage(error)
-    }, { status: 500 });
-  }
-}
-
-export async function PUT(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const isAdmin = hasFullAccess(user.role as UserRole);
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
-
-    const body = await request.json();
-
-    // Check if record exists
-    const existingRecord = await db.select()
-      .from(attendance)
-      .where(eq(attendance.id, parseInt(id)))
-      .limit(1);
-
-    if (existingRecord.length === 0) {
-      return NextResponse.json({ 
-        error: 'Attendance record not found',
-        code: 'NOT_FOUND' 
-      }, { status: 404 });
-    }
-
-    // Non-admin can only update their own attendance
-    if (!isAdmin) {
-      const userEmployee = await db.select()
-        .from(employees)
-        .where(eq(employees.userId, user.id))
-        .limit(1);
-
-      if (userEmployee.length === 0 || existingRecord[0].employeeId !== userEmployee[0].id) {
-        return NextResponse.json({ error: 'Unauthorized to update this record' }, { status: 403 });
-      }
-    }
-
-    // Validate status if provided
-    if (body.status && !isValidEnum(body.status, ATTENDANCE_STATUSES)) {
-      return NextResponse.json({ 
-        error: `Invalid status. Must be one of: ${ATTENDANCE_STATUSES.join(', ')}`,
-        code: "INVALID_STATUS" 
-      }, { status: 400 });
-    }
-
-    // Validate date if provided
-    if (body.date && !isValidDate(body.date)) {
-      return NextResponse.json({ 
-        error: "Invalid date format. Use ISO date string (YYYY-MM-DD)",
-        code: "INVALID_DATE" 
-      }, { status: 400 });
-    }
-
-    // Validate checkIn if provided
-    if (body.checkIn !== undefined && body.checkIn !== null && !isValidTimestamp(body.checkIn)) {
-      return NextResponse.json({ 
-        error: "Invalid checkIn timestamp format. Use ISO timestamp",
-        code: "INVALID_CHECK_IN" 
-      }, { status: 400 });
-    }
-
-    // Validate checkOut if provided
-    if (body.checkOut !== undefined && body.checkOut !== null && !isValidTimestamp(body.checkOut)) {
-      return NextResponse.json({ 
-        error: "Invalid checkOut timestamp format. Use ISO timestamp",
-        code: "INVALID_CHECK_OUT" 
-      }, { status: 400 });
-    }
-
-    // Validate time range
-    const checkIn = body.checkIn !== undefined ? body.checkIn : existingRecord[0].checkIn;
-    const checkOut = body.checkOut !== undefined ? body.checkOut : existingRecord[0].checkOut;
-
-    if (checkIn && checkOut) {
-      const checkInDate = new Date(checkIn);
-      const checkOutDate = new Date(checkOut);
-      if (checkOutDate <= checkInDate) {
-        return NextResponse.json({ 
-          error: "Check-out time must be after check-in time",
-          code: "INVALID_TIME_RANGE" 
-        }, { status: 400 });
-      }
-    }
-
-    // Non-admin cannot change employeeId
-    if (body.employeeId && !isAdmin) {
-      return NextResponse.json({ 
-        error: "Only admin can change the employee for an attendance record",
-        code: "FORBIDDEN" 
-      }, { status: 403 });
-    }
-
-    // Validate employeeId if provided (admin only)
-    if (body.employeeId && isAdmin) {
-      const employeeIdNum = parseInt(body.employeeId);
-      if (isNaN(employeeIdNum)) {
-        return NextResponse.json({ 
-          error: "Employee ID must be a valid number",
-          code: "INVALID_EMPLOYEE_ID" 
-        }, { status: 400 });
-      }
-
-      const employeeExists = await db.select()
-        .from(employees)
-        .where(eq(employees.id, employeeIdNum))
-        .limit(1);
-
-      if (employeeExists.length === 0) {
-        return NextResponse.json({ 
-          error: "Employee not found",
-          code: "EMPLOYEE_NOT_FOUND" 
-        }, { status: 404 });
-      }
-    }
-
-    // Check for duplicate if date or employeeId is being changed
-    if (body.date || body.employeeId) {
-      const newEmployeeId = body.employeeId ? parseInt(body.employeeId) : existingRecord[0].employeeId;
-      const newDate = body.date || existingRecord[0].date;
-
-      const duplicateCheck = await db.select()
-        .from(attendance)
-        .where(
-          and(
-            eq(attendance.employeeId, newEmployeeId),
-            eq(attendance.date, newDate)
-          )
-        )
-        .limit(1);
-
-      if (duplicateCheck.length > 0 && duplicateCheck[0].id !== parseInt(id)) {
-        return NextResponse.json({ 
-          error: "Attendance record already exists for this employee on this date",
-          code: "DUPLICATE_RECORD" 
-        }, { status: 400 });
-      }
-    }
-
-    // Prepare update data
-    const updateData: any = {};
-
-    if (body.employeeId !== undefined && isAdmin) {
-      updateData.employeeId = parseInt(body.employeeId);
-    }
-    if (body.date !== undefined) {
-      updateData.date = body.date;
-    }
-    if (body.status !== undefined) {
-      updateData.status = body.status;
-    }
-    if (body.checkIn !== undefined) {
-      updateData.checkIn = body.checkIn;
-    }
-    if (body.checkOut !== undefined) {
-      updateData.checkOut = body.checkOut;
-    }
-    if (body.notes !== undefined) {
-      updateData.notes = body.notes?.trim() || null;
-    }
-
-    const updated = await db.update(attendance)
-      .set(updateData)
-      .where(eq(attendance.id, parseInt(id)))
-      .returning();
-
-    return NextResponse.json(updated[0], { status: 200 });
-
-  } catch (error) {
-    console.error('PUT error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error)
-    }, { status: 500 });
-  }
-}
-
-export async function DELETE(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    // Only admin/HR can delete attendance records
-    if (!hasFullAccess(user.role as UserRole)) {
-      return NextResponse.json({ error: 'Only admin/HR can delete attendance records' }, { status: 403 });
-    }
-
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
-
-    // Check if record exists
-    const existingRecord = await db.select()
-      .from(attendance)
-      .where(eq(attendance.id, parseInt(id)))
-      .limit(1);
-
-    if (existingRecord.length === 0) {
-      return NextResponse.json({ 
-        error: 'Attendance record not found',
-        code: 'NOT_FOUND' 
-      }, { status: 404 });
-    }
-
-    const deleted = await db.delete(attendance)
-      .where(eq(attendance.id, parseInt(id)))
-      .returning();
-
-    return NextResponse.json({
-      message: 'Attendance record deleted successfully',
-      record: deleted[0]
-    }, { status: 200 });
-
-  } catch (error) {
-    console.error('DELETE error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error)
+      error: 'Internal server error: ' + error.message 
     }, { status: 500 });
   }
 }

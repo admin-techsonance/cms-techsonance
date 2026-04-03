@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, User, Mail, Phone, MapPin, Calendar, Briefcase, Building2, IdCard } from 'lucide-react';
+import { User, Mail, Phone, MapPin, Calendar, Briefcase, Building2, IdCard } from 'lucide-react';
+import { ProfileSkeleton } from '@/components/ui/dashboard-skeleton';
 import { Label } from '@/components/ui/label';
 
 interface Employee {
@@ -78,11 +79,7 @@ export default function ProfilePage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <ProfileSkeleton />;
   }
 
   if (error) {

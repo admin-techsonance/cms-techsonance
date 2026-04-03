@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
     const sortField = searchParams.get('sort') ?? 'createdAt';
     const sortOrder = searchParams.get('order') ?? 'desc';
 
-    let query = db.select().from(employees);
+    let query: any = db.select().from(employees);
     const conditions = [];
 
     if (search) {
@@ -450,8 +450,18 @@ export async function DELETE(request: NextRequest) {
       .where(eq(employees.id, parseInt(id)))
       .returning();
 
+    // Also deactivate the linked user account so they can't log in
+    if (deleted[0]?.userId) {
+      await db.update(users)
+        .set({ 
+          isActive: false,
+          updatedAt: new Date().toISOString()
+        })
+        .where(eq(users.id, deleted[0].userId));
+    }
+
     return NextResponse.json({
-      message: 'Employee status updated to resigned successfully',
+      message: 'Employee resigned and account deactivated successfully',
       employee: deleted[0]
     }, { status: 200 });
 
