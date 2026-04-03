@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowLeft, Edit, Loader2, Calendar, Award, Trash2, Plus, Briefcase, X } from 'lucide-react';
 import { EditEmployeeDialog } from '@/components/team/edit-employee-dialog';
 import { AssignProjectsDialog } from '@/components/team/assign-projects-dialog';
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -244,7 +245,7 @@ export default function EmployeeDetailPage() {
   }
 
   const skills = employee.skills ? (typeof employee.skills === 'string' ? JSON.parse(employee.skills) : employee.skills) : [];
-  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'hr_manager' || currentUser?.role === 'cms_administrator';
+  const isAdmin = currentUser && hasFullAccess(currentUser.role as UserRole);
 
   return (
     <div className="space-y-6">

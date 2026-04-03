@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Plus, Search, Loader2, UserCog, Eye, Edit, Trash2 } from 'lucide-react';
 import Link from 'next/link';
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
 import { AddEmployeeDialog } from '@/components/team/add-employee-dialog';
 import { EditEmployeeDialog } from '@/components/team/edit-employee-dialog';
 import {
@@ -164,7 +165,7 @@ export default function TeamPage() {
     );
   });
 
-  const isAdmin = currentUser?.role === 'admin';
+  const isAdmin = currentUser && hasFullAccess(currentUser.role as UserRole);
 
   return (
     <div className="space-y-6">

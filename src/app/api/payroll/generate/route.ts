@@ -2,29 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { payroll, employees, attendance, users, sessions } from '@/db/schema';
 import { eq, and, gte, lte, inArray } from 'drizzle-orm';
-
-async function getCurrentUser(request: NextRequest) {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return null;
-    }
-
-    const token = authHeader.substring(7);
-
-    try {
-        const [session] = await db.select().from(sessions).where(eq(sessions.token, token)).limit(1);
-
-        if (!session) {
-            return null;
-        }
-
-        const [user] = await db.select().from(users).where(eq(users.id, session.userId)).limit(1);
-        return user || null;
-    } catch (error) {
-        console.error('Error fetching user:', error);
-        return null;
-    }
-}
+import { getCurrentUser } from '@/lib/auth';
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
+import { safeErrorMessage } from '@/lib/constants';
 
 export async function POST(request: NextRequest) {
     try {
@@ -34,6 +14,14 @@ export async function POST(request: NextRequest) {
             return NextResponse.json(
                 { error: 'Unauthorized' },
                 { status: 401 }
+            );
+        }
+
+        // Only admin/HR can generate payroll
+        if (!hasFullAccess(currentUser.role as UserRole)) {
+            return NextResponse.json(
+                { error: 'Only admin/HR can generate payroll' },
+                { status: 403 }
             );
         }
 
@@ -169,7 +157,7 @@ export async function POST(request: NextRequest) {
     } catch (error) {
         console.error('Error generating payroll:', error);
         return NextResponse.json(
-            { error: 'Failed to generate payroll', details: error instanceof Error ? error.message : 'Unknown error' },
+            { error: safeErrorMessage(error) },
             { status: 500 }
         );
     }

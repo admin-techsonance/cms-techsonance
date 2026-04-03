@@ -1,30 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { payroll, employees, users, sessions } from '@/db/schema';
+import { payroll, employees } from '@/db/schema';
 import { eq, and, desc } from 'drizzle-orm';
-
-async function getCurrentUser(request: NextRequest) {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return null;
-    }
-
-    const token = authHeader.substring(7);
-
-    try {
-        const [session] = await db.select().from(sessions).where(eq(sessions.token, token)).limit(1);
-
-        if (!session) {
-            return null;
-        }
-
-        const [user] = await db.select().from(users).where(eq(users.id, session.userId)).limit(1);
-        return user || null;
-    } catch (error) {
-        console.error('Error fetching user:', error);
-        return null;
-    }
-}
+import { getCurrentUser } from '@/lib/auth';
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
+import {
+  PAYROLL_STATUSES,
+  DEFAULT_PAYROLL_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  isValidEnum,
+  safeErrorMessage,
+} from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
     try {
@@ -37,20 +23,33 @@ export async function GET(request: NextRequest) {
             );
         }
 
+        const isAdmin = hasFullAccess(currentUser.role as UserRole);
         const { searchParams } = new URL(request.url);
         const employeeId = searchParams.get('employeeId');
         const month = searchParams.get('month');
         const year = searchParams.get('year');
         const status = searchParams.get('status');
-        const limit = parseInt(searchParams.get('limit') || '50');
+        const limit = Math.min(parseInt(searchParams.get('limit') || String(DEFAULT_PAYROLL_PAGE_SIZE)), MAX_PAGE_SIZE);
         const offset = parseInt(searchParams.get('offset') || '0');
 
-        let query = db.select().from(payroll);
         const conditions = [];
 
-        if (employeeId) {
+        if (!isAdmin) {
+            // Employees can only see their own payroll
+            const [employee] = await db.select()
+                .from(employees)
+                .where(eq(employees.userId, currentUser.id))
+                .limit(1);
+
+            if (!employee) {
+                return NextResponse.json([]);
+            }
+
+            conditions.push(eq(payroll.employeeId, employee.id));
+        } else if (employeeId) {
             conditions.push(eq(payroll.employeeId, parseInt(employeeId)));
         }
+
         if (month) {
             conditions.push(eq(payroll.month, month));
         }
@@ -58,8 +57,12 @@ export async function GET(request: NextRequest) {
             conditions.push(eq(payroll.year, parseInt(year)));
         }
         if (status) {
-            conditions.push(eq(payroll.status, status));
+            if (isValidEnum(status, PAYROLL_STATUSES)) {
+                conditions.push(eq(payroll.status, status));
+            }
         }
+
+        let query = db.select().from(payroll);
 
         if (conditions.length > 0) {
             query = query.where(and(...conditions));
@@ -75,7 +78,7 @@ export async function GET(request: NextRequest) {
     } catch (error) {
         console.error('Error fetching payrolls:', error);
         return NextResponse.json(
-            { error: 'Failed to fetch payrolls' },
+            { error: safeErrorMessage(error) },
             { status: 500 }
         );
     }
@@ -89,6 +92,14 @@ export async function PUT(request: NextRequest) {
             return NextResponse.json(
                 { error: 'Unauthorized' },
                 { status: 401 }
+            );
+        }
+
+        // Only admin/HR can modify payroll
+        if (!hasFullAccess(currentUser.role as UserRole)) {
+            return NextResponse.json(
+                { error: 'Only admin/HR can modify payroll records' },
+                { status: 403 }
             );
         }
 
@@ -134,6 +145,13 @@ export async function PUT(request: NextRequest) {
 
         // Handle status changes
         if (newStatus) {
+            if (!isValidEnum(newStatus, PAYROLL_STATUSES)) {
+                return NextResponse.json(
+                    { error: `Invalid status. Must be one of: ${PAYROLL_STATUSES.join(', ')}` },
+                    { status: 400 }
+                );
+            }
+
             updateData.status = newStatus;
 
             if (newStatus === 'approved' && !existingPayroll.approvedBy) {
@@ -158,7 +176,7 @@ export async function PUT(request: NextRequest) {
     } catch (error) {
         console.error('Error updating payroll:', error);
         return NextResponse.json(
-            { error: 'Failed to update payroll' },
+            { error: safeErrorMessage(error) },
             { status: 500 }
         );
     }
@@ -172,6 +190,14 @@ export async function DELETE(request: NextRequest) {
             return NextResponse.json(
                 { error: 'Unauthorized' },
                 { status: 401 }
+            );
+        }
+
+        // Only admin/HR can delete payroll
+        if (!hasFullAccess(currentUser.role as UserRole)) {
+            return NextResponse.json(
+                { error: 'Only admin/HR can delete payroll records' },
+                { status: 403 }
             );
         }
 
@@ -210,7 +236,7 @@ export async function DELETE(request: NextRequest) {
     } catch (error) {
         console.error('Error deleting payroll:', error);
         return NextResponse.json(
-            { error: 'Failed to delete payroll' },
+            { error: safeErrorMessage(error) },
             { status: 500 }
         );
     }

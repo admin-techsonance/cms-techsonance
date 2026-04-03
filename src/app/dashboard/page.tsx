@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Users, FolderKanban, DollarSign, UserCog, Loader2, ClipboardList, Calendar, AlertCircle } from 'lucide-react';
+import { isDeveloperRole, hasFullAccess, type UserRole } from '@/lib/permissions';
 
 interface DashboardStats {
   activeClients: number;
@@ -65,7 +66,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (currentUser) {
-      if (currentUser.role === 'developer') {
+      if (isDeveloperRole(currentUser.role as UserRole)) {
         fetchDeveloperData();
       } else {
         fetchDashboardData();
@@ -222,7 +223,7 @@ export default function DashboardPage() {
   }
 
   // Developer Dashboard
-  if (currentUser?.role === 'developer') {
+  if (currentUser && isDeveloperRole(currentUser.role as UserRole)) {
     const developerCards = [
       {
         title: 'Assigned Projects',

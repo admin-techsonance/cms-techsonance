@@ -9,6 +9,7 @@ import { Plus, Calendar, Target, Loader2, TrendingUp } from 'lucide-react';
 import { KanbanBoard } from '@/components/tasks/kanban-board';
 import { SprintPlanningDialog } from '@/components/tasks/sprint-planning-dialog';
 import { TaskDialog } from '@/components/tasks/task-dialog';
+import { isDeveloperRole, type UserRole } from '@/lib/permissions';
 
 interface Sprint {
   id: number;
@@ -104,7 +105,7 @@ export default function TasksPage() {
         const data = await response.json();
         
         // Filter projects for developers
-        if (currentUser?.role === 'developer') {
+        if (currentUser && isDeveloperRole(currentUser.role as UserRole)) {
           const memberResponse = await fetch(`/api/project-members?limit=1000`, {
             headers: {
               'Authorization': `Bearer ${token}`
@@ -222,7 +223,7 @@ export default function TasksPage() {
     ? Math.ceil((new Date(currentSprint.endDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
     : 0;
 
-  const isDeveloper = currentUser?.role === 'developer';
+  const isDeveloper = currentUser && isDeveloperRole(currentUser.role as UserRole);
 
   if (loading) {
     return (

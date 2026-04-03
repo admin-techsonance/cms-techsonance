@@ -8,7 +8,7 @@ export interface User {
   email: string;
   firstName: string;
   lastName: string;
-  role: 'admin' | 'project_manager' | 'developer' | 'client';
+  role: 'admin' | 'hr_manager' | 'cms_administrator' | 'project_manager' | 'business_development' | 'developer' | 'qa_engineer' | 'devops_engineer' | 'ui_ux_designer' | 'digital_marketing' | 'business_analyst' | 'client';
   avatarUrl: string | null;
   phone: string | null;
 }

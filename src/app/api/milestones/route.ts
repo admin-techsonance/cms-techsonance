@@ -3,6 +3,7 @@ import { db } from '@/db';
 import { milestones, projects } from '@/db/schema';
 import { eq, like, and, or, desc, asc } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
+import { safeErrorMessage } from '@/lib/constants';
 
 const VALID_STATUSES = ['pending', 'in_progress', 'completed'] as const;
 
@@ -104,7 +105,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('GET error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
@@ -201,7 +202,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('POST error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
@@ -307,7 +308,7 @@ export async function PUT(request: NextRequest) {
   } catch (error) {
     console.error('PUT error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
@@ -353,7 +354,7 @@ export async function DELETE(request: NextRequest) {
   } catch (error) {
     console.error('DELETE error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }

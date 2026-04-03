@@ -2,29 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { payroll, employees, users, sessions } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-
-async function getCurrentUser(request: NextRequest) {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return null;
-  }
-
-  const token = authHeader.substring(7);
-
-  try {
-    const [session] = await db.select().from(sessions).where(eq(sessions.token, token)).limit(1);
-
-    if (!session) {
-      return null;
-    }
-
-    const [user] = await db.select().from(users).where(eq(users.id, session.userId)).limit(1);
-    return user || null;
-  } catch (error) {
-    console.error('Error fetching user:', error);
-    return null;
-  }
-}
+import { getCurrentUser } from '@/lib/auth';
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
+import { safeErrorMessage } from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -65,6 +45,17 @@ export async function GET(request: NextRequest) {
         { error: 'Employee not found' },
         { status: 404 }
       );
+    }
+
+    // Authorization: admin can view all, employees can only view their own
+    const isAdmin = hasFullAccess(currentUser.role as UserRole);
+    if (!isAdmin) {
+      if (employee.userId !== currentUser.id) {
+        return NextResponse.json(
+          { error: 'You can only view your own payslips' },
+          { status: 403 }
+        );
+      }
     }
 
     // Fetch user details
@@ -202,15 +193,15 @@ export async function GET(request: NextRequest) {
                 <td>Calculated Salary (Based on Attendance)</td>
                 <td class="text-right">${payrollRecord.calculatedSalary.toLocaleString()}</td>
               </tr>
-              ${payrollRecord.bonuses > 0 ? `
+              ${(payrollRecord.bonuses ?? 0) > 0 ? `
               <tr>
                 <td>Bonuses</td>
-                <td class="text-right">${payrollRecord.bonuses.toLocaleString()}</td>
+                <td class="text-right">${(payrollRecord.bonuses ?? 0).toLocaleString()}</td>
               </tr>` : ''}
             </tbody>
           </table>
 
-          ${payrollRecord.deductions > 0 ? `
+          ${(payrollRecord.deductions ?? 0) > 0 ? `
           <table>
             <thead>
               <tr>
@@ -221,7 +212,7 @@ export async function GET(request: NextRequest) {
             <tbody>
               <tr>
                 <td>Deductions</td>
-                <td class="text-right">${payrollRecord.deductions.toLocaleString()}</td>
+                <td class="text-right">${(payrollRecord.deductions ?? 0).toLocaleString()}</td>
               </tr>
             </tbody>
           </table>` : ''}
@@ -263,7 +254,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Error generating payslip:', error);
     return NextResponse.json(
-      { error: 'Failed to generate payslip', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: safeErrorMessage(error) },
       { status: 500 }
     );
   }

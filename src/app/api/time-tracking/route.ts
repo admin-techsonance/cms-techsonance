@@ -3,6 +3,7 @@ import { db } from '@/db';
 import { timeTracking, tasks, users } from '@/db/schema';
 import { eq, and, gte, lte, desc, sql } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
+import { safeErrorMessage } from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -162,7 +163,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('GET error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
@@ -272,7 +273,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('POST error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
@@ -380,7 +381,7 @@ export async function PUT(request: NextRequest) {
   } catch (error) {
     console.error('PUT error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
@@ -440,7 +441,7 @@ export async function DELETE(request: NextRequest) {
   } catch (error) {
     console.error('DELETE error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }

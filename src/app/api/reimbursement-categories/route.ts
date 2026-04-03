@@ -2,29 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { reimbursementCategories, sessions, users } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { getCurrentUser } from '@/lib/auth';
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
+import { DEFAULT_REIMBURSEMENT_CATEGORIES, safeErrorMessage } from '@/lib/constants';
 
-async function getCurrentUser(request: NextRequest) {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return null;
-    }
-
-    const token = authHeader.substring(7);
-
-    try {
-        const [session] = await db.select().from(sessions).where(eq(sessions.token, token)).limit(1);
-
-        if (!session) {
-            return null;
-        }
-
-        const [user] = await db.select().from(users).where(eq(users.id, session.userId)).limit(1);
-        return user || null;
-    } catch (error) {
-        console.error('Error fetching user:', error);
-        return null;
-    }
-}
 
 // GET - Fetch all active categories
 export async function GET(request: NextRequest) {
@@ -46,14 +27,12 @@ export async function GET(request: NextRequest) {
         // Auto-seed if no categories exist
         if (categories.length === 0) {
             const now = new Date().toISOString();
-            const defaultCategories = [
-                { name: 'Travel', description: 'Flight, train, bus, or taxi fares', isActive: true, createdAt: now, updatedAt: now },
-                { name: 'Meal', description: 'Food and beverages during business trips', isActive: true, createdAt: now, updatedAt: now },
-                { name: 'Lodging', description: 'Hotel or accommodation charges', isActive: true, createdAt: now, updatedAt: now },
-                { name: 'Office Supplies', description: 'Stationery, electronics, or other office needs', isActive: true, createdAt: now, updatedAt: now },
-                { name: 'Internet/Phone', description: 'Reimbursement for communication bills', isActive: true, createdAt: now, updatedAt: now },
-                { name: 'Other', description: 'Miscellaneous expenses', isActive: true, createdAt: now, updatedAt: now },
-            ];
+            const defaultCategories = DEFAULT_REIMBURSEMENT_CATEGORIES.map(cat => ({
+                ...cat,
+                isActive: true,
+                createdAt: now,
+                updatedAt: now,
+            }));
 
             await db.insert(reimbursementCategories).values(defaultCategories);
 
@@ -87,7 +66,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Check if user is admin
-        if (currentUser.role !== 'admin' && currentUser.role !== 'hr_manager') {
+        if (!hasFullAccess(currentUser.role as UserRole)) {
             return NextResponse.json(
                 { error: 'Only admins can create categories' },
                 { status: 403 }
@@ -146,7 +125,7 @@ export async function DELETE(request: NextRequest) {
         }
 
         // Check if user is admin
-        if (currentUser.role !== 'admin' && currentUser.role !== 'hr_manager') {
+        if (!hasFullAccess(currentUser.role as UserRole)) {
             return NextResponse.json(
                 { error: 'Only admins can delete categories' },
                 { status: 403 }

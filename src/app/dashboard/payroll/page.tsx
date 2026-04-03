@@ -393,19 +393,37 @@ export default function PayrollPage() {
             });
 
             if (response.ok) {
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
+                const htmlString = await response.text();
+                
                 const employee = employees.find(e => e.id === payroll.employeeId);
                 const user = users.find(u => u.id === employee?.userId);
                 const empName = user ? `${user.firstName} ${user.lastName}` : employee?.employeeId || 'Unknown';
-                a.download = `Payslip_${empName}_${payroll.month}_${payroll.year}.pdf`;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                window.URL.revokeObjectURL(url);
-                toast.success('Payslip downloaded successfully');
+                const filename = `Payslip_${empName}_${payroll.month}_${payroll.year}.pdf`;
+
+                // Dynamic import to avoid SSR issues
+                const html2pdf = (await import('html2pdf.js')).default;
+                
+                const opt = {
+                  margin:       0.5,
+                  filename:     filename,
+                  image:        { type: 'jpeg' as const, quality: 0.98 },
+                  html2canvas:  { scale: 2 },
+                  jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' as const }
+                };
+
+                // Create a temporary container
+                const tempDiv = document.createElement('div');
+                // Hide it from view but keep it in normal document flow so html2canvas can render it
+                tempDiv.style.position = 'absolute';
+                tempDiv.style.left = '-9999px';
+                tempDiv.style.top = '0';
+                tempDiv.innerHTML = htmlString;
+                document.body.appendChild(tempDiv);
+                
+                html2pdf().set(opt).from(tempDiv).save().then(() => {
+                   document.body.removeChild(tempDiv);
+                   toast.success('Payslip downloaded successfully');
+                });
             } else {
                 const errorData = await response.json();
                 toast.error(errorData.error || 'Failed to download payslip');

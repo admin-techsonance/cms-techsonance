@@ -196,7 +196,7 @@ export default function MyAccountPage() {
         setCurrentUser(meData.user);
 
         // Get employee record for non-admin users
-        if (meData.user.role !== 'admin') {
+        if (!hasFullAccess(meData.user.role as UserRole)) {
           const employeeResponse = await fetch(`/api/employees?userId=${meData.user.id}`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
@@ -861,7 +861,7 @@ export default function MyAccountPage() {
       }
     }
 
-    const attendanceData = currentUser?.role === 'admin' ? allAttendance : attendance;
+    const attendanceData = isFullAccessUser ? allAttendance : attendance;
     const presentDays = attendanceData.filter(a => a.status === 'present').length;
     const leaveDays = attendanceData.filter(a => a.status === 'leave').length;
     const absentDays = attendanceData.filter(a => a.status === 'absent').length;
@@ -1620,11 +1620,14 @@ export default function MyAccountPage() {
                                 <SelectValue placeholder="Select employee" />
                               </SelectTrigger>
                               <SelectContent>
-                                {allEmployees.map((emp) => (
-                                  <SelectItem key={emp.id} value={emp.id.toString()}>
-                                    {emp.firstName} {emp.lastName} ({emp.employeeId})
-                                  </SelectItem>
-                                ))}
+                                {employees.map((emp) => {
+                                  const user = users.find(u => u.id === emp.userId);
+                                  return (
+                                    <SelectItem key={emp.id} value={emp.id.toString()}>
+                                      {user ? `${user.firstName} ${user.lastName}` : 'Unknown'} ({emp.employeeId})
+                                    </SelectItem>
+                                  );
+                                })}
                               </SelectContent>
                             </Select>
                           </div>

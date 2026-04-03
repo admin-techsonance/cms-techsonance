@@ -75,6 +75,7 @@ interface Employee {
   firstName: string;
   lastName: string;
   employeeId: string;
+  status: string;
 }
 
 interface User {
@@ -137,7 +138,7 @@ export default function DailyUpdatePage() {
   }, [currentUser]);
 
   useEffect(() => {
-    if (currentUser?.role === 'admin' || currentUser?.role === 'hr_manager' || currentUser?.role === 'cms_administrator') {
+    if (currentUser && hasFullAccess(currentUser.role as UserRole)) {
       fetchAllDailyReports();
       fetchEmployees();
     }
@@ -394,7 +395,7 @@ export default function DailyUpdatePage() {
         return;
       }
 
-      // Create daily report
+      // Create daily report (API will update if one already exists for this date)
       const reportResponse = await fetch('/api/daily-reports', {
         method: 'POST',
         headers: {
@@ -407,6 +408,7 @@ export default function DailyUpdatePage() {
       if (!reportResponse.ok) {
         const error = await reportResponse.json();
         toast.error(error.error || 'Failed to create daily report');
+        setLoading(false);
         return;
       }
 
@@ -445,7 +447,7 @@ export default function DailyUpdatePage() {
       setDate(new Date().toISOString().split('T')[0]);
       setAvailableStatus('present');
 
-      if (currentUser?.role === 'admin' || currentUser?.role === 'hr_manager' || currentUser?.role === 'cms_administrator') {
+      if (currentUser && hasFullAccess(currentUser.role as UserRole)) {
         fetchAllDailyReports();
       }
       fetchMyHistory(); // Refresh history for everyone
@@ -538,7 +540,7 @@ export default function DailyUpdatePage() {
         let data = await response.json();
         // If user is admin/hr, the API returns ALL reports. We need to filter for ONLY current user's reports for "My History" tab.
         // We know currentUser.id. dailyReports has userId.
-        if (currentUser.role === 'admin' || currentUser.role === 'hr_manager' || currentUser.role === 'cms_administrator') {
+        if (hasFullAccess(currentUser.role as UserRole)) {
           data = data.filter((r: DailyReport) => r.userId === currentUser.id);
         }
         setMyHistoryReports(data);

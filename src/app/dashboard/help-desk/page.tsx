@@ -31,6 +31,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
 
 interface Ticket {
   id: number;
@@ -96,7 +97,7 @@ export default function HelpDeskPage() {
 
   useEffect(() => {
     if (currentUser) {
-      if (currentUser.role === 'admin') {
+      if (hasFullAccess(currentUser.role as UserRole)) {
         fetchEmployees();
         fetchAllTickets();
       } else {
@@ -347,7 +348,7 @@ export default function HelpDeskPage() {
           description: '',
           priority: 'medium',
         });
-        if (currentUser?.role === 'admin') {
+        if (currentUser && hasFullAccess(currentUser.role as UserRole)) {
           fetchAllTickets();
         } else {
           fetchTickets();
@@ -386,12 +387,12 @@ export default function HelpDeskPage() {
     return <Badge variant={statusColors[status]}>{status.replace('_', ' ')}</Badge>;
   };
 
-  const ticketsData = currentUser?.role === 'admin' ? allTickets : filteredTickets;
+  const ticketsData = currentUser && hasFullAccess(currentUser.role as UserRole) ? allTickets : filteredTickets;
   const openTickets = ticketsData.filter(t => t.status === 'open').length;
   const inProgressTickets = ticketsData.filter(t => t.status === 'in_progress').length;
   const resolvedTickets = ticketsData.filter(t => t.status === 'resolved').length;
 
-  const isAdmin = currentUser?.role === 'admin';
+  const isAdmin = currentUser && hasFullAccess(currentUser.role as UserRole);
 
   return (
     <div className="space-y-6">

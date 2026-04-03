@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { businessSettings } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { safeErrorMessage } from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
     try {
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
     } catch (error) {
         console.error('GET business settings error:', error);
         return NextResponse.json({
-            error: 'Internal server error: ' + (error as Error).message
+            error: safeErrorMessage(error)
         }, { status: 500 });
     }
 }
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest) {
     } catch (error) {
         console.error('POST business settings error:', error);
         return NextResponse.json({
-            error: 'Internal server error: ' + (error as Error).message
+            error: safeErrorMessage(error)
         }, { status: 500 });
     }
 }

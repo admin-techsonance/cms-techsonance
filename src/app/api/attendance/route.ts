@@ -1,26 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { attendance, employees } from '@/db/schema';
-import { eq, like, and, or, desc, asc, gte, lte, sql } from 'drizzle-orm';
+import { eq, and, desc, asc, gte, lte } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
-
-const VALID_STATUSES = ['present', 'absent', 'half_day', 'leave'] as const;
-type AttendanceStatus = typeof VALID_STATUSES[number];
-
-function isValidStatus(status: string): status is AttendanceStatus {
-  return VALID_STATUSES.includes(status as AttendanceStatus);
-}
-
-function isValidDate(dateString: string): boolean {
-  const date = new Date(dateString);
-  return date instanceof Date && !isNaN(date.getTime());
-}
-
-function isValidTimestamp(timestamp: string | null | undefined): boolean {
-  if (!timestamp) return true;
-  const date = new Date(timestamp);
-  return date instanceof Date && !isNaN(date.getTime());
-}
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
+import {
+  ATTENDANCE_STATUSES,
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  isValidEnum,
+  isValidDate,
+  isValidTimestamp,
+  safeErrorMessage,
+} from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -113,14 +105,25 @@ export async function GET(request: NextRequest) {
     }
 
     // List with pagination and filters
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
+    const limit = Math.min(parseInt(searchParams.get('limit') ?? String(DEFAULT_PAGE_SIZE)), MAX_PAGE_SIZE);
     const offset = parseInt(searchParams.get('offset') ?? '0');
     const sort = searchParams.get('sort') ?? 'date';
     const order = searchParams.get('order') ?? 'desc';
 
     let conditions = [];
 
-    if (employeeId) {
+    // Non-admin users can only see their own attendance
+    if (!hasFullAccess(user.role as UserRole)) {
+      const userEmployee = await db.select()
+        .from(employees)
+        .where(eq(employees.userId, user.id))
+        .limit(1);
+
+      if (userEmployee.length === 0) {
+        return NextResponse.json([], { status: 200 });
+      }
+      conditions.push(eq(attendance.employeeId, userEmployee[0].id));
+    } else if (employeeId) {
       if (isNaN(parseInt(employeeId))) {
         return NextResponse.json({ 
           error: "Valid employee ID is required",
@@ -131,9 +134,9 @@ export async function GET(request: NextRequest) {
     }
 
     if (status) {
-      if (!isValidStatus(status)) {
+      if (!isValidEnum(status, ATTENDANCE_STATUSES)) {
         return NextResponse.json({ 
-          error: "Invalid status. Must be one of: present, absent, half_day, leave",
+          error: `Invalid status. Must be one of: ${ATTENDANCE_STATUSES.join(', ')}`,
           code: "INVALID_STATUS" 
         }, { status: 400 });
       }
@@ -182,7 +185,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('GET error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error)
     }, { status: 500 });
   }
 }
@@ -195,15 +198,9 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
+    const isAdmin = hasFullAccess(user.role as UserRole);
 
     // Validate required fields
-    if (!body.employeeId) {
-      return NextResponse.json({ 
-        error: "Employee ID is required",
-        code: "MISSING_EMPLOYEE_ID" 
-      }, { status: 400 });
-    }
-
     if (!body.date) {
       return NextResponse.json({ 
         error: "Date is required",
@@ -218,13 +215,48 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Validate employeeId is a number
-    const employeeIdNum = parseInt(body.employeeId);
-    if (isNaN(employeeIdNum)) {
+    // Validate date format
+    if (!isValidDate(body.date)) {
       return NextResponse.json({ 
-        error: "Employee ID must be a valid number",
-        code: "INVALID_EMPLOYEE_ID" 
+        error: "Invalid date format. Use ISO date string (YYYY-MM-DD)",
+        code: "INVALID_DATE" 
       }, { status: 400 });
+    }
+
+    // Validate status enum
+    if (!isValidEnum(body.status, ATTENDANCE_STATUSES)) {
+      return NextResponse.json({ 
+        error: `Invalid status. Must be one of: ${ATTENDANCE_STATUSES.join(', ')}`,
+        code: "INVALID_STATUS" 
+      }, { status: 400 });
+    }
+
+    // Determine employee ID based on role
+    let employeeIdNum: number;
+
+    if (isAdmin && body.employeeId) {
+      // Admin/HR can log attendance for any employee
+      employeeIdNum = parseInt(body.employeeId);
+      if (isNaN(employeeIdNum)) {
+        return NextResponse.json({ 
+          error: "Employee ID must be a valid number",
+          code: "INVALID_EMPLOYEE_ID" 
+        }, { status: 400 });
+      }
+    } else {
+      // Employees log their own attendance
+      const userEmployee = await db.select()
+        .from(employees)
+        .where(eq(employees.userId, user.id))
+        .limit(1);
+
+      if (userEmployee.length === 0) {
+        return NextResponse.json({ 
+          error: "Employee record not found for current user",
+          code: "EMPLOYEE_NOT_FOUND" 
+        }, { status: 404 });
+      }
+      employeeIdNum = userEmployee[0].id;
     }
 
     // Validate employee exists
@@ -238,22 +270,6 @@ export async function POST(request: NextRequest) {
         error: "Employee not found",
         code: "EMPLOYEE_NOT_FOUND" 
       }, { status: 404 });
-    }
-
-    // Validate date format
-    if (!isValidDate(body.date)) {
-      return NextResponse.json({ 
-        error: "Invalid date format. Use ISO date string (YYYY-MM-DD)",
-        code: "INVALID_DATE" 
-      }, { status: 400 });
-    }
-
-    // Validate status enum
-    if (!isValidStatus(body.status)) {
-      return NextResponse.json({ 
-        error: "Invalid status. Must be one of: present, absent, half_day, leave",
-        code: "INVALID_STATUS" 
-      }, { status: 400 });
     }
 
     // Validate checkIn timestamp if provided
@@ -284,7 +300,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Check for duplicate attendance record for same employee and date
+    // Check for existing attendance — upsert if found
     const existingRecord = await db.select()
       .from(attendance)
       .where(
@@ -296,13 +312,21 @@ export async function POST(request: NextRequest) {
       .limit(1);
 
     if (existingRecord.length > 0) {
-      return NextResponse.json({ 
-        error: "Attendance record already exists for this employee on this date",
-        code: "DUPLICATE_RECORD" 
-      }, { status: 400 });
+      // Update existing record instead of rejecting
+      const updated = await db.update(attendance)
+        .set({
+          status: body.status,
+          checkIn: body.checkIn || existingRecord[0].checkIn,
+          checkOut: body.checkOut || existingRecord[0].checkOut,
+          notes: body.notes?.trim() || existingRecord[0].notes,
+        })
+        .where(eq(attendance.id, existingRecord[0].id))
+        .returning();
+
+      return NextResponse.json(updated[0], { status: 200 });
     }
 
-    // Prepare insert data
+    // Create new record
     const insertData = {
       employeeId: employeeIdNum,
       date: body.date,
@@ -321,7 +345,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('POST error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error)
     }, { status: 500 });
   }
 }
@@ -333,6 +357,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
+    const isAdmin = hasFullAccess(user.role as UserRole);
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
 
@@ -358,10 +383,22 @@ export async function PUT(request: NextRequest) {
       }, { status: 404 });
     }
 
+    // Non-admin can only update their own attendance
+    if (!isAdmin) {
+      const userEmployee = await db.select()
+        .from(employees)
+        .where(eq(employees.userId, user.id))
+        .limit(1);
+
+      if (userEmployee.length === 0 || existingRecord[0].employeeId !== userEmployee[0].id) {
+        return NextResponse.json({ error: 'Unauthorized to update this record' }, { status: 403 });
+      }
+    }
+
     // Validate status if provided
-    if (body.status && !isValidStatus(body.status)) {
+    if (body.status && !isValidEnum(body.status, ATTENDANCE_STATUSES)) {
       return NextResponse.json({ 
-        error: "Invalid status. Must be one of: present, absent, half_day, leave",
+        error: `Invalid status. Must be one of: ${ATTENDANCE_STATUSES.join(', ')}`,
         code: "INVALID_STATUS" 
       }, { status: 400 });
     }
@@ -405,8 +442,16 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    // Validate employeeId if provided
-    if (body.employeeId) {
+    // Non-admin cannot change employeeId
+    if (body.employeeId && !isAdmin) {
+      return NextResponse.json({ 
+        error: "Only admin can change the employee for an attendance record",
+        code: "FORBIDDEN" 
+      }, { status: 403 });
+    }
+
+    // Validate employeeId if provided (admin only)
+    if (body.employeeId && isAdmin) {
       const employeeIdNum = parseInt(body.employeeId);
       if (isNaN(employeeIdNum)) {
         return NextResponse.json({ 
@@ -454,7 +499,7 @@ export async function PUT(request: NextRequest) {
     // Prepare update data
     const updateData: any = {};
 
-    if (body.employeeId !== undefined) {
+    if (body.employeeId !== undefined && isAdmin) {
       updateData.employeeId = parseInt(body.employeeId);
     }
     if (body.date !== undefined) {
@@ -483,7 +528,7 @@ export async function PUT(request: NextRequest) {
   } catch (error) {
     console.error('PUT error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error)
     }, { status: 500 });
   }
 }
@@ -493,6 +538,11 @@ export async function DELETE(request: NextRequest) {
     const user = await getCurrentUser(request);
     if (!user) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    // Only admin/HR can delete attendance records
+    if (!hasFullAccess(user.role as UserRole)) {
+      return NextResponse.json({ error: 'Only admin/HR can delete attendance records' }, { status: 403 });
     }
 
     const { searchParams } = new URL(request.url);
@@ -530,7 +580,7 @@ export async function DELETE(request: NextRequest) {
   } catch (error) {
     console.error('DELETE error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error)
     }, { status: 500 });
   }
 }

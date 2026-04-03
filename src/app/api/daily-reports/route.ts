@@ -3,21 +3,15 @@ import { db } from '@/db';
 import { dailyReports, users, employees } from '@/db/schema';
 import { eq, and, gte, lte, desc } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
-
-// Validate date format (YYYY-MM-DD)
-function isValidDateFormat(date: string): boolean {
-  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-  if (!dateRegex.test(date)) return false;
-  
-  const parsedDate = new Date(date);
-  return !isNaN(parsedDate.getTime());
-}
-
-// Validate availableStatus enum
-function isValidStatus(status: string): boolean {
-  const validStatuses = ['present', 'half_day', 'early_leave', 'on_leave'];
-  return validStatuses.includes(status);
-}
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
+import {
+  DAILY_REPORT_STATUSES,
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  isValidDateFormat,
+  isValidEnum,
+  safeErrorMessage,
+} from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -40,7 +34,7 @@ export async function GET(request: NextRequest) {
 
       // Admin/HR can view any report, others only their own
       let conditions = [eq(dailyReports.id, parseInt(id))];
-      if (user.role !== 'admin' && user.role !== 'hr') {
+      if (!hasFullAccess(user.role as UserRole)) {
         conditions.push(eq(dailyReports.userId, user.id));
       }
 
@@ -83,7 +77,7 @@ export async function GET(request: NextRequest) {
     let conditions = [];
 
     // Admin/HR can view all reports, others only their own
-    if (user.role !== 'admin' && user.role !== 'hr') {
+    if (!hasFullAccess(user.role as UserRole)) {
       conditions.push(eq(dailyReports.userId, user.id));
     }
 
@@ -143,7 +137,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('GET error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
@@ -191,9 +185,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate availableStatus enum
-    if (!isValidStatus(availableStatus)) {
+    if (!isValidEnum(availableStatus, DAILY_REPORT_STATUSES)) {
       return NextResponse.json({ 
-        error: 'Invalid availableStatus. Must be one of: present, half_day, early_leave, on_leave',
+        error: `Invalid availableStatus. Must be one of: ${DAILY_REPORT_STATUSES.join(', ')}`,
         code: 'INVALID_STATUS' 
       }, { status: 400 });
     }
@@ -208,10 +202,17 @@ export async function POST(request: NextRequest) {
       .limit(1);
 
     if (existingReport.length > 0) {
-      return NextResponse.json({ 
-        error: 'A daily report for this date already exists',
-        code: 'DUPLICATE_REPORT' 
-      }, { status: 400 });
+      // Update the existing report instead of rejecting
+      const now = new Date().toISOString();
+      const updated = await db.update(dailyReports)
+        .set({
+          availableStatus: availableStatus,
+          updatedAt: now
+        })
+        .where(eq(dailyReports.id, existingReport[0].id))
+        .returning();
+
+      return NextResponse.json(updated[0], { status: 200 });
     }
 
     // Create new daily report
@@ -231,7 +232,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('POST error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
@@ -314,9 +315,9 @@ export async function PUT(request: NextRequest) {
 
     // Validate and add availableStatus if provided
     if (availableStatus !== undefined) {
-      if (!isValidStatus(availableStatus)) {
+      if (!isValidEnum(availableStatus, DAILY_REPORT_STATUSES)) {
         return NextResponse.json({ 
-          error: 'Invalid availableStatus. Must be one of: present, half_day, early_leave, on_leave',
+          error: `Invalid availableStatus. Must be one of: ${DAILY_REPORT_STATUSES.join(', ')}`,
           code: 'INVALID_STATUS' 
         }, { status: 400 });
       }
@@ -347,7 +348,7 @@ export async function PUT(request: NextRequest) {
   } catch (error) {
     console.error('PUT error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
@@ -401,7 +402,7 @@ export async function DELETE(request: NextRequest) {
   } catch (error) {
     console.error('DELETE error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }

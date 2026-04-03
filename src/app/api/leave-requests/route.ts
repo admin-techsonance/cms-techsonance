@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { leaveRequests, employees, users } from '@/db/schema';
-import { eq, and, gte, lte, desc, like, or } from 'drizzle-orm';
+import { eq, and, gte, lte, desc } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
-import { hasFullAccess } from '@/lib/permissions';
-
-const LEAVE_TYPES = ['sick', 'casual', 'vacation', 'unpaid'] as const;
-const STATUS_TYPES = ['pending', 'approved', 'rejected'] as const;
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
+import {
+  LEAVE_TYPES,
+  APPROVAL_STATUSES,
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  isValidEnum,
+  safeErrorMessage,
+} from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,11 +24,11 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
 
-    const isAdmin = hasFullAccess(user.role);
+    const isAdmin = hasFullAccess(user.role as UserRole);
 
     // Single record fetch
     if (id) {
-      if (!id || isNaN(parseInt(id))) {
+      if (isNaN(parseInt(id))) {
         return NextResponse.json({
           error: "Valid ID is required",
           code: "INVALID_ID"
@@ -44,7 +49,6 @@ export async function GET(request: NextRequest) {
 
       // Authorization check for single record
       if (!isAdmin) {
-        // Get user's employee record
         const userEmployee = await db.select()
           .from(employees)
           .where(eq(employees.userId, user.id))
@@ -59,38 +63,31 @@ export async function GET(request: NextRequest) {
     }
 
     // List with filters, pagination, and sorting
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
+    const limit = Math.min(parseInt(searchParams.get('limit') ?? String(DEFAULT_PAGE_SIZE)), MAX_PAGE_SIZE);
     const offset = parseInt(searchParams.get('offset') ?? '0');
     let employeeId = searchParams.get('employeeId');
     const leaveType = searchParams.get('leaveType');
     const status = searchParams.get('status');
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
-    const sort = searchParams.get('sort') ?? 'createdAt';
     const order = searchParams.get('order') ?? 'desc';
 
-    // Build where conditions
     const conditions = [];
 
     // Enforce access control
     if (!isAdmin) {
-      // Get user's employee record
       const userEmployee = await db.select()
         .from(employees)
         .where(eq(employees.userId, user.id))
         .limit(1);
 
       if (userEmployee.length === 0) {
-        // If user is not an employee, they probably shouldn't see any leave requests (unless we handle this differently)
-        // Returning empty list is safe
         return NextResponse.json([], { status: 200 });
       }
 
-      // Force filter by current user's employeeId
       employeeId = userEmployee[0].id.toString();
       conditions.push(eq(leaveRequests.employeeId, userEmployee[0].id));
     } else if (employeeId) {
-      // Admin filtering by specific employee
       if (isNaN(parseInt(employeeId))) {
         return NextResponse.json({
           error: "Valid employee ID is required",
@@ -101,7 +98,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (leaveType) {
-      if (!LEAVE_TYPES.includes(leaveType as any)) {
+      if (!isValidEnum(leaveType, LEAVE_TYPES)) {
         return NextResponse.json({
           error: `Invalid leave type. Must be one of: ${LEAVE_TYPES.join(', ')}`,
           code: "INVALID_LEAVE_TYPE"
@@ -111,9 +108,9 @@ export async function GET(request: NextRequest) {
     }
 
     if (status) {
-      if (!STATUS_TYPES.includes(status as any)) {
+      if (!isValidEnum(status, APPROVAL_STATUSES)) {
         return NextResponse.json({
-          error: `Invalid status. Must be one of: ${STATUS_TYPES.join(', ')}`,
+          error: `Invalid status. Must be one of: ${APPROVAL_STATUSES.join(', ')}`,
           code: "INVALID_STATUS"
         }, { status: 400 });
       }
@@ -148,24 +145,24 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('GET error:', error);
     return NextResponse.json({
-      error: 'Internal server error: ' + (error as Error).message
+      error: safeErrorMessage(error)
     }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { employeeId, leaveType, startDate, endDate, reason, approvedBy } = body;
+    const user = await getCurrentUser(request);
 
-    // Validate required fields
-    if (!employeeId) {
-      return NextResponse.json({
-        error: "Employee ID is required",
-        code: "MISSING_EMPLOYEE_ID"
-      }, { status: 400 });
+    if (!user) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
+    const body = await request.json();
+    const { leaveType, startDate, endDate, reason } = body;
+    const isAdmin = hasFullAccess(user.role as UserRole);
+
+    // Validate required fields
     if (!leaveType) {
       return NextResponse.json({
         error: "Leave type is required",
@@ -194,16 +191,8 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Validate employee ID is a number
-    if (isNaN(parseInt(employeeId))) {
-      return NextResponse.json({
-        error: "Valid employee ID is required",
-        code: "INVALID_EMPLOYEE_ID"
-      }, { status: 400 });
-    }
-
     // Validate leave type enum
-    if (!LEAVE_TYPES.includes(leaveType)) {
+    if (!isValidEnum(leaveType, LEAVE_TYPES)) {
       return NextResponse.json({
         error: `Invalid leave type. Must be one of: ${LEAVE_TYPES.join(', ')}`,
         code: "INVALID_LEAVE_TYPE"
@@ -235,10 +224,38 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Validate employeeId exists
+    // Determine employee ID
+    let employeeIdNum: number;
+
+    if (isAdmin && body.employeeId) {
+      // Admin can create leave request for any employee
+      employeeIdNum = parseInt(body.employeeId);
+      if (isNaN(employeeIdNum)) {
+        return NextResponse.json({
+          error: "Valid employee ID is required",
+          code: "INVALID_EMPLOYEE_ID"
+        }, { status: 400 });
+      }
+    } else {
+      // Employees can only create leave requests for themselves
+      const userEmployee = await db.select()
+        .from(employees)
+        .where(eq(employees.userId, user.id))
+        .limit(1);
+
+      if (userEmployee.length === 0) {
+        return NextResponse.json({
+          error: "Employee record not found for current user",
+          code: "EMPLOYEE_NOT_FOUND"
+        }, { status: 404 });
+      }
+      employeeIdNum = userEmployee[0].id;
+    }
+
+    // Validate employee exists
     const employee = await db.select()
       .from(employees)
-      .where(eq(employees.id, parseInt(employeeId)))
+      .where(eq(employees.id, employeeIdNum))
       .limit(1);
 
     if (employee.length === 0) {
@@ -248,39 +265,17 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Validate approvedBy if provided
-    if (approvedBy !== undefined && approvedBy !== null) {
-      if (isNaN(parseInt(approvedBy))) {
-        return NextResponse.json({
-          error: "Valid approver user ID is required",
-          code: "INVALID_APPROVER_ID"
-        }, { status: 400 });
-      }
-
-      const approver = await db.select()
-        .from(users)
-        .where(eq(users.id, parseInt(approvedBy)))
-        .limit(1);
-
-      if (approver.length === 0) {
-        return NextResponse.json({
-          error: "Approver user not found",
-          code: "APPROVER_NOT_FOUND"
-        }, { status: 400 });
-      }
-    }
-
     // Create leave request
     const now = new Date().toISOString();
     const newLeaveRequest = await db.insert(leaveRequests)
       .values({
-        employeeId: parseInt(employeeId),
+        employeeId: employeeIdNum,
         leaveType: leaveType,
         startDate: startDate,
         endDate: endDate,
         reason: reason.trim(),
         status: 'pending',
-        approvedBy: approvedBy ? parseInt(approvedBy) : null,
+        approvedBy: null,
         createdAt: now,
         updatedAt: now,
       })
@@ -291,13 +286,19 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('POST error:', error);
     return NextResponse.json({
-      error: 'Internal server error: ' + (error as Error).message
+      error: safeErrorMessage(error)
     }, { status: 500 });
   }
 }
 
 export async function PUT(request: NextRequest) {
   try {
+    const user = await getCurrentUser(request);
+
+    if (!user) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
 
@@ -322,39 +323,36 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { employeeId, leaveType, startDate, endDate, reason, status, approvedBy } = body;
+    const isAdmin = hasFullAccess(user.role as UserRole);
 
+    // Non-admin can only update their own pending leave requests
+    if (!isAdmin) {
+      const userEmployee = await db.select()
+        .from(employees)
+        .where(eq(employees.userId, user.id))
+        .limit(1);
+
+      if (userEmployee.length === 0 || userEmployee[0].id !== existing[0].employeeId) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+      }
+
+      // Employees can only edit pending requests
+      if (existing[0].status !== 'pending') {
+        return NextResponse.json({
+          error: 'Can only edit pending leave requests',
+          code: 'CANNOT_EDIT'
+        }, { status: 400 });
+      }
+    }
+
+    const { leaveType, startDate, endDate, reason, status } = body;
     const updates: any = {
       updatedAt: new Date().toISOString()
     };
 
-    // Validate and update employeeId
-    if (employeeId !== undefined) {
-      if (isNaN(parseInt(employeeId))) {
-        return NextResponse.json({
-          error: "Valid employee ID is required",
-          code: "INVALID_EMPLOYEE_ID"
-        }, { status: 400 });
-      }
-
-      const employee = await db.select()
-        .from(employees)
-        .where(eq(employees.id, parseInt(employeeId)))
-        .limit(1);
-
-      if (employee.length === 0) {
-        return NextResponse.json({
-          error: "Employee not found",
-          code: "EMPLOYEE_NOT_FOUND"
-        }, { status: 400 });
-      }
-
-      updates.employeeId = parseInt(employeeId);
-    }
-
     // Validate and update leaveType
     if (leaveType !== undefined) {
-      if (!LEAVE_TYPES.includes(leaveType)) {
+      if (!isValidEnum(leaveType, LEAVE_TYPES)) {
         return NextResponse.json({
           error: `Invalid leave type. Must be one of: ${LEAVE_TYPES.join(', ')}`,
           code: "INVALID_LEAVE_TYPE"
@@ -363,15 +361,27 @@ export async function PUT(request: NextRequest) {
       updates.leaveType = leaveType;
     }
 
-    // Validate and update status
+    // Admin status changes (approve/reject)
     if (status !== undefined) {
-      if (!STATUS_TYPES.includes(status)) {
+      if (!isValidEnum(status, APPROVAL_STATUSES)) {
         return NextResponse.json({
-          error: `Invalid status. Must be one of: ${STATUS_TYPES.join(', ')}`,
+          error: `Invalid status. Must be one of: ${APPROVAL_STATUSES.join(', ')}`,
           code: "INVALID_STATUS"
         }, { status: 400 });
       }
+
+      // Only admin can change status
+      if (!isAdmin) {
+        return NextResponse.json({
+          error: 'Only admin/HR can approve or reject leave requests',
+          code: 'FORBIDDEN'
+        }, { status: 403 });
+      }
+
       updates.status = status;
+      if (status === 'approved' || status === 'rejected') {
+        updates.approvedBy = user.id;
+      }
     }
 
     // Validate and update dates
@@ -397,7 +407,7 @@ export async function PUT(request: NextRequest) {
       updates.endDate = endDate;
     }
 
-    // Validate date range if both dates are being updated or one is being updated
+    // Validate date range
     const finalStartDate = updates.startDate || existing[0].startDate;
     const finalEndDate = updates.endDate || existing[0].endDate;
 
@@ -419,34 +429,6 @@ export async function PUT(request: NextRequest) {
       updates.reason = reason.trim();
     }
 
-    // Validate and update approvedBy
-    if (approvedBy !== undefined) {
-      if (approvedBy === null) {
-        updates.approvedBy = null;
-      } else {
-        if (isNaN(parseInt(approvedBy))) {
-          return NextResponse.json({
-            error: "Valid approver user ID is required",
-            code: "INVALID_APPROVER_ID"
-          }, { status: 400 });
-        }
-
-        const approver = await db.select()
-          .from(users)
-          .where(eq(users.id, parseInt(approvedBy)))
-          .limit(1);
-
-        if (approver.length === 0) {
-          return NextResponse.json({
-            error: "Approver user not found",
-            code: "APPROVER_NOT_FOUND"
-          }, { status: 400 });
-        }
-
-        updates.approvedBy = parseInt(approvedBy);
-      }
-    }
-
     const updated = await db.update(leaveRequests)
       .set(updates)
       .where(eq(leaveRequests.id, parseInt(id)))
@@ -457,13 +439,24 @@ export async function PUT(request: NextRequest) {
   } catch (error) {
     console.error('PUT error:', error);
     return NextResponse.json({
-      error: 'Internal server error: ' + (error as Error).message
+      error: safeErrorMessage(error)
     }, { status: 500 });
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
+    const user = await getCurrentUser(request);
+
+    if (!user) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    // Only admin/HR can delete (reject) leave requests
+    if (!hasFullAccess(user.role as UserRole)) {
+      return NextResponse.json({ error: 'Only admin/HR can delete leave requests' }, { status: 403 });
+    }
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
 
@@ -487,19 +480,25 @@ export async function DELETE(request: NextRequest) {
       }, { status: 404 });
     }
 
-    const deleted = await db.delete(leaveRequests)
+    // Instead of deleting, reject the leave request
+    const rejected = await db.update(leaveRequests)
+      .set({
+        status: 'rejected',
+        approvedBy: user.id,
+        updatedAt: new Date().toISOString()
+      })
       .where(eq(leaveRequests.id, parseInt(id)))
       .returning();
 
     return NextResponse.json({
-      message: 'Leave request deleted successfully',
-      data: deleted[0]
+      message: 'Leave request rejected successfully',
+      data: rejected[0]
     }, { status: 200 });
 
   } catch (error) {
     console.error('DELETE error:', error);
     return NextResponse.json({
-      error: 'Internal server error: ' + (error as Error).message
+      error: safeErrorMessage(error)
     }, { status: 500 });
   }
 }

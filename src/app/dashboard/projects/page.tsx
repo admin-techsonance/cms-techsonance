@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Plus, Search, Loader2, LayoutList, LayoutGrid, Eye, Edit, Trash2, Download, Filter, X } from 'lucide-react';
 import { ProjectFormDialog } from '@/components/projects/project-form-dialog';
 import { ProjectKanban } from '@/components/projects/project-kanban';
+import { isDeveloperRole, hasFullAccess, type UserRole } from '@/lib/permissions';
 import Link from 'next/link';
 import {
   Table,
@@ -94,7 +95,7 @@ export default function ProjectsPage() {
     if (currentUser) {
       fetchProjects();
       // Admin and project managers can see clients
-      if (currentUser.role !== 'developer') {
+      if (currentUser.role && !isDeveloperRole(currentUser.role as UserRole)) {
         fetchClients();
       }
     }
@@ -139,7 +140,7 @@ export default function ProjectsPage() {
         
         // Filter projects for developers - only show projects they're assigned to
         // Admin and project managers see all projects
-        if (currentUser?.role === 'developer') {
+        if (currentUser && isDeveloperRole(currentUser.role as UserRole)) {
           const memberResponse = await fetch(`/api/project-members?limit=1000`, {
             headers: {
               'Authorization': `Bearer ${token}`
@@ -271,8 +272,8 @@ export default function ProjectsPage() {
     return client?.companyName || 'Unknown';
   };
 
-  const isDeveloper = currentUser?.role === 'developer';
-  const isAdmin = currentUser?.role === 'admin';
+  const isDeveloper = currentUser && isDeveloperRole(currentUser.role as UserRole);
+  const isAdmin = currentUser && hasFullAccess(currentUser.role as UserRole);
   const canEdit = isAdmin || currentUser?.role === 'project_manager';
 
   return (

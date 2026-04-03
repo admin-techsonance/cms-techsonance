@@ -2,29 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { reimbursements, reimbursementCategories, employees, users, sessions } from '@/db/schema';
 import { eq, and, gte, lte, desc, or, sql } from 'drizzle-orm';
+import { getCurrentUser } from '@/lib/auth';
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
+import { DEFAULT_CURRENCY, safeErrorMessage } from '@/lib/constants';
 
-async function getCurrentUser(request: NextRequest) {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return null;
-    }
-
-    const token = authHeader.substring(7);
-
-    try {
-        const [session] = await db.select().from(sessions).where(eq(sessions.token, token)).limit(1);
-
-        if (!session) {
-            return null;
-        }
-
-        const [user] = await db.select().from(users).where(eq(users.id, session.userId)).limit(1);
-        return user || null;
-    } catch (error) {
-        console.error('Error fetching user:', error);
-        return null;
-    }
-}
 
 function generateRequestId(): string {
     const year = new Date().getFullYear();
@@ -53,7 +34,7 @@ export async function GET(request: NextRequest) {
         const maxAmount = searchParams.get('maxAmount');
         const employeeIdParam = searchParams.get('employeeId');
 
-        const isAdmin = currentUser.role === 'admin' || currentUser.role === 'hr_manager' || currentUser.role === 'cms_administrator';
+        const isAdmin = hasFullAccess(currentUser.role as UserRole);
 
         // Build query conditions
         let conditions: any[] = [];
@@ -156,7 +137,7 @@ export async function POST(request: NextRequest) {
             employeeId: employee.id,
             categoryId: parseInt(categoryId),
             amount: parseInt(amount), // Amount in paise
-            currency: 'INR',
+            currency: DEFAULT_CURRENCY,
             expenseDate,
             description,
             receiptUrl: receiptUrl || null,

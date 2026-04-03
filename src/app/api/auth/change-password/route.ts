@@ -3,31 +3,10 @@ import { db } from '@/db';
 import { users, sessions } from '@/db/schema';
 import { eq, or } from 'drizzle-orm';
 import bcrypt from 'bcrypt';
+import { getCurrentUser } from '@/lib/auth';
+import { safeErrorMessage } from '@/lib/constants';
 
 const SALT_ROUNDS = 10;
-
-async function getCurrentUser(request: NextRequest) {
-    const authHeader = request.headers.get('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return null;
-    }
-
-    const token = authHeader.substring(7);
-
-    try {
-        const [session] = await db.select().from(sessions).where(eq(sessions.token, token)).limit(1);
-
-        if (!session) {
-            return null;
-        }
-
-        const [user] = await db.select().from(users).where(eq(users.id, session.userId)).limit(1);
-        return user || null;
-    } catch (error) {
-        console.error('Error fetching user:', error);
-        return null;
-    }
-}
 
 export async function PUT(request: NextRequest) {
     try {
@@ -58,8 +37,17 @@ export async function PUT(request: NextRequest) {
             );
         }
 
+        // Fetch full user record from DB (shared getCurrentUser doesn't return password)
+        const [fullUser] = await db.select().from(users).where(eq(users.id, currentUser.id)).limit(1);
+        if (!fullUser) {
+            return NextResponse.json(
+                { error: 'User not found' },
+                { status: 404 }
+            );
+        }
+
         // Verify current password
-        const isPasswordValid = await bcrypt.compare(currentPassword, currentUser.password);
+        const isPasswordValid = await bcrypt.compare(currentPassword, fullUser.password);
 
         if (!isPasswordValid) {
             return NextResponse.json(
@@ -87,7 +75,7 @@ export async function PUT(request: NextRequest) {
     } catch (error) {
         console.error('Error changing password:', error);
         return NextResponse.json(
-            { error: 'Failed to change password', details: error instanceof Error ? error.message : 'Unknown error' },
+            { error: safeErrorMessage(error) },
             { status: 500 }
         );
     }

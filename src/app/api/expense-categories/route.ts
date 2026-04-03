@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { expenseCategories } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { safeErrorMessage } from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
     try {
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
     } catch (error) {
         console.error('GET expense categories error:', error);
         return NextResponse.json({
-            error: 'Internal server error: ' + (error as Error).message
+            error: safeErrorMessage(error)
         }, { status: 500 });
     }
 }
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
             }, { status: 400 });
         }
         return NextResponse.json({
-            error: 'Internal server error: ' + (error as Error).message
+            error: safeErrorMessage(error)
         }, { status: 500 });
     }
 }
@@ -79,7 +80,7 @@ export async function DELETE(request: NextRequest) {
     } catch (error) {
         console.error('DELETE expense categories error:', error);
         return NextResponse.json({
-            error: 'Internal server error: ' + (error as Error).message
+            error: safeErrorMessage(error)
         }, { status: 500 });
     }
 }

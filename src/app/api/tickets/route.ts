@@ -3,10 +3,15 @@ import { db } from '@/db';
 import { tickets, clients, users } from '@/db/schema';
 import { eq, like, and, or, desc, asc } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
-import { hasFullAccess } from '@/lib/permissions';
-
-const VALID_PRIORITIES = ['low', 'medium', 'high', 'urgent'];
-const VALID_STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
+import { hasFullAccess, type UserRole } from '@/lib/permissions';
+import {
+  TICKET_PRIORITIES,
+  TICKET_STATUSES,
+  DEFAULT_PAGE_SIZE,
+  MAX_PAGE_SIZE,
+  isValidEnum,
+  safeErrorMessage,
+} from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,7 +24,7 @@ export async function GET(request: NextRequest) {
     const id = searchParams.get('id');
     const ticketNumber = searchParams.get('ticketNumber');
 
-    const isAdmin = hasFullAccess(user.role);
+    const isAdmin = hasFullAccess(user.role as UserRole);
 
     // Get single ticket by ID or ticketNumber
     if (id || ticketNumber) {
@@ -60,7 +65,7 @@ export async function GET(request: NextRequest) {
     }
 
     // List tickets with pagination, search, and filtering
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
+    const limit = Math.min(parseInt(searchParams.get('limit') ?? String(DEFAULT_PAGE_SIZE)), MAX_PAGE_SIZE);
     const offset = parseInt(searchParams.get('offset') ?? '0');
     const search = searchParams.get('search');
     const clientId = searchParams.get('clientId');
@@ -98,13 +103,13 @@ export async function GET(request: NextRequest) {
     }
 
     if (status) {
-      if (VALID_STATUSES.includes(status)) {
+      if (TICKET_STATUSES.includes(status as any)) {
         conditions.push(eq(tickets.status, status));
       }
     }
 
     if (priority) {
-      if (VALID_PRIORITIES.includes(priority)) {
+      if (TICKET_PRIORITIES.includes(priority as any)) {
         conditions.push(eq(tickets.priority, priority));
       }
     }
@@ -141,7 +146,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('GET error:', error);
     return NextResponse.json({
-      error: 'Internal server error: ' + (error as Error).message
+      error: safeErrorMessage(error)
     }, { status: 500 });
   }
 }
@@ -253,10 +258,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate priority if provided
-    const ticketPriority = priority && VALID_PRIORITIES.includes(priority) ? priority : 'medium';
+    const ticketPriority = priority && isValidEnum(priority, TICKET_PRIORITIES) ? priority : 'medium';
 
     // Validate status if provided
-    const ticketStatus = status && VALID_STATUSES.includes(status) ? status : 'open';
+    const ticketStatus = status && isValidEnum(status, TICKET_STATUSES) ? status : 'open';
 
     // Create ticket
     const now = new Date().toISOString();
@@ -280,7 +285,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('POST error:', error);
     return NextResponse.json({
-      error: 'Internal server error: ' + (error as Error).message
+      error: safeErrorMessage(error)
     }, { status: 500 });
   }
 }
@@ -332,9 +337,9 @@ export async function PUT(request: NextRequest) {
 
     // Validate and update status
     if (status !== undefined) {
-      if (!VALID_STATUSES.includes(status)) {
+      if (!isValidEnum(status, TICKET_STATUSES)) {
         return NextResponse.json({
-          error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`,
+          error: `Invalid status. Must be one of: ${TICKET_STATUSES.join(', ')}`,
           code: "INVALID_STATUS"
         }, { status: 400 });
       }
@@ -343,9 +348,9 @@ export async function PUT(request: NextRequest) {
 
     // Validate and update priority
     if (priority !== undefined) {
-      if (!VALID_PRIORITIES.includes(priority)) {
+      if (!isValidEnum(priority, TICKET_PRIORITIES)) {
         return NextResponse.json({
-          error: `Invalid priority. Must be one of: ${VALID_PRIORITIES.join(', ')}`,
+          error: `Invalid priority. Must be one of: ${TICKET_PRIORITIES.join(', ')}`,
           code: "INVALID_PRIORITY"
         }, { status: 400 });
       }
@@ -394,7 +399,7 @@ export async function PUT(request: NextRequest) {
   } catch (error) {
     console.error('PUT error:', error);
     return NextResponse.json({
-      error: 'Internal server error: ' + (error as Error).message
+      error: safeErrorMessage(error)
     }, { status: 500 });
   }
 }
@@ -448,7 +453,7 @@ export async function DELETE(request: NextRequest) {
   } catch (error) {
     console.error('DELETE error:', error);
     return NextResponse.json({
-      error: 'Internal server error: ' + (error as Error).message
+      error: safeErrorMessage(error)
     }, { status: 500 });
   }
 }

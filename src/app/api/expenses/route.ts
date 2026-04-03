@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { expenses, projects, employees } from '@/db/schema';
 import { eq, like, and, or, desc, asc, gte, lte, sql } from 'drizzle-orm';
+import { safeErrorMessage } from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -226,7 +227,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('GET expenses error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
@@ -373,7 +374,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('POST expenses error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
@@ -563,7 +564,7 @@ export async function PUT(request: NextRequest) {
   } catch (error) {
     console.error('PUT expenses error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
@@ -607,7 +608,7 @@ export async function DELETE(request: NextRequest) {
   } catch (error) {
     console.error('DELETE expenses error:', error);
     return NextResponse.json({ 
-      error: 'Internal server error: ' + (error as Error).message 
+      error: safeErrorMessage(error) 
     }, { status: 500 });
   }
 }
