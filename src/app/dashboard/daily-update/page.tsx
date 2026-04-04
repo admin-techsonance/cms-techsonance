@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, Trash2, Loader2, Calendar, Clock, Edit, Eye, Users } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StatsSkeleton, TableSkeleton } from '@/components/ui/dashboard-skeleton';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -128,6 +129,27 @@ export default function DailyUpdatePage() {
   const [historyMonth, setHistoryMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [historyStartDate, setHistoryStartDate] = useState('');
   const [historyEndDate, setHistoryEndDate] = useState('');
+  const [loadingExtraWork, setLoadingExtraWork] = useState(false);
+  const [loadingCoveredWork, setLoadingCoveredWork] = useState(false);
+  const [loadingProjects, setLoadingProjects] = useState(false);
+
+  // Pagination states
+  const [historyPage, setHistoryPage] = useState(0);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [extraWorkPage, setExtraWorkPage] = useState(0);
+  const [extraWorkTotal, setExtraWorkTotal] = useState(0);
+  const [coveredWorkPage, setCoveredWorkPage] = useState(0);
+  const [coveredWorkTotal, setCoveredWorkTotal] = useState(0);
+  const pageSize = 10;
+
+  // New filters for Extra/Covered Work
+  const [isExtraWorkMonthFilter, setIsExtraWorkMonthFilter] = useState(true);
+  const [extraWorkMonth, setExtraWorkMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [selectedEmployeeExtraWork, setSelectedEmployeeExtraWork] = useState('all');
+  
+  const [isCoveredWorkMonthFilter, setIsCoveredWorkMonthFilter] = useState(true);
+  const [coveredWorkMonth, setCoveredWorkMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [selectedEmployeeCoveredWork, setSelectedEmployeeCoveredWork] = useState('all');
 
   useEffect(() => {
     fetchCurrentUser();
@@ -137,8 +159,9 @@ export default function DailyUpdatePage() {
     if (currentUser) {
       fetchProjects();
       fetchProjectsList();
+      fetchExistingReport();
     }
-  }, [currentUser]);
+  }, [currentUser, date]);
 
   useEffect(() => {
     if (currentUser && hasFullAccess(currentUser.role as UserRole)) {
@@ -146,6 +169,61 @@ export default function DailyUpdatePage() {
       fetchEmployees();
     }
   }, [currentUser, selectedEmployeeFilter, adminStartDate, adminEndDate, adminStatusFilter]);
+
+  const fetchExistingReport = async () => {
+    if (!currentUser || !date) return;
+
+    try {
+      const token = localStorage.getItem('session_token');
+      // Fetch report for this date
+      const response = await fetch(`/api/daily-reports?startDate=${date}&endDate=${date}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (response.ok) {
+        const reports = await response.json();
+        // The API returns an array, but should be only one for (user + date)
+        const existing = reports.find((r: DailyReport) => r.date.startsWith(date));
+        
+        if (existing) {
+          setAvailableStatus(existing.availableStatus);
+          // Fetch associated projects
+          const projectsResponse = await fetch(`/api/daily-report-projects?dailyReportId=${existing.id}&limit=100`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          
+          if (projectsResponse.ok) {
+            const prs = await projectsResponse.json();
+            if (prs.length > 0) {
+              setProjectReports(prs.map((p: any) => ({
+                id: p.id.toString(), // Mark as already existing by using its ID
+                projectId: p.projectId,
+                description: p.description,
+                trackerTime: p.trackerTime,
+                isCoveredWork: p.isCoveredWork,
+                isExtraWork: p.isExtraWork,
+                isSubmitted: true // Flag to know this was already in DB
+              })));
+              return;
+            }
+          }
+        }
+      }
+      
+      // If no report or projects found, reset to a clean entry
+      setProjectReports([{
+        id: Date.now().toString(),
+        projectId: 0,
+        description: '',
+        trackerTime: 0,
+        isCoveredWork: false,
+        isExtraWork: false,
+      }]);
+      setAvailableStatus('present');
+    } catch (error) {
+      console.error('Error fetching existing report:', error);
+    }
+  };
 
   const fetchCurrentUser = async () => {
     try {
@@ -163,6 +241,7 @@ export default function DailyUpdatePage() {
   };
 
   const fetchProjects = async () => {
+    setLoadingProjects(true);
     try {
       const token = localStorage.getItem('session_token');
 
@@ -203,6 +282,8 @@ export default function DailyUpdatePage() {
       }
     } catch (error) {
       console.error('Error fetching projects:', error);
+    } finally {
+      setLoadingProjects(false);
     }
   };
 
@@ -419,6 +500,9 @@ export default function DailyUpdatePage() {
 
       // Create project reports
       for (const pr of projectReports) {
+        // Skip projects that are already submitted (fetched from DB)
+        if ((pr as any).isSubmitted) continue;
+
         await fetch('/api/daily-report-projects', {
           method: 'POST',
           headers: {
@@ -435,6 +519,9 @@ export default function DailyUpdatePage() {
           }),
         });
       }
+
+      toast.success('Daily report details saved successfully!');
+      fetchExistingReport(); // Refresh the form with saved data
 
       toast.success('Daily report submitted successfully!');
 
@@ -463,12 +550,23 @@ export default function DailyUpdatePage() {
   };
 
   const fetchExtraWork = async () => {
+    setLoadingExtraWork(true);
     try {
       const token = localStorage.getItem('session_token');
-      let url = '/api/daily-report-projects?isExtraWork=true&limit=100';
-      if (startDate) url += `&startDate=${startDate}`;
-      if (endDate) url += `&endDate=${endDate}`;
+      let url = `/api/daily-report-projects?isExtraWork=true&limit=${pageSize}&offset=${extraWorkPage * pageSize}`;
+      
+      if (isExtraWorkMonthFilter && extraWorkMonth) {
+        const [year, month] = extraWorkMonth.split('-');
+        const start = `${year}-${month}-01`;
+        const end = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
+        url += `&startDate=${start}&endDate=${end}`;
+      } else {
+        if (startDate) url += `&startDate=${startDate}`;
+        if (endDate) url += `&endDate=${endDate}`;
+      }
+
       if (selectedProjectFilter !== 'all') url += `&projectId=${selectedProjectFilter}`;
+      if (isAdmin && selectedEmployeeExtraWork !== 'all') url += `&employeeId=${selectedEmployeeExtraWork}`;
 
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -476,19 +574,34 @@ export default function DailyUpdatePage() {
       if (response.ok) {
         const data = await response.json();
         setExtraWorkReports(data);
+        // Simple heuristic for total: if we got less than pageSize, we're on last page
+        setExtraWorkTotal(extraWorkPage * pageSize + data.length + (data.length === pageSize ? 1 : 0));
       }
     } catch (error) {
       console.error('Error fetching extra work:', error);
+    } finally {
+      setLoadingExtraWork(false);
     }
   };
 
   const fetchCoveredWork = async () => {
+    setLoadingCoveredWork(true);
     try {
       const token = localStorage.getItem('session_token');
-      let url = '/api/daily-report-projects?isCoveredWork=true&limit=100';
-      if (startDate) url += `&startDate=${startDate}`;
-      if (endDate) url += `&endDate=${endDate}`;
+      let url = `/api/daily-report-projects?isCoveredWork=true&limit=${pageSize}&offset=${coveredWorkPage * pageSize}`;
+
+      if (isCoveredWorkMonthFilter && coveredWorkMonth) {
+        const [year, month] = coveredWorkMonth.split('-');
+        const start = `${year}-${month}-01`;
+        const end = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
+        url += `&startDate=${start}&endDate=${end}`;
+      } else {
+        if (startDate) url += `&startDate=${startDate}`;
+        if (endDate) url += `&endDate=${endDate}`;
+      }
+
       if (selectedProjectFilter !== 'all') url += `&projectId=${selectedProjectFilter}`;
+      if (isAdmin && selectedEmployeeCoveredWork !== 'all') url += `&employeeId=${selectedEmployeeCoveredWork}`;
 
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -496,9 +609,12 @@ export default function DailyUpdatePage() {
       if (response.ok) {
         const data = await response.json();
         setCoveredWorkReports(data);
+        setCoveredWorkTotal(coveredWorkPage * pageSize + data.length + (data.length === pageSize ? 1 : 0));
       }
     } catch (error) {
       console.error('Error fetching covered work:', error);
+    } finally {
+      setLoadingCoveredWork(false);
     }
   };
 
@@ -521,13 +637,11 @@ export default function DailyUpdatePage() {
       // Workaround: We will client-side filter for admins if needed, OR relies on the fact that admins mainly use "All Reports".
       // But for robustness:
 
-      let url = '/api/daily-reports?limit=100';
+      let url = `/api/daily-reports?limit=${pageSize}&offset=${historyPage * pageSize}`;
 
       if (historyFilterType === 'month' && historyMonth) {
-        // Calculate start and end of month
         const [year, month] = historyMonth.split('-');
         const start = `${year}-${month}-01`;
-        // end date: last day of month
         const end = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
         url += `&startDate=${start}&endDate=${end}`;
       } else if (historyFilterType === 'range') {
@@ -541,12 +655,11 @@ export default function DailyUpdatePage() {
 
       if (response.ok) {
         let data = await response.json();
-        // If user is admin/hr, the API returns ALL reports. We need to filter for ONLY current user's reports for "My History" tab.
-        // We know currentUser.id. dailyReports has userId.
         if (hasFullAccess(currentUser.role as UserRole)) {
           data = data.filter((r: DailyReport) => r.userId === currentUser.id);
         }
         setMyHistoryReports(data);
+        setHistoryTotal(historyPage * pageSize + data.length + (data.length === pageSize ? 1 : 0));
       }
     } catch (error) {
       console.error('Error fetching history:', error);
@@ -559,10 +672,20 @@ export default function DailyUpdatePage() {
   useEffect(() => {
     if (currentUser) {
       fetchMyHistory();
+    }
+  }, [currentUser, historyMonth, historyFilterType, historyStartDate, historyEndDate, historyPage]);
+
+  useEffect(() => {
+    if (currentUser) {
       fetchExtraWork();
+    }
+  }, [currentUser, extraWorkMonth, isExtraWorkMonthFilter, startDate, endDate, selectedProjectFilter, selectedEmployeeExtraWork, extraWorkPage]);
+
+  useEffect(() => {
+    if (currentUser) {
       fetchCoveredWork();
     }
-  }, [currentUser, historyMonth, historyFilterType, historyStartDate, historyEndDate]);
+  }, [currentUser, coveredWorkMonth, isCoveredWorkMonthFilter, startDate, endDate, selectedProjectFilter, selectedEmployeeCoveredWork, coveredWorkPage]);
 
   const getProjectName = (projectId: number) => {
     const project = projectsList.find(p => p.id === projectId);
@@ -665,38 +788,42 @@ export default function DailyUpdatePage() {
                 </div>
 
                 {/* Statistics */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardDescription>Total Reports</CardDescription>
-                      <CardTitle className="text-2xl">{allDailyReports.length}</CardTitle>
-                    </CardHeader>
-                  </Card>
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardDescription>Present</CardDescription>
-                      <CardTitle className="text-2xl">
-                        {allDailyReports.filter(r => r.availableStatus === 'present').length}
-                      </CardTitle>
-                    </CardHeader>
-                  </Card>
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardDescription>Half Day</CardDescription>
-                      <CardTitle className="text-2xl">
-                        {allDailyReports.filter(r => r.availableStatus === 'half_day').length}
-                      </CardTitle>
-                    </CardHeader>
-                  </Card>
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardDescription>On Leave</CardDescription>
-                      <CardTitle className="text-2xl">
-                        {allDailyReports.filter(r => r.availableStatus === 'on_leave').length}
-                      </CardTitle>
-                    </CardHeader>
-                  </Card>
-                </div>
+                {loading ? (
+                  <StatsSkeleton />
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardDescription>Total Reports</CardDescription>
+                        <CardTitle className="text-2xl">{allDailyReports.length}</CardTitle>
+                      </CardHeader>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardDescription>Present</CardDescription>
+                        <CardTitle className="text-2xl">
+                          {allDailyReports.filter(r => r.availableStatus === 'present').length}
+                        </CardTitle>
+                      </CardHeader>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardDescription>Half Day</CardDescription>
+                        <CardTitle className="text-2xl">
+                          {allDailyReports.filter(r => r.availableStatus === 'half_day').length}
+                        </CardTitle>
+                      </CardHeader>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardDescription>On Leave</CardDescription>
+                        <CardTitle className="text-2xl">
+                          {allDailyReports.filter(r => r.availableStatus === 'on_leave').length}
+                        </CardTitle>
+                      </CardHeader>
+                    </Card>
+                  </div>
+                )}
 
                 {/* Table */}
                 <Table>
@@ -711,19 +838,7 @@ export default function DailyUpdatePage() {
                   </TableHeader>
                   <TableBody>
                     {loading ? (
-                      <TableRow>
-                        <TableCell colSpan={5} className="py-4">
-                          <div className="space-y-3">
-                            {Array.from({ length: 5 }).map((_, i) => (
-                              <div key={i} className="flex items-center gap-4">
-                                {Array.from({ length: 5 }).map((_, j) => (
-                                  <Skeleton key={j} className="h-5 w-full" />
-                                ))}
-                              </div>
-                            ))}
-                          </div>
-                        </TableCell>
-                      </TableRow>
+                      <TableSkeleton columns={5} rows={5} />
                     ) : allDailyReports.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
@@ -892,12 +1007,13 @@ export default function DailyUpdatePage() {
                           />
                         </div>
 
-                        <div className="flex gap-4">
+                        <div className="flex gap-4 items-center">
                           <div className="flex items-center space-x-2">
                             <Checkbox
                               id={`covered-${pr.id}`}
                               checked={pr.isCoveredWork}
                               onCheckedChange={(checked) => updateProjectReport(pr.id, 'isCoveredWork', checked)}
+                              disabled={(pr as any).isSubmitted}
                             />
                             <Label htmlFor={`covered-${pr.id}`} className="font-normal">
                               Is Covered Work?
@@ -909,11 +1025,18 @@ export default function DailyUpdatePage() {
                               id={`extra-${pr.id}`}
                               checked={pr.isExtraWork}
                               onCheckedChange={(checked) => updateProjectReport(pr.id, 'isExtraWork', checked)}
+                              disabled={(pr as any).isSubmitted}
                             />
                             <Label htmlFor={`extra-${pr.id}`} className="font-normal">
                               Is Extra Work?
                             </Label>
                           </div>
+
+                          {(pr as any).isSubmitted && (
+                            <Badge variant="secondary" className="ml-auto bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                              Already Submitted
+                            </Badge>
+                          )}
                         </div>
                       </div>
                     </Card>
@@ -943,25 +1066,53 @@ export default function DailyUpdatePage() {
               <CardDescription>View all extra work activities</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="space-y-2">
-                  <Label>Start Date</Label>
-                  <Input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                  />
+              <div className="flex flex-col md:flex-row gap-4 mb-6 p-4 bg-muted/50 rounded-lg">
+                <div className="space-y-2 min-w-[150px]">
+                  <Label>Filter By</Label>
+                  <Select value={isExtraWorkMonthFilter ? "month" : "range"} onValueChange={(v) => setIsExtraWorkMonthFilter(v === "month")}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="month">Month</SelectItem>
+                      <SelectItem value="range">Date Range</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label>End Date</Label>
-                  <Input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Select Project</Label>
+
+                {isExtraWorkMonthFilter ? (
+                  <div className="space-y-2">
+                    <Label>Select Month</Label>
+                    <Input
+                      type="month"
+                      value={extraWorkMonth}
+                      onChange={(e) => setExtraWorkMonth(e.target.value)}
+                      className="w-full md:w-[200px]"
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <Label>Start Date</Label>
+                      <Input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>End Date</Label>
+                      <Input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div className="space-y-2 min-w-[200px]">
+                  <Label>Project</Label>
                   <Select value={selectedProjectFilter} onValueChange={setSelectedProjectFilter}>
                     <SelectTrigger>
                       <SelectValue />
@@ -976,6 +1127,26 @@ export default function DailyUpdatePage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {isAdmin && (
+                  <div className="space-y-2 min-w-[200px]">
+                    <Label>Employee</Label>
+                    <Select value={selectedEmployeeExtraWork} onValueChange={setSelectedEmployeeExtraWork}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Employees</SelectItem>
+                        {employees.map(emp => (
+                          <SelectItem key={emp.id} value={emp.id.toString()}>
+                            {emp.firstName} {emp.lastName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
                 <div className="flex items-end">
                   <Button onClick={fetchExtraWork} className="w-full">
                     Apply Filter
@@ -983,42 +1154,67 @@ export default function DailyUpdatePage() {
                 </div>
               </div>
 
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    {isAdmin && <TableHead>Employee</TableHead>}
-                    <TableHead>Project</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Time (hrs)</TableHead>
-                    <TableHead>Date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {extraWorkReports.length === 0 ? (
+              <div className="rounded-md border max-h-[600px] overflow-y-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-background z-10">
                     <TableRow>
-                      <TableCell colSpan={isAdmin ? 5 : 4} className="text-center text-muted-foreground">
-                        No extra work found. Apply filters to search.
-                      </TableCell>
+                      {isAdmin && <TableHead>Employee</TableHead>}
+                      <TableHead>Project</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Time (hrs)</TableHead>
+                      <TableHead>Date</TableHead>
                     </TableRow>
-                  ) : (
-                    extraWorkReports.map((report) => (
-                      <TableRow key={report.id}>
-                        {isAdmin && (
-                          <TableCell className="font-medium text-primary">
-                            {report.firstName} {report.lastName}
-                          </TableCell>
-                        )}
-                        <TableCell className="font-medium">
-                          {getProjectName(report.projectId)}
+                  </TableHeader>
+                  <TableBody>
+                    {loadingExtraWork ? (
+                      <TableSkeleton columns={isAdmin ? 5 : 4} rows={5} />
+                    ) : extraWorkReports.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={isAdmin ? 5 : 4} className="text-center text-muted-foreground py-8">
+                          No extra work found.
                         </TableCell>
-                        <TableCell>{report.description}</TableCell>
-                        <TableCell>{(report.trackerTime / 60).toFixed(1)}</TableCell>
-                        <TableCell>{new Date(report.createdAt).toLocaleDateString()}</TableCell>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+                    ) : (
+                      extraWorkReports.map((report) => (
+                        <TableRow key={report.id}>
+                          {isAdmin && (
+                            <TableCell className="font-medium text-primary">
+                              {report.firstName} {report.lastName}
+                            </TableCell>
+                          )}
+                          <TableCell className="font-medium">
+                            {getProjectName(report.projectId)}
+                          </TableCell>
+                          <TableCell>{report.description}</TableCell>
+                          <TableCell>{(report.trackerTime / 60).toFixed(1)}</TableCell>
+                          <TableCell>{new Date(report.createdAt).toLocaleDateString()}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-end space-x-2 py-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setExtraWorkPage(p => Math.max(0, p - 1))}
+                  disabled={extraWorkPage === 0}
+                >
+                  Previous
+                </Button>
+                <div className="text-sm font-medium">Page {extraWorkPage + 1}</div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setExtraWorkPage(p => p + 1)}
+                  disabled={extraWorkReports.length < pageSize}
+                >
+                  Next
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1031,25 +1227,53 @@ export default function DailyUpdatePage() {
               <CardDescription>View all covered work activities</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="space-y-2">
-                  <Label>Start Date</Label>
-                  <Input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                  />
+              <div className="flex flex-col md:flex-row gap-4 mb-6 p-4 bg-muted/50 rounded-lg">
+                <div className="space-y-2 min-w-[150px]">
+                  <Label>Filter By</Label>
+                  <Select value={isCoveredWorkMonthFilter ? "month" : "range"} onValueChange={(v) => setIsCoveredWorkMonthFilter(v === "month")}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="month">Month</SelectItem>
+                      <SelectItem value="range">Date Range</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label>End Date</Label>
-                  <Input
-                    type="date"
-                    value={endDate}
-                    onChange={(e) => setEndDate(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Select Project</Label>
+
+                {isCoveredWorkMonthFilter ? (
+                  <div className="space-y-2">
+                    <Label>Select Month</Label>
+                    <Input
+                      type="month"
+                      value={coveredWorkMonth}
+                      onChange={(e) => setCoveredWorkMonth(e.target.value)}
+                      className="w-full md:w-[200px]"
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <Label>Start Date</Label>
+                      <Input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>End Date</Label>
+                      <Input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                      />
+                    </div>
+                  </>
+                )}
+
+                <div className="space-y-2 min-w-[200px]">
+                  <Label>Project</Label>
                   <Select value={selectedProjectFilter} onValueChange={setSelectedProjectFilter}>
                     <SelectTrigger>
                       <SelectValue />
@@ -1064,6 +1288,26 @@ export default function DailyUpdatePage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {isAdmin && (
+                  <div className="space-y-2 min-w-[200px]">
+                    <Label>Employee</Label>
+                    <Select value={selectedEmployeeCoveredWork} onValueChange={setSelectedEmployeeCoveredWork}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Employees</SelectItem>
+                        {employees.map(emp => (
+                          <SelectItem key={emp.id} value={emp.id.toString()}>
+                            {emp.firstName} {emp.lastName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
                 <div className="flex items-end">
                   <Button onClick={fetchCoveredWork} className="w-full">
                     Apply Filter
@@ -1071,42 +1315,67 @@ export default function DailyUpdatePage() {
                 </div>
               </div>
 
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    {isAdmin && <TableHead>Employee</TableHead>}
-                    <TableHead>Project</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Time (hrs)</TableHead>
-                    <TableHead>Date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {coveredWorkReports.length === 0 ? (
+              <div className="rounded-md border max-h-[600px] overflow-y-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-background z-10">
                     <TableRow>
-                      <TableCell colSpan={isAdmin ? 5 : 4} className="text-center text-muted-foreground">
-                        No covered work found. Apply filters to search.
-                      </TableCell>
+                      {isAdmin && <TableHead>Employee</TableHead>}
+                      <TableHead>Project</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Time (hrs)</TableHead>
+                      <TableHead>Date</TableHead>
                     </TableRow>
-                  ) : (
-                    coveredWorkReports.map((report) => (
-                      <TableRow key={report.id}>
-                        {isAdmin && (
-                          <TableCell className="font-medium text-primary">
-                            {report.firstName} {report.lastName}
-                          </TableCell>
-                        )}
-                        <TableCell className="font-medium">
-                          {getProjectName(report.projectId)}
+                  </TableHeader>
+                  <TableBody>
+                    {loadingCoveredWork ? (
+                      <TableSkeleton columns={isAdmin ? 5 : 4} rows={5} />
+                    ) : coveredWorkReports.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={isAdmin ? 5 : 4} className="text-center text-muted-foreground py-8">
+                          No covered work found.
                         </TableCell>
-                        <TableCell>{report.description}</TableCell>
-                        <TableCell>{(report.trackerTime / 60).toFixed(1)}</TableCell>
-                        <TableCell>{new Date(report.createdAt).toLocaleDateString()}</TableCell>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+                    ) : (
+                      coveredWorkReports.map((report) => (
+                        <TableRow key={report.id}>
+                          {isAdmin && (
+                            <TableCell className="font-medium text-primary">
+                              {report.firstName} {report.lastName}
+                            </TableCell>
+                          )}
+                          <TableCell className="font-medium">
+                            {getProjectName(report.projectId)}
+                          </TableCell>
+                          <TableCell>{report.description}</TableCell>
+                          <TableCell>{(report.trackerTime / 60).toFixed(1)}</TableCell>
+                          <TableCell>{new Date(report.createdAt).toLocaleDateString()}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-end space-x-2 py-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCoveredWorkPage(p => Math.max(0, p - 1))}
+                  disabled={coveredWorkPage === 0}
+                >
+                  Previous
+                </Button>
+                <div className="text-sm font-medium">Page {coveredWorkPage + 1}</div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCoveredWorkPage(p => p + 1)}
+                  disabled={coveredWorkReports.length < pageSize}
+                >
+                  Next
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -1129,7 +1398,9 @@ export default function DailyUpdatePage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {projectsList.length === 0 ? (
+                  {loadingProjects ? (
+                    <TableSkeleton columns={4} rows={5} />
+                  ) : projectsList.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} className="text-center text-muted-foreground">
                         No projects assigned
@@ -1223,9 +1494,9 @@ export default function DailyUpdatePage() {
               </div>
 
               {/* History Table */}
-              <div className="rounded-md border">
+              <div className="rounded-md border max-h-[600px] overflow-y-auto">
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="sticky top-0 bg-background z-10">
                     <TableRow>
                       <TableHead>Date</TableHead>
                       <TableHead>Status</TableHead>
@@ -1236,11 +1507,7 @@ export default function DailyUpdatePage() {
                   </TableHeader>
                   <TableBody>
                     {loadingHistory ? (
-                      <TableRow>
-                        <TableCell colSpan={5} className="text-center py-8">
-                          <Loader2 className="h-6 w-6 animate-spin mx-auto text-primary" />
-                        </TableCell>
-                      </TableRow>
+                      <TableSkeleton columns={5} rows={5} />
                     ) : myHistoryReports.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
@@ -1263,9 +1530,7 @@ export default function DailyUpdatePage() {
                             </Badge>
                           </TableCell>
                           <TableCell className="max-w-[300px] truncate text-muted-foreground text-sm">
-                            {/* Note: In a real expanded API we might fetch project summaries here. 
-                                 For now, user can click view to see details. */}
-                            Click 'View' to see details
+                            Click 'View' to see projects
                           </TableCell>
                           <TableCell>{new Date(report.createdAt).toLocaleString()}</TableCell>
                           <TableCell className="text-right">
@@ -1283,6 +1548,27 @@ export default function DailyUpdatePage() {
                     )}
                   </TableBody>
                 </Table>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-end space-x-2 py-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setHistoryPage(p => Math.max(0, p - 1))}
+                  disabled={historyPage === 0}
+                >
+                  Previous
+                </Button>
+                <div className="text-sm font-medium">Page {historyPage + 1}</div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setHistoryPage(p => p + 1)}
+                  disabled={myHistoryReports.length < pageSize}
+                >
+                  Next
+                </Button>
               </div>
             </CardContent>
           </Card>

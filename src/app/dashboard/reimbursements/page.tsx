@@ -8,8 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Plus, Upload, Download, Check, X, FileText, Filter, Calendar, DollarSign, Receipt } from 'lucide-react';
-import { ContentSkeleton } from '@/components/ui/dashboard-skeleton';
+import { Loader2, Plus, Upload, Download, Check, X, FileText, Search, Calendar, DollarSign, Receipt } from 'lucide-react';
+import { ContentSkeleton, StatsSkeleton, TableSkeleton } from '@/components/ui/dashboard-skeleton';
 import { toast } from 'sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -95,6 +95,7 @@ export default function ReimbursementsPage() {
     const [categoryFilter, setCategoryFilter] = useState('all');
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
+    const [searchFilter, setSearchFilter] = useState('');
 
     // Admin view
     const [selectedReimbursement, setSelectedReimbursement] = useState<Reimbursement | null>(null);
@@ -108,7 +109,6 @@ export default function ReimbursementsPage() {
         if (currentUser) {
             const isAdmin = currentUser && hasFullAccess(currentUser.role);
             fetchCategories();
-            fetchReimbursements();
             if (isAdmin) {
                 fetchEmployees();
                 fetchUsers();
@@ -116,9 +116,20 @@ export default function ReimbursementsPage() {
         }
     }, [currentUser]);
 
+    // Automated filtering
+    useEffect(() => {
+        if (!currentUser) return;
+        
+        const timer = setTimeout(() => {
+            fetchReimbursements();
+        }, 300);
+
+        return () => clearTimeout(timer);
+    }, [statusFilter, categoryFilter, startDate, endDate, searchFilter, currentUser]);
+
     const fetchCurrentUser = async () => {
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
 
             if (!token) {
                 router.push('/login');
@@ -156,7 +167,7 @@ export default function ReimbursementsPage() {
 
     const fetchCategories = async () => {
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
             const response = await fetch('/api/reimbursement-categories', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -172,13 +183,14 @@ export default function ReimbursementsPage() {
 
     const fetchReimbursements = async () => {
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
             let url = '/api/reimbursements?';
 
             if (statusFilter !== 'all') url += `status=${statusFilter}&`;
             if (categoryFilter !== 'all') url += `categoryId=${categoryFilter}&`;
             if (startDate) url += `startDate=${startDate}&`;
             if (endDate) url += `endDate=${endDate}&`;
+            if (searchFilter) url += `search=${encodeURIComponent(searchFilter)}&`;
 
             const response = await fetch(url, {
                 headers: { 'Authorization': `Bearer ${token}` }
@@ -196,7 +208,7 @@ export default function ReimbursementsPage() {
 
     const fetchEmployees = async () => {
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
             const response = await fetch('/api/employees', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -212,7 +224,7 @@ export default function ReimbursementsPage() {
 
     const fetchUsers = async () => {
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
             const response = await fetch('/api/users', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -245,7 +257,7 @@ export default function ReimbursementsPage() {
 
         setUploading(true);
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
             const formData = new FormData();
             formData.append('file', file);
 
@@ -292,7 +304,7 @@ export default function ReimbursementsPage() {
 
         setSubmitting(true);
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
 
             const response = await fetch('/api/reimbursements', {
                 method: 'POST',
@@ -335,7 +347,7 @@ export default function ReimbursementsPage() {
 
     const handleApproveReject = async (reimbursement: Reimbursement, newStatus: string) => {
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
 
             const response = await fetch(`/api/reimbursements?id=${reimbursement.id}`, {
                 method: 'PUT',
@@ -418,11 +430,7 @@ export default function ReimbursementsPage() {
         a.click();
     };
 
-    if (loading) {
-        return <ContentSkeleton />;
-    }
-
-    const isAdmin = currentUser && hasFullAccess(currentUser.role);
+    const isAdmin = currentUser && hasFullAccess(currentUser.role as UserRole);
     const canCreate = currentUser && hasPermission(currentUser.role, 'reimbursements', 'canCreate');
 
     const stats = {
@@ -445,30 +453,41 @@ export default function ReimbursementsPage() {
 
             {/* Statistics Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <Card>
-                    <CardHeader className="pb-3">
-                        <CardDescription>Total Requests</CardDescription>
-                        <CardTitle className="text-2xl">{stats.total}</CardTitle>
-                    </CardHeader>
-                </Card>
-                <Card>
-                    <CardHeader className="pb-3">
-                        <CardDescription>Pending Approval</CardDescription>
-                        <CardTitle className="text-2xl">{stats.pending}</CardTitle>
-                    </CardHeader>
-                </Card>
-                <Card>
-                    <CardHeader className="pb-3">
-                        <CardDescription>Approved</CardDescription>
-                        <CardTitle className="text-2xl">{stats.approved}</CardTitle>
-                    </CardHeader>
-                </Card>
-                <Card>
-                    <CardHeader className="pb-3">
-                        <CardDescription>Total Approved Amount</CardDescription>
-                        <CardTitle className="text-2xl">{formatAmount(stats.totalAmount)}</CardTitle>
-                    </CardHeader>
-                </Card>
+                {loading ? (
+                    <>
+                        <StatsSkeleton />
+                        <StatsSkeleton />
+                        <StatsSkeleton />
+                        <StatsSkeleton />
+                    </>
+                ) : (
+                    <>
+                        <Card>
+                            <CardHeader className="pb-3">
+                                <CardDescription>Total Requests</CardDescription>
+                                <CardTitle className="text-2xl">{stats.total}</CardTitle>
+                            </CardHeader>
+                        </Card>
+                        <Card>
+                            <CardHeader className="pb-3">
+                                <CardDescription>Pending Approval</CardDescription>
+                                <CardTitle className="text-2xl">{stats.pending}</CardTitle>
+                            </CardHeader>
+                        </Card>
+                        <Card>
+                            <CardHeader className="pb-3">
+                                <CardDescription>Approved</CardDescription>
+                                <CardTitle className="text-2xl">{stats.approved}</CardTitle>
+                            </CardHeader>
+                        </Card>
+                        <Card>
+                            <CardHeader className="pb-3">
+                                <CardDescription>Total Approved Amount</CardDescription>
+                                <CardTitle className="text-2xl">{formatAmount(stats.totalAmount)}</CardTitle>
+                            </CardHeader>
+                        </Card>
+                    </>
+                )}
             </div>
 
             <Card>
@@ -610,10 +629,23 @@ export default function ReimbursementsPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                     {/* Filters */}
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                        <div className="space-y-2">
+                            <Label>Search</Label>
+                            <div className="relative">
+                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    placeholder="Request ID or Description"
+                                    className="pl-8"
+                                    value={searchFilter}
+                                    onChange={(e) => setSearchFilter(e.target.value)}
+                                />
+                            </div>
+                        </div>
+
                         <div className="space-y-2">
                             <Label>Status</Label>
-                            <Select value={statusFilter} onValueChange={(value) => { setStatusFilter(value); fetchReimbursements(); }}>
+                            <Select value={statusFilter} onValueChange={setStatusFilter}>
                                 <SelectTrigger>
                                     <SelectValue />
                                 </SelectTrigger>
@@ -630,7 +662,7 @@ export default function ReimbursementsPage() {
 
                         <div className="space-y-2">
                             <Label>Category</Label>
-                            <Select value={categoryFilter} onValueChange={(value) => { setCategoryFilter(value); fetchReimbursements(); }}>
+                            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
                                 <SelectTrigger>
                                     <SelectValue />
                                 </SelectTrigger>
@@ -664,11 +696,6 @@ export default function ReimbursementsPage() {
                         </div>
                     </div>
 
-                    <Button onClick={fetchReimbursements} variant="outline">
-                        <Filter className="mr-2 h-4 w-4" />
-                        Apply Filters
-                    </Button>
-
                     {/* Table */}
                     <Table>
                         <TableHeader>
@@ -684,7 +711,9 @@ export default function ReimbursementsPage() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {reimbursements.length === 0 ? (
+                            {loading ? (
+                                <TableSkeleton columns={isAdmin ? 8 : 7} rows={10} />
+                            ) : reimbursements.length === 0 ? (
                                 <TableRow>
                                     <TableCell colSpan={isAdmin ? 8 : 7} className="text-center py-8 text-muted-foreground">
                                         No reimbursement requests found

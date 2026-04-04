@@ -33,7 +33,7 @@ export default function ProfilePage() {
     setLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       if (!token) {
         setError('Authentication required');
         return;

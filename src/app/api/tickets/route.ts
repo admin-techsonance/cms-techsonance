@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { tickets, clients, users } from '@/db/schema';
-import { eq, like, and, or, desc, asc } from 'drizzle-orm';
+import { eq, like, and, or, desc, asc, gte, lte } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
 import { hasFullAccess, type UserRole } from '@/lib/permissions';
 import {
@@ -72,10 +72,10 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status');
     const priority = searchParams.get('priority');
     const assignedTo = searchParams.get('assignedTo');
+    const startDate = searchParams.get('startDate');
+    const endDate = searchParams.get('endDate');
     const sort = searchParams.get('sort') ?? 'createdAt';
     const order = searchParams.get('order') ?? 'desc';
-
-    let query = db.select().from(tickets);
 
     // Build where conditions
     const conditions = [];
@@ -121,15 +121,28 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    if (startDate) {
+      conditions.push(gte(tickets.createdAt, startDate));
+    }
+
+    if (endDate) {
+      // Add one day or set to end of day to include the end date inclusive
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      conditions.push(lte(tickets.createdAt, end.toISOString()));
+    }
+
+    let finalQuery = db.select().from(tickets);
+
     if (conditions.length > 0) {
-      query = query.where(and(...conditions));
+      finalQuery = finalQuery.where(and(...conditions)) as any;
     }
 
     // Apply sorting
     if (sort === 'priority') {
       // Custom priority order: urgent > high > medium > low
       const priorityOrder = { urgent: 1, high: 2, medium: 3, low: 4 };
-      const results = await query.limit(limit).offset(offset);
+      const results = await finalQuery.limit(limit).offset(offset);
       results.sort((a, b) => {
         const orderMultiplier = order === 'asc' ? 1 : -1;
         return (priorityOrder[a.priority as keyof typeof priorityOrder] - priorityOrder[b.priority as keyof typeof priorityOrder]) * orderMultiplier;
@@ -137,10 +150,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(results);
     } else {
       // Default sort by createdAt
-      query = query.orderBy(order === 'asc' ? asc(tickets.createdAt) : desc(tickets.createdAt));
+      finalQuery = finalQuery.orderBy(order === 'asc' ? asc(tickets.createdAt) : desc(tickets.createdAt)) as any;
     }
 
-    const results = await query.limit(limit).offset(offset);
+    const results = await finalQuery.limit(limit).offset(offset);
     return NextResponse.json(results);
 
   } catch (error) {

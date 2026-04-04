@@ -15,8 +15,8 @@ export async function GET(request: NextRequest) {
       }, { status: 401 });
     }
 
-    // Role authorization check
-    if (user.role !== 'cms_administrator' && user.role !== 'hr_manager') {
+    // Role authorization check (Admin, Admin-CMS, or HR)
+    if (user.role !== 'admin' && user.role !== 'cms_administrator' && user.role !== 'hr_manager') {
       return NextResponse.json({ 
         error: 'Insufficient permissions. Admin or HR role required.',
         code: 'FORBIDDEN' 

@@ -6,7 +6,20 @@ import bcrypt from 'bcrypt';
 import { safeErrorMessage } from '@/lib/constants';
 
 const SALT_ROUNDS = 10;
-const VALID_ROLES = ['admin', 'project_manager', 'developer', 'client'] as const;
+const VALID_ROLES = [
+  'admin',
+  'hr_manager',
+  'cms_administrator',
+  'project_manager',
+  'business_development',
+  'developer',
+  'qa_engineer',
+  'devops_engineer',
+  'ui_ux_designer',
+  'digital_marketing',
+  'business_analyst',
+  'client'
+] as const;
 type UserRole = typeof VALID_ROLES[number];
 
 // Email validation regex

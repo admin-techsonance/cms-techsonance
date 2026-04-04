@@ -44,10 +44,8 @@ const navigation = [
   { name: 'Daily Updates', href: '/dashboard/daily-update', icon: ClipboardList, roles: ['admin', 'project_manager', 'developer'] },
   { name: 'My Account', href: '/dashboard/my-account', icon: UserCircle, roles: ['admin', 'project_manager', 'developer'] },
   { name: 'Help Desk', href: '/dashboard/help-desk', icon: HelpCircle, roles: ['admin', 'project_manager', 'developer'] },
-  { name: 'Inquiry', href: '/dashboard/inquiry', icon: Search, roles: ['admin', 'project_manager', 'business_development', 'developer'] },
+  { name: 'Inquiry', href: '/dashboard/inquiry', icon: Search, roles: ['admin', 'project_manager', 'business_development', 'developer', 'hr_manager', 'employee', 'cms_administrator', 'qa_engineer', 'devops_engineer', 'ui_ux_designer', 'digital_marketing', 'business_analyst'] },
   { name: 'Reimbursements', href: '/dashboard/reimbursements', icon: Receipt, roles: ['admin', 'hr_manager', 'cms_administrator', 'project_manager', 'business_development', 'developer', 'qa_engineer', 'devops_engineer', 'ui_ux_designer', 'digital_marketing', 'business_analyst'] },
-  { name: 'Attendance', href: '/dashboard/attendance', icon: Fingerprint, roles: ['admin', 'hr_manager', 'cms_administrator', 'project_manager', 'business_development', 'developer', 'qa_engineer', 'devops_engineer', 'ui_ux_designer', 'digital_marketing', 'business_analyst'] },
-  { name: 'NFC Readers', href: '/dashboard/attendance/readers', icon: Wifi, roles: ['admin', 'cms_administrator', 'hr_manager'] },
 ];
 
 export function DashboardSidebar({ user }: DashboardSidebarProps) {
@@ -58,7 +56,7 @@ export function DashboardSidebar({ user }: DashboardSidebarProps) {
   );
 
   return (
-    <aside className="hidden lg:flex lg:flex-col w-64 border-r bg-card">
+    <aside className="hidden lg:flex lg:flex-col w-64 border-r bg-card h-full">
       <div className="flex items-center gap-2 h-16 px-6 border-b">
         {/* Using logo-icon.png for the icon and keeping text for scalability/readability */}
         <div className="relative h-8 w-8">
