@@ -94,7 +94,7 @@ export default function PayrollPage() {
 
     const fetchEmployees = async () => {
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
             const response = await fetch('/api/employees?limit=100', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -122,7 +122,7 @@ export default function PayrollPage() {
 
     const fetchBusinessSettings = async () => {
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
             const response = await fetch('/api/business-settings', {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -140,7 +140,7 @@ export default function PayrollPage() {
     const fetchAttendanceSummary = async () => {
         setIsFetching(true);
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
 
             const startDate = new Date(selectedYear, selectedMonth - 1, 1).toISOString().split('T')[0];
             const endDate = new Date(selectedYear, selectedMonth, 0).toISOString().split('T')[0];
@@ -237,7 +237,7 @@ export default function PayrollPage() {
 
     const fetchPayrolls = async () => {
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
             const monthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
 
             let url = `/api/payroll?month=${monthStr}&year=${selectedYear}`;
@@ -266,7 +266,7 @@ export default function PayrollPage() {
 
         setIsGenerating(true);
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
             const monthStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
 
             const response = await fetch('/api/payroll/generate', {
@@ -301,7 +301,7 @@ export default function PayrollPage() {
 
     const handleUpdateStatus = async (payrollId: number, newStatus: string) => {
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
 
             const response = await fetch(`/api/payroll`, {
                 method: 'PUT',
@@ -334,7 +334,7 @@ export default function PayrollPage() {
         }
 
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
 
             const response = await fetch(`/api/payroll?id=${payrollId}`, {
                 method: 'DELETE',
@@ -387,7 +387,7 @@ export default function PayrollPage() {
 
     const handleDownloadPayslip = async (payroll: Payroll) => {
         try {
-            const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+            const token = localStorage.getItem('session_token');
             const response = await fetch(`/api/payroll/payslip?payrollId=${payroll.id}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });

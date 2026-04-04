@@ -1,16 +1,27 @@
 import { NextRequest } from 'next/server';
 import { db } from '@/db';
-import { users, sessions } from '@/db/schema';
+import { users, sessions, employees } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { UserRole } from './permissions';
 
 export interface User {
   id: number;
   email: string;
   firstName: string;
   lastName: string;
-  role: 'admin' | 'hr_manager' | 'cms_administrator' | 'project_manager' | 'business_development' | 'developer' | 'qa_engineer' | 'devops_engineer' | 'ui_ux_designer' | 'digital_marketing' | 'business_analyst' | 'client';
+  role: UserRole;
   avatarUrl: string | null;
   phone: string | null;
+  // Employee details from left join
+  employeeRecordId?: number | null;
+  employeeId?: string | null;
+  department?: string | null;
+  designation?: string | null;
+  dateOfJoining?: string | null;
+  dateOfBirth?: string | null;
+  skills?: any;
+  salary?: number | null;
+  status?: string | null;
 }
 
 export async function getCurrentUser(request: NextRequest): Promise<User | null> {
@@ -40,7 +51,7 @@ export async function getCurrentUser(request: NextRequest): Promise<User | null>
       return null;
     }
 
-    // Get user
+    // Get user with employee details
     const user = await db
       .select({
         id: users.id,
@@ -51,8 +62,19 @@ export async function getCurrentUser(request: NextRequest): Promise<User | null>
         avatarUrl: users.avatarUrl,
         phone: users.phone,
         isActive: users.isActive,
+        // Employee fields
+        employeeRecordId: employees.id,
+        employeeId: employees.employeeId,
+        department: employees.department,
+        designation: employees.designation,
+        dateOfJoining: employees.dateOfJoining,
+        dateOfBirth: employees.dateOfBirth,
+        skills: employees.skills,
+        salary: employees.salary,
+        status: employees.status,
       })
       .from(users)
+      .leftJoin(employees, eq(users.id, employees.userId))
       .where(eq(users.id, session[0].userId))
       .limit(1);
 

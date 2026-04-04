@@ -159,7 +159,7 @@ export function AddEmployeeDialog({ open, onOpenChange, onSuccess }: AddEmployee
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('bearer_token')}`,
+          Authorization: `Bearer ${localStorage.getItem('session_token')}`,
         },
         body: JSON.stringify(userPayload),
       });
@@ -188,7 +188,7 @@ export function AddEmployeeDialog({ open, onOpenChange, onSuccess }: AddEmployee
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('bearer_token')}`,
+          Authorization: `Bearer ${localStorage.getItem('session_token')}`,
         },
         body: JSON.stringify(employeePayload),
       });

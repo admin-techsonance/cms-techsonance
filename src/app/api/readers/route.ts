@@ -14,7 +14,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    if (user.role !== 'cms_administrator' && user.role !== 'hr_manager') {
+    // Role check: Admin, CMS Admin, or HR
+    if (user.role !== 'admin' && user.role !== 'cms_administrator' && user.role !== 'hr_manager') {
       return NextResponse.json({ 
         error: 'Insufficient permissions. Admin or HR role required.',
         code: 'INSUFFICIENT_PERMISSIONS' 
@@ -77,7 +78,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    if (user.role !== 'cms_administrator') {
+    // Role check: Admin or CMS Admin
+    if (user.role !== 'admin' && user.role !== 'cms_administrator') {
       return NextResponse.json({ 
         error: 'Insufficient permissions. Admin role required.',
         code: 'INSUFFICIENT_PERMISSIONS' 

@@ -44,9 +44,7 @@ export async function GET(request: NextRequest) {
     const offset = parseInt(searchParams.get('offset') ?? '0');
     const year = searchParams.get('year');
 
-    let query = db.select().from(companyHolidays);
-
-    // Filter by year if provided
+    const conditions = [];
     if (year) {
       const yearInt = parseInt(year);
       if (isNaN(yearInt)) {
@@ -55,11 +53,12 @@ export async function GET(request: NextRequest) {
           code: 'INVALID_YEAR' 
         }, { status: 400 });
       }
-      query = query.where(eq(companyHolidays.year, yearInt));
+      conditions.push(eq(companyHolidays.year, yearInt));
     }
 
-    // Sort by date ascending
-    const results = await query
+    const results = await db.select()
+      .from(companyHolidays)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(companyHolidays.date)
       .limit(limit)
       .offset(offset);
@@ -79,6 +78,14 @@ export async function POST(request: NextRequest) {
     const user = await getCurrentUser(request);
     if (!user) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    // Role check: Only admin, CMS Admin, or HR can create holidays
+    if (user.role !== 'admin' && user.role !== 'cms_administrator' && user.role !== 'hr_manager') {
+      return NextResponse.json({ 
+        error: 'Insufficient permissions. Admin or HR role required.',
+        code: 'FORBIDDEN' 
+      }, { status: 403 });
     }
 
     const body = await request.json();
@@ -171,6 +178,14 @@ export async function PUT(request: NextRequest) {
     const user = await getCurrentUser(request);
     if (!user) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    // Role check: Only admin, CMS Admin, or HR can update holidays
+    if (user.role !== 'admin' && user.role !== 'cms_administrator' && user.role !== 'hr_manager') {
+      return NextResponse.json({ 
+        error: 'Insufficient permissions. Admin or HR role required.',
+        code: 'FORBIDDEN' 
+      }, { status: 403 });
     }
 
     const { searchParams } = new URL(request.url);
@@ -292,6 +307,14 @@ export async function DELETE(request: NextRequest) {
     const user = await getCurrentUser(request);
     if (!user) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+
+    // Role check: Only admin, CMS Admin, or HR can delete holidays
+    if (user.role !== 'admin' && user.role !== 'cms_administrator' && user.role !== 'hr_manager') {
+      return NextResponse.json({ 
+        error: 'Insufficient permissions. Admin or HR role required.',
+        code: 'FORBIDDEN' 
+      }, { status: 403 });
     }
 
     const { searchParams } = new URL(request.url);

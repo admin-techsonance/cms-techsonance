@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { reimbursements, reimbursementCategories, employees, users, sessions } from '@/db/schema';
-import { eq, and, gte, lte, desc, or, sql } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, or, sql, like } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
 import { hasFullAccess, type UserRole } from '@/lib/permissions';
 import { DEFAULT_CURRENCY, safeErrorMessage } from '@/lib/constants';
@@ -33,11 +33,18 @@ export async function GET(request: NextRequest) {
         const minAmount = searchParams.get('minAmount');
         const maxAmount = searchParams.get('maxAmount');
         const employeeIdParam = searchParams.get('employeeId');
-
+        const search = searchParams.get('search');
         const isAdmin = hasFullAccess(currentUser.role as UserRole);
 
         // Build query conditions
         let conditions: any[] = [];
+
+        if (search) {
+            conditions.push(or(
+                like(reimbursements.requestId, `%${search}%`),
+                like(reimbursements.description, `%${search}%`)
+            ));
+        }
 
         // If not admin, only show user's own reimbursements
         if (!isAdmin) {

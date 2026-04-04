@@ -212,14 +212,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    if (user.role !== 'cms_administrator' && user.role !== 'hr_manager') {
-      return NextResponse.json({ 
-        error: 'Insufficient permissions. Only admin or hr can create manual attendance entries',
-        code: 'FORBIDDEN'
-      }, { status: 403 });
-    }
-
     const body = await request.json();
+    const { employeeId, date, timeIn, timeOut, duration, location, readerId, notes, status } = body;
+
+    // Permissions check
+    const isAdmin = ['admin', 'cms_administrator', 'hr_manager', 'management'].includes(user.role);
+    
+    if (!isAdmin) {
+      // If not admin, check if the employeeId belongs to the current user
+      const userEmployee = await db.select()
+        .from(employees)
+        .where(eq(employees.userId, user.id))
+        .limit(1);
+        
+      if (userEmployee.length === 0 || userEmployee[0].id !== parseInt(employeeId)) {
+        return NextResponse.json({ 
+          error: 'Insufficient permissions. You can only log your own attendance.',
+          code: 'FORBIDDEN'
+        }, { status: 403 });
+      }
+    }
 
     if ('userId' in body || 'user_id' in body) {
       return NextResponse.json({ 
@@ -227,8 +239,6 @@ export async function POST(request: NextRequest) {
         code: "USER_ID_NOT_ALLOWED" 
       }, { status: 400 });
     }
-
-    const { employeeId, date, timeIn, timeOut, duration, location, readerId, notes, status } = body;
 
     if (!employeeId) {
       return NextResponse.json({ 

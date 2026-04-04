@@ -115,7 +115,7 @@ export default function InquiryPage() {
 
   const fetchCurrentUser = async () => {
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       
       if (!token) {
         router.push('/login');
@@ -129,12 +129,9 @@ export default function InquiryPage() {
       if (response.ok) {
         const data = await response.json();
         setCurrentUser(data.user);
-      } else {
-        router.push('/login');
       }
     } catch (error) {
       console.error('Error fetching current user:', error);
-      router.push('/login');
     } finally {
       setLoading(false);
     }
@@ -143,7 +140,7 @@ export default function InquiryPage() {
   const fetchInquiries = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       let url = '/api/inquiries?limit=100';
       
       if (startDate) url += `&startDate=${startDate}`;
@@ -177,7 +174,7 @@ export default function InquiryPage() {
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       
       const url = editingInquiry 
         ? `/api/inquiries?id=${editingInquiry.id}`
@@ -225,7 +222,7 @@ export default function InquiryPage() {
     if (!deletingInquiry) return;
     
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       const response = await fetch(`/api/inquiries?id=${deletingInquiry.id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
@@ -248,7 +245,7 @@ export default function InquiryPage() {
 
   const toggleFavourite = async (inquiry: Inquiry) => {
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       const response = await fetch(`/api/inquiries?id=${inquiry.id}`, {
         method: 'PUT',
         headers: {
@@ -272,7 +269,7 @@ export default function InquiryPage() {
     setFeedsLoading(true);
     setSelectedInquiry(inquiryId);
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       const response = await fetch(`/api/inquiry-feeds?inquiryId=${inquiryId}&limit=100`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -302,7 +299,7 @@ export default function InquiryPage() {
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       
       const response = await fetch('/api/inquiry-feeds', {
         method: 'POST',
@@ -338,7 +335,7 @@ export default function InquiryPage() {
     if (!deletingFeed) return;
     
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       const response = await fetch(`/api/inquiry-feeds?id=${deletingFeed.id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }

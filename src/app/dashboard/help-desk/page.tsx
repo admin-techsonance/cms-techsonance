@@ -7,8 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Loader2, MessageSquare, X, AlertCircle, CheckCircle2, Clock, Eye, Edit, Trash2, Users } from 'lucide-react';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Plus, Loader2, MessageSquare, X, AlertCircle, CheckCircle2, Clock, Eye, Edit, Trash2, Users, Search } from 'lucide-react';
+import { StatsSkeleton, TableSkeleton } from '@/components/ui/dashboard-skeleton';
 import { toast } from 'sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -65,19 +65,20 @@ export default function HelpDeskPage() {
   const [loading, setLoading] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
   const [showTicketDialog, setShowTicketDialog] = useState(false);
   const [showViewDialog, setShowViewDialog] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [userId, setUserId] = useState<number | null>(null);
-  
   // Admin-specific state
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [allTickets, setAllTickets] = useState<Ticket[]>([]);
+  // Unified Filter state
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [priorityFilter, setPriorityFilter] = useState('all');
+  const [searchFilter, setSearchFilter] = useState('');
   const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState('all');
-  const [adminPriorityFilter, setAdminPriorityFilter] = useState('all');
-  const [adminStatusFilter, setAdminStatusFilter] = useState('all');
+  
   const [editingTicket, setEditingTicket] = useState<Ticket | null>(null);
   const [deletingTicket, setDeletingTicket] = useState<Ticket | null>(null);
   const [editTicketForm, setEditTicketForm] = useState({
@@ -100,12 +101,32 @@ export default function HelpDeskPage() {
     if (currentUser) {
       if (hasFullAccess(currentUser.role as UserRole)) {
         fetchEmployees();
+      }
+    }
+  }, [currentUser]);
+
+  // Automated filtering for both Admin and User
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const timer = setTimeout(() => {
+      if (hasFullAccess(currentUser.role as UserRole)) {
         fetchAllTickets();
       } else {
         fetchTickets();
       }
-    }
-  }, [currentUser, selectedEmployeeFilter, adminPriorityFilter, adminStatusFilter]);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [
+    currentUser,
+    statusFilter,
+    priorityFilter,
+    startDate,
+    endDate,
+    searchFilter,
+    selectedEmployeeFilter,
+  ]);
 
   const fetchCurrentUser = async () => {
     try {
@@ -146,8 +167,12 @@ export default function HelpDeskPage() {
       const token = localStorage.getItem('session_token');
       let url = '/api/tickets?limit=100';
       
-      if (adminStatusFilter !== 'all') url += `&status=${adminStatusFilter}`;
-      if (adminPriorityFilter !== 'all') url += `&priority=${adminPriorityFilter}`;
+      if (statusFilter !== 'all') url += `&status=${statusFilter}`;
+      if (priorityFilter !== 'all') url += `&priority=${priorityFilter}`;
+      if (selectedEmployeeFilter !== 'all') url += `&assignedTo=${selectedEmployeeFilter}`;
+      if (startDate) url += `&startDate=${startDate}`;
+      if (endDate) url += `&endDate=${endDate}`;
+      if (searchFilter) url += `&search=${encodeURIComponent(searchFilter)}`;
 
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -170,6 +195,12 @@ export default function HelpDeskPage() {
       const token = localStorage.getItem('session_token');
       let url = '/api/tickets?limit=100';
 
+      if (statusFilter !== 'all') url += `&status=${statusFilter}`;
+      if (priorityFilter !== 'all') url += `&priority=${priorityFilter}`;
+      if (startDate) url += `&startDate=${startDate}`;
+      if (endDate) url += `&endDate=${endDate}`;
+      if (searchFilter) url += `&search=${encodeURIComponent(searchFilter)}`;
+
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -177,7 +208,7 @@ export default function HelpDeskPage() {
       if (response.ok) {
         const data = await response.json();
         setTickets(data);
-        applyFilters(data);
+        setFilteredTickets(data);
       }
     } catch (error) {
       console.error('Error fetching tickets:', error);
@@ -410,57 +441,68 @@ export default function HelpDeskPage() {
 
       {/* Statistics Cards */}
       <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-red-600" />
-              Open
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{openTickets}</div>
-            <p className="text-xs text-muted-foreground">Awaiting response</p>
-          </CardContent>
-        </Card>
+        {loading ? (
+          <>
+            <StatsSkeleton />
+            <StatsSkeleton />
+            <StatsSkeleton />
+            <StatsSkeleton />
+          </>
+        ) : (
+          <>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-red-600" />
+                  Open
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{openTickets}</div>
+                <p className="text-xs text-muted-foreground">Awaiting response</p>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Clock className="h-4 w-4 text-blue-600" />
-              In Progress
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{inProgressTickets}</div>
-            <p className="text-xs text-muted-foreground">Being worked on</p>
-          </CardContent>
-        </Card>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-blue-600" />
+                  In Progress
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{inProgressTickets}</div>
+                <p className="text-xs text-muted-foreground">Being worked on</p>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-green-600" />
-              Resolved
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{resolvedTickets}</div>
-            <p className="text-xs text-muted-foreground">Completed tickets</p>
-          </CardContent>
-        </Card>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  Resolved
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{resolvedTickets}</div>
+                <p className="text-xs text-muted-foreground">Completed tickets</p>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <MessageSquare className="h-4 w-4" />
-              Total
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{ticketsData.length}</div>
-            <p className="text-xs text-muted-foreground">{isAdmin ? 'All tickets' : 'Your tickets'}</p>
-          </CardContent>
-        </Card>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <MessageSquare className="h-4 w-4" />
+                  Total
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{ticketsData.length}</div>
+                <p className="text-xs text-muted-foreground">{isAdmin ? 'All tickets' : 'Your tickets'}</p>
+              </CardContent>
+            </Card>
+          </>
+        )}
       </div>
 
       <Card>
@@ -556,78 +598,92 @@ export default function HelpDeskPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Filters */}
-          {isAdmin ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label>Priority</Label>
-                <Select value={adminPriorityFilter} onValueChange={setAdminPriorityFilter}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Priorities</SelectItem>
-                    <SelectItem value="low">Low</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Ticket Status</Label>
-                <Select value={adminStatusFilter} onValueChange={setAdminStatusFilter}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="open">Open</SelectItem>
-                    <SelectItem value="in_progress">In Progress</SelectItem>
-                    <SelectItem value="resolved">Resolved</SelectItem>
-                    <SelectItem value="closed">Closed</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="space-y-2">
-                <Label>Start Date</Label>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 pb-4">
+            <div className="space-y-2">
+              <Label>Search</Label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
+                  placeholder="Ticket # or Subject"
+                  className="pl-8"
+                  value={searchFilter}
+                  onChange={(e) => setSearchFilter(e.target.value)}
                 />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Priority</Label>
+              <Select value={priorityFilter} onValueChange={setPriorityFilter}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Priorities</SelectItem>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                  <SelectItem value="urgent">Urgent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="resolved">Resolved</SelectItem>
+                  <SelectItem value="closed">Closed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {isAdmin && (
               <div className="space-y-2">
-                <Label>End Date</Label>
-                <Input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Ticket Status</Label>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <Label>Employee</Label>
+                <Select value={selectedEmployeeFilter} onValueChange={setSelectedEmployeeFilter}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="open">Open</SelectItem>
-                    <SelectItem value="resolved">Resolved</SelectItem>
-                    <SelectItem value="in_progress">In Progress</SelectItem>
-                    <SelectItem value="closed">Closed</SelectItem>
+                    <SelectItem value="all">All Employees</SelectItem>
+                    {employees.map((emp) => (
+                      <SelectItem key={emp.id} value={emp.userId.toString()}>
+                        {emp.firstName} {emp.lastName}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-end">
-                <Button onClick={handleApplyFilter} className="w-full">
-                  Apply Filter
-                </Button>
-              </div>
-            </div>
-          )}
+            )}
+
+            {!isAdmin && (
+              <>
+                <div className="space-y-2">
+                  <Label>Start Date</Label>
+                  <Input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>End Date</Label>
+                  <Input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
+          </div>
 
           {/* Table */}
           <Table>
@@ -644,19 +700,7 @@ export default function HelpDeskPage() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow>
-                  <TableCell colSpan={7} className="py-4">
-                    <div className="space-y-3">
-                      {Array.from({ length: 5 }).map((_, i) => (
-                        <div key={i} className="flex items-center gap-4">
-                          {Array.from({ length: 7 }).map((_, j) => (
-                            <Skeleton key={j} className="h-5 w-full" />
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  </TableCell>
-                </TableRow>
+                 <TableSkeleton columns={7} rows={10} />
               ) : ticketsData.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">

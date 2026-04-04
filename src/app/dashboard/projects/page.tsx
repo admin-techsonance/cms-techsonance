@@ -79,6 +79,8 @@ export default function ProjectsPage() {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [clientFilter, setClientFilter] = useState<string>('all');
   const [activeFilter, setActiveFilter] = useState<string>('all');
+  const [startDateFilter, setStartDateFilter] = useState('');
+  const [endDateFilter, setEndDateFilter] = useState('');
   
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -100,7 +102,7 @@ export default function ProjectsPage() {
         fetchClients();
       }
     }
-  }, [statusFilter, priorityFilter, clientFilter, activeFilter, sortBy, sortOrder, currentUser]);
+  }, [statusFilter, priorityFilter, clientFilter, activeFilter, sortBy, sortOrder, startDateFilter, endDateFilter, currentUser]);
 
   const fetchCurrentUser = async () => {
     try {
@@ -130,6 +132,13 @@ export default function ProjectsPage() {
       if (clientFilter !== 'all') url += `&clientId=${clientFilter}`;
       if (activeFilter !== 'all') url += `&isActive=${activeFilter}`;
       if (sortBy && sortBy !== 'default') url += `&sort=${sortBy}&order=${sortOrder}`;
+      if (startDateFilter) url += `&startDate=${startDateFilter}`;
+      if (endDateFilter) url += `&endDate=${endDateFilter}`;
+      
+      // Optmized: Use API-level scoping for developers
+      if (currentUser && isDeveloperRole(currentUser.role as UserRole)) {
+        url += `&assignedTo=${currentUser.id}`;
+      }
       
       const response = await fetch(url, {
         headers: {
@@ -138,25 +147,7 @@ export default function ProjectsPage() {
       });
       if (response.ok) {
         const data = await response.json();
-        
-        // Filter projects for developers - only show projects they're assigned to
-        // Admin and project managers see all projects
-        if (currentUser && isDeveloperRole(currentUser.role as UserRole)) {
-          const memberResponse = await fetch(`/api/project-members?limit=1000`, {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          });
-          if (memberResponse.ok) {
-            const members = await memberResponse.json();
-            const userProjectIds = members
-              .filter((m: any) => m.userId === currentUser.id)
-              .map((m: any) => m.projectId);
-            setProjects(data.filter((p: Project) => userProjectIds.includes(p.id)));
-          }
-        } else {
-          setProjects(data);
-        }
+        setProjects(data);
       }
     } catch (error) {
       console.error('Error fetching projects:', error);
@@ -262,11 +253,15 @@ export default function ProjectsPage() {
     setClientFilter('all');
     setActiveFilter('all');
     setSortBy('default');
+    setStartDateFilter('');
+    setEndDateFilter('');
     setSearch('');
   };
 
   const hasActiveFilters = statusFilter !== 'all' || priorityFilter !== 'all' || 
-                           clientFilter !== 'all' || activeFilter !== 'all' || sortBy !== 'default' || search !== '';
+                           clientFilter !== 'all' || activeFilter !== 'all' || 
+                           sortBy !== 'default' || search !== '' || 
+                           startDateFilter !== '' || endDateFilter !== '';
 
   const getClientName = (clientId: number) => {
     const client = clients.find(c => c.id === clientId);
@@ -372,6 +367,26 @@ export default function ProjectsPage() {
                 <SelectItem value="false">Inactive Only</SelectItem>
               </SelectContent>
             </Select>
+
+            <div className="space-y-2">
+              <Input
+                type="date"
+                value={startDateFilter}
+                onChange={(e) => setStartDateFilter(e.target.value)}
+                placeholder="Start date range"
+                className="w-full"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Input
+                type="date"
+                value={endDateFilter}
+                onChange={(e) => setEndDateFilter(e.target.value)}
+                placeholder="End date range"
+                className="w-full"
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -472,21 +487,22 @@ export default function ProjectsPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Project Name</TableHead>
-                      {!isDeveloper && <TableHead>Client</TableHead>}
-                      {!isDeveloper && <TableHead>Budget</TableHead>}
-                      <TableHead>Start Date</TableHead>
-                      <TableHead>End Date</TableHead>
-                      <TableHead>Priority</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Active</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
+                <div className="rounded-md border max-h-[600px] overflow-y-auto">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-background z-10">
+                      <TableRow>
+                        <TableHead>Project Name</TableHead>
+                        {!isDeveloper && <TableHead>Client</TableHead>}
+                        {!isDeveloper && <TableHead>Budget</TableHead>}
+                        <TableHead>Start Date</TableHead>
+                        <TableHead>End Date</TableHead>
+                        <TableHead>Priority</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Active</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
                     {paginatedProjects.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={isDeveloper ? 7 : 9} className="text-center py-8 text-muted-foreground">
@@ -566,6 +582,7 @@ export default function ProjectsPage() {
                     )}
                   </TableBody>
                 </Table>
+              </div>
 
                 {/* Pagination */}
                 {totalPages > 1 && (

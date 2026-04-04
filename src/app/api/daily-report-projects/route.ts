@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { dailyReportProjects, dailyReports, projects, users } from '@/db/schema';
+import { dailyReportProjects, dailyReports, projects, users, employees } from '@/db/schema';
 import { eq, and, gte, lte, desc } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
 import { safeErrorMessage } from '@/lib/constants';
@@ -55,14 +55,20 @@ export async function GET(request: NextRequest) {
     const offset = parseInt(searchParams.get('offset') ?? '0');
     const dailyReportId = searchParams.get('dailyReportId');
     const projectId = searchParams.get('projectId');
+    const employeeId = searchParams.get('employeeId');
     const isCoveredWork = searchParams.get('isCoveredWork');
     const isExtraWork = searchParams.get('isExtraWork');
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
 
     let conditions = [];
+    
+    // Admin/HR can view all reports, others only their own
     if (!hasFullAccess(user.role as UserRole)) {
       conditions.push(eq(dailyReports.userId, user.id));
+    } else if (employeeId && employeeId !== 'all') {
+      // If admin and employeeId is filtered
+      conditions.push(eq(employees.id, parseInt(employeeId)));
     }
 
     if (dailyReportId) {
@@ -106,6 +112,7 @@ export async function GET(request: NextRequest) {
       .from(dailyReportProjects)
       .innerJoin(dailyReports, eq(dailyReportProjects.dailyReportId, dailyReports.id))
       .innerJoin(users, eq(dailyReports.userId, users.id))
+      .leftJoin(employees, eq(users.id, employees.userId)) // Added join for employees
       .where(and(...conditions))
       .orderBy(desc(dailyReportProjects.createdAt))
       .limit(limit)

@@ -1,18 +1,24 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Plus, Loader2, Calendar as CalendarIcon, Clock, Eye, Edit, Trash2, Check, X, Users, Upload, Pencil } from 'lucide-react';
+import { 
+  Plus, Loader2, Calendar as CalendarIcon, Clock, Eye, Edit, Trash2, Check, X, Users, 
+  Upload, Pencil, Fingerprint, RefreshCw, UserCheck, UserX, Search, Filter, 
+  ChevronLeft, ChevronRight, MoreHorizontal, Download
+} from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { StatsSkeleton, TableSkeleton } from '@/components/ui/dashboard-skeleton';
 import {
   Dialog,
   DialogContent,
@@ -21,7 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog';
+  } from '@/components/ui/dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,6 +39,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { hasPermission, hasFullAccess, UserRole } from '@/lib/permissions';
+import ReaderManagement from '@/components/dashboard/ReaderManagement';
 
 interface LeaveRequest {
   id: number;
@@ -53,6 +60,17 @@ interface Attendance {
   status: string;
   notes: string | null;
   employeeId: number;
+  timeIn?: string | null;
+  timeOut?: string | null;
+  duration?: number | null;
+  checkInMethod?: string;
+  employee?: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    department: string;
+  };
+  _source?: string;
 }
 
 interface CompanyHoliday {
@@ -84,10 +102,15 @@ interface User {
 }
 
 export default function MyAccountPage() {
+  const searchParams = useSearchParams();
+  const initialTab = searchParams.get('tab');
+
+  const [activeTab, setActiveTab] = useState('leave');
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [holidays, setHolidays] = useState<CompanyHoliday[]>([]);
   const [loading, setLoading] = useState(false);
+  const [isLoadingUser, setIsLoadingUser] = useState(true);
   const [employeeId, setEmployeeId] = useState<number | null>(null);
 
   // Admin-specific state
@@ -96,12 +119,24 @@ export default function MyAccountPage() {
   const [users, setUsers] = useState<UserData[]>([]);
   const [allLeaveRequests, setAllLeaveRequests] = useState<LeaveRequest[]>([]);
   const [allAttendance, setAllAttendance] = useState<Attendance[]>([]);
+  const [todaySummary, setTodaySummary] = useState<any>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [methodFilter, setMethodFilter] = useState('all');
+  const [refreshing, setRefreshing] = useState(false);
+  const [leavePage, setLeavePage] = useState(0);
+  const [attendancePage, setAttendancePage] = useState(0);
+  const PAGE_SIZE = 20;
   const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState('all');
   const [adminLeaveStatusFilter, setAdminLeaveStatusFilter] = useState('all');
   const [deletingLeave, setDeletingLeave] = useState<LeaveRequest | null>(null);
   const [approvingLeave, setApprovingLeave] = useState<LeaveRequest | null>(null);
   const [rejectingLeave, setRejectingLeave] = useState<LeaveRequest | null>(null);
   const [deletingAttendance, setDeletingAttendance] = useState<Attendance | null>(null);
+
+  // Pagination for Personal View
+  const [personalLeavePage, setPersonalLeavePage] = useState(0);
+  const [personalAttendancePage, setPersonalAttendancePage] = useState(0);
 
   // Leave filters
   const [leaveStartDate, setLeaveStartDate] = useState('');
@@ -163,8 +198,19 @@ export default function MyAccountPage() {
   }, []);
 
   useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    } else if (currentUser) {
+      // Strictly separate Admin Hub from Manager/Employee Personal View
+      const isAdminView = currentUser.role === 'admin' || currentUser.role === 'cms_administrator';
+      setActiveTab(isAdminView ? 'all-leaves' : 'leave');
+    }
+  }, [initialTab, currentUser]);
+
+  useEffect(() => {
     if (currentUser) {
-      if (isFullAccessUser) {
+      const isAdminView = currentUser.role === 'admin' || currentUser.role === 'cms_administrator';
+      if (isAdminView) {
         fetchEmployees();
         fetchAllLeaveRequests();
         fetchAllAttendance();
@@ -173,18 +219,50 @@ export default function MyAccountPage() {
         fetchAttendance();
       }
     }
-  }, [currentUser, employeeId, selectedEmployeeFilter, adminLeaveStatusFilter, selectedMonth, selectedYear]);
+  }, [
+    currentUser, 
+    employeeId, 
+    selectedEmployeeFilter, 
+    adminLeaveStatusFilter, 
+    selectedMonth, 
+    selectedYear, 
+    leavePage, 
+    attendancePage, 
+    personalLeavePage, 
+    personalAttendancePage
+  ]);
+
+  useEffect(() => {
+    if (employeeId && activeTab === 'leave') {
+      const timer = setTimeout(() => {
+        fetchLeaveRequests();
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [leaveStartDate, leaveEndDate, leaveStatusFilter, employeeId]);
 
   useEffect(() => {
     fetchHolidays();
   }, [holidayYear]);
 
+  useEffect(() => {
+    setLeavePage(0);
+    setAttendancePage(0);
+  }, [selectedEmployeeFilter, adminLeaveStatusFilter, selectedMonth, selectedYear]);
+
+  useEffect(() => {
+    if (currentUser && hasFullAccess(currentUser.role)) {
+      fetchTodaySummary();
+    }
+  }, [currentUser]);
+
   const fetchCurrentUser = async () => {
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
 
       if (!token) {
         console.error('No authentication token found');
+        setIsLoadingUser(false);
         return;
       }
 
@@ -211,16 +289,21 @@ export default function MyAccountPage() {
             }
           }
         }
+      } else if (meResponse.status === 401) {
+        // Token might be invalid, handle accordingly
+        console.error('Unauthorized session');
       }
     } catch (error) {
       console.error('Error fetching current user:', error);
       toast.error('Failed to load user information');
+    } finally {
+      setIsLoadingUser(false);
     }
   };
 
   const fetchEmployees = async () => {
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       const response = await fetch('/api/employees?limit=100', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -250,10 +333,10 @@ export default function MyAccountPage() {
   const fetchAllLeaveRequests = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
-      let url = '/api/leave-requests?limit=100';
+      const token = localStorage.getItem('session_token');
+      let url = `/api/leave-requests?limit=${PAGE_SIZE}&offset=${leavePage * PAGE_SIZE}`;
 
-      if (selectedEmployeeFilter !== 'all') url += `&employeeId=${selectedEmployeeFilter}`;
+      if (selectedEmployeeFilter !== 'all') url += `&employee_id=${selectedEmployeeFilter}`;
       if (adminLeaveStatusFilter !== 'all') url += `&status=${adminLeaveStatusFilter}`;
 
       const response = await fetch(url, {
@@ -271,17 +354,37 @@ export default function MyAccountPage() {
     }
   };
 
+  const fetchTodaySummary = async () => {
+    setSummaryLoading(true);
+    try {
+      const token = localStorage.getItem('session_token');
+      const response = await fetch('/api/attendance/today', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setTodaySummary(data.summary);
+      }
+    } catch (error) {
+      console.error('Error fetching today summary:', error);
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
   const fetchAllAttendance = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
 
       const startDate = new Date(selectedYear, selectedMonth - 1, 1).toISOString().split('T')[0];
       const endDate = new Date(selectedYear, selectedMonth, 0).toISOString().split('T')[0];
 
-      let url = `/api/attendance?startDate=${startDate}&endDate=${endDate}&limit=100`;
-      if (selectedEmployeeFilter !== 'all') url += `&employeeId=${selectedEmployeeFilter}`;
-
+      let url = `/api/attendance?start_date=${startDate}&end_date=${endDate}&limit=${PAGE_SIZE}&offset=${attendancePage * PAGE_SIZE}`;
+      
+      if (selectedEmployeeFilter !== 'all') url += `&employee_id=${selectedEmployeeFilter}`;
+      if (methodFilter !== 'all') url+= `&source=${methodFilter}`;
+      
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -297,15 +400,22 @@ export default function MyAccountPage() {
     }
   };
 
+  const handleAttendanceRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([fetchTodaySummary(), fetchAllAttendance()]);
+    setRefreshing(false);
+    toast.success('Attendance data refreshed');
+  };
+
   const fetchLeaveRequests = async () => {
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
 
       if (!token || !employeeId) {
         return;
       }
 
-      let url = `/api/leave-requests?employeeId=${employeeId}&limit=100`;
+      let url = `/api/leave-requests?employeeId=${employeeId}&limit=${PAGE_SIZE}&offset=${personalLeavePage * PAGE_SIZE}`;
 
       if (leaveStartDate) url += `&startDate=${leaveStartDate}`;
       if (leaveEndDate) url += `&endDate=${leaveEndDate}`;
@@ -326,7 +436,7 @@ export default function MyAccountPage() {
 
   const fetchAttendance = async () => {
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
 
       if (!token || !employeeId) {
         return;
@@ -336,7 +446,7 @@ export default function MyAccountPage() {
       const endDate = new Date(selectedYear, selectedMonth, 0).toISOString().split('T')[0];
 
       const response = await fetch(
-        `/api/attendance?employeeId=${employeeId}&startDate=${startDate}&endDate=${endDate}&limit=100`,
+        `/api/attendance?employee_id=${employeeId}&start_date=${startDate}&end_date=${endDate}&limit=${PAGE_SIZE}&offset=${personalAttendancePage * PAGE_SIZE}`,
         {
           headers: { 'Authorization': `Bearer ${token}` }
         }
@@ -353,7 +463,7 @@ export default function MyAccountPage() {
 
   const fetchHolidays = async () => {
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       const response = await fetch(`/api/company-holidays?year=${holidayYear}&limit=100`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -371,7 +481,7 @@ export default function MyAccountPage() {
     if (!approvingLeave) return;
 
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       const response = await fetch(`/api/leave-requests?id=${approvingLeave.id}`, {
         method: 'PUT',
         headers: {
@@ -400,7 +510,7 @@ export default function MyAccountPage() {
     if (!rejectingLeave) return;
 
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       const response = await fetch(`/api/leave-requests?id=${rejectingLeave.id}`, {
         method: 'PUT',
         headers: {
@@ -429,7 +539,7 @@ export default function MyAccountPage() {
     if (!deletingLeave) return;
 
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       const response = await fetch(`/api/leave-requests?id=${deletingLeave.id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
@@ -454,7 +564,7 @@ export default function MyAccountPage() {
     if (!deletingAttendance) return;
 
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       const response = await fetch(`/api/attendance?id=${deletingAttendance.id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
@@ -523,7 +633,7 @@ export default function MyAccountPage() {
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
 
       if (!token) {
         toast.error('Authentication token not found. Please log in again.');
@@ -586,7 +696,7 @@ export default function MyAccountPage() {
     formData.append('file', file);
 
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       const response = await fetch('/api/attendance/bulk-import', {
         method: 'POST',
         headers: {
@@ -665,7 +775,7 @@ export default function MyAccountPage() {
         checkOutISO = null;
       }
 
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
       const response = await fetch(`/api/attendance?id=${editingAttendance.id}`, {
         method: 'PUT',
         headers: {
@@ -712,7 +822,7 @@ export default function MyAccountPage() {
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
 
       const response = await fetch('/api/company-holidays', {
         method: 'POST',
@@ -766,7 +876,7 @@ export default function MyAccountPage() {
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('bearer_token') || localStorage.getItem('session_token');
+      const token = localStorage.getItem('session_token');
 
       // Create ISO datetime strings
       const checkInISO = `${attendanceForm.date}T${attendanceForm.timeIn}:00`;
@@ -784,7 +894,7 @@ export default function MyAccountPage() {
         toast.error('Time out must be after time in');
         setLoading(false);
         return;
-      } else if (workHours <= 6) {
+      } else if (workHours < 6) {
         status = 'half_day';
       }
 
@@ -800,6 +910,7 @@ export default function MyAccountPage() {
           checkIn: checkInISO,
           checkOut: checkOutISO,
           status: status,
+          checkInMethod: 'manual',
           notes: attendanceForm.notes,
         }),
       });
@@ -828,6 +939,30 @@ export default function MyAccountPage() {
       toast.error('An error occurred while marking attendance');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const formatDateOrdinal = (dateStr: string) => {
+    if (!dateStr) return '—';
+    try {
+      const date = new Date(dateStr);
+      const day = date.getDate();
+      const month = date.toLocaleString('en-US', { month: 'long' });
+      const year = date.getFullYear();
+
+      const suffix = (day: number) => {
+        if (day > 3 && day < 21) return 'th';
+        switch (day % 10) {
+          case 1: return "st";
+          case 2: return "nd";
+          case 3: return "rd";
+          default: return "th";
+        }
+      };
+
+      return `${day}${suffix(day)} ${month} ${year}`;
+    } catch (e) {
+      return dateStr;
     }
   };
 
@@ -874,32 +1009,140 @@ export default function MyAccountPage() {
         holidayDate.getFullYear() === selectedYear;
     }).length;
 
+    const isDateInCurrentWeek = (dateStr: string) => {
+      const d = new Date(dateStr);
+      const now = new Date();
+      const start = new Date(now);
+      start.setDate(now.getDate() - now.getDay() + (now.getDay() === 0 ? -6 : 1));
+      start.setHours(0,0,0,0);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      end.setHours(23,59,59,999);
+      return d >= start && d <= end;
+    };
+
+    const monthlyTotalHours = attendanceData.reduce((total, record) => {
+      const stats = calculateWorkHours(record.timeIn || record.checkIn, record.timeOut || record.checkOut);
+      return total + stats.hours;
+    }, 0);
+
+    const weeklyTotalHours = attendanceData.reduce((total, record) => {
+      if (isDateInCurrentWeek(record.date)) {
+        const stats = calculateWorkHours(record.timeIn || record.checkIn, record.timeOut || record.checkOut);
+        return total + stats.hours;
+      }
+      return total;
+    }, 0);
+
+    // Include Leaves (8h each)
+    const actualMonthlyHours = monthlyTotalHours + (leaveDays * 8);
+    const actualWeeklyHours = weeklyTotalHours + (attendanceData.filter(a => a.status === 'leave' && isDateInCurrentWeek(a.date)).length * 8);
+
+    const targetMonthlyHours = workingDaysInMonth * 8;
+    const targetWeeklyHours = 40;
+
     return {
       workingDays: workingDaysInMonth,
       presentDays,
       leaveDays,
-      holidays: holidaysInMonth
+      holidays: holidaysInMonth,
+      monthlyTotalHours: Math.round(actualMonthlyHours * 100) / 100,
+      monthlyTarget: targetMonthlyHours,
+      monthlyDifference: Math.round((actualMonthlyHours - targetMonthlyHours) * 100) / 100,
+      weeklyTotalHours: Math.round(actualWeeklyHours * 100) / 100,
+      weeklyTarget: targetWeeklyHours,
+      weeklyDifference: Math.round((actualWeeklyHours - targetWeeklyHours) * 100) / 100
     };
   };
 
+  const formatDuration = (hoursDecimal: number) => {
+    const isNegative = hoursDecimal < 0;
+    const absHours = Math.abs(hoursDecimal);
+    const hours = Math.floor(absHours);
+    const mins = Math.round((absHours - hours) * 60);
+    
+    const prefix = isNegative ? "- " : "+ ";
+    
+    if (hours === 0) {
+      return `${prefix}${mins} mins`;
+    }
+    
+    if (mins === 0) {
+      return `${prefix}${hours} hrs`;
+    }
+    
+    return `${prefix}${hours} hrs ${mins} mins`;
+  };
+
   const calculateWorkHours = (checkIn: string | null, checkOut: string | null) => {
-    if (!checkIn || !checkOut) return 0;
+    if (!checkIn || !checkOut) return { hours: 0, type: 'Absent' };
 
     const inTime = new Date(checkIn).getTime();
     const outTime = new Date(checkOut).getTime();
     const totalHours = (outTime - inTime) / (1000 * 60 * 60);
 
-    const workHours = totalHours > 4 ? totalHours - 1 : totalHours;
-
-    return Math.max(0, Math.round(workHours * 100) / 100);
+    const workHours = totalHours > 4 ? totalHours - 1 : totalHours; // Deduct lunch if > 4 hours
+    const roundedHours = Math.max(0, Math.round(workHours * 100) / 100);
+    const type = roundedHours >= 6 ? 'Full Day' : 'Half Day';
+    
+    return { 
+      hours: roundedHours, 
+      type: roundedHours > 0 ? type : 'Invalid' 
+    };
   };
 
-  const isFullAccessUser = currentUser && hasFullAccess(currentUser.role);
+  const isAdminView = currentUser && (currentUser.role === 'admin' || currentUser.role === 'cms_administrator');
+  const isFullAccessUser = isAdminView; // Use strictly for global hub access control
   const canApproveLeaves = currentUser && hasPermission(currentUser.role, 'myAccount', 'canApprove');
   const canEditAttendance = currentUser && hasPermission(currentUser.role, 'myAccount', 'canEdit');
   const canDeleteRecords = currentUser && hasPermission(currentUser.role, 'myAccount', 'canDelete');
 
   const stats = getAttendanceStats();
+
+  const filteredAttendance = allAttendance.filter(record => {
+    const searchLower = searchQuery.toLowerCase();
+    const employee = record.employee;
+
+    // Apply method filter
+    if (methodFilter !== 'all' && record.checkInMethod !== methodFilter) {
+      return false;
+    }
+
+    return (
+      (employee?.firstName || '').toLowerCase().includes(searchLower) ||
+      (employee?.lastName || '').toLowerCase().includes(searchLower) ||
+      (employee?.department || '').toLowerCase().includes(searchLower) ||
+      (employee?.email || '').toLowerCase().includes(searchLower) ||
+      record.date.includes(searchLower)
+    );
+  });
+
+  if (isLoadingUser) {
+    return (
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <Skeleton className="h-10 w-1/3" />
+          <Skeleton className="h-4 w-1/2" />
+        </div>
+        <div className="grid grid-cols-5 gap-4">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+        <div className="space-y-4">
+          <div className="grid grid-cols-4 gap-4">
+            <StatsSkeleton />
+            <StatsSkeleton />
+            <StatsSkeleton />
+            <StatsSkeleton />
+          </div>
+          <TableSkeleton columns={7} rows={8} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -914,12 +1157,20 @@ export default function MyAccountPage() {
         </p>
       </div>
 
-      <Tabs defaultValue={isFullAccessUser ? "all-leaves" : "leave"} className="space-y-6">
-        <TabsList className={isFullAccessUser ? "grid w-full grid-cols-4" : "grid w-full grid-cols-3"}>
-          {isFullAccessUser && <TabsTrigger value="all-leaves"><Users className="mr-2 h-4 w-4" />All Leaves</TabsTrigger>}
-          {isFullAccessUser && <TabsTrigger value="all-attendance">All Attendance</TabsTrigger>}
-          {!isFullAccessUser && <TabsTrigger value="leave">Leave</TabsTrigger>}
-          {!isFullAccessUser && <TabsTrigger value="attendance">Attendance</TabsTrigger>}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <TabsList className={isFullAccessUser ? "grid w-full grid-cols-5" : "grid w-full grid-cols-3"}>
+          {isFullAccessUser ? (
+            <>
+              <TabsTrigger value="all-leaves"><Users className="mr-2 h-4 w-4" />All Leaves</TabsTrigger>
+              <TabsTrigger value="all-attendance">All Attendance</TabsTrigger>
+              <TabsTrigger value="all-screens"><Fingerprint className="mr-2 h-4 w-4" />Screens</TabsTrigger>
+            </>
+          ) : (
+            <>
+              <TabsTrigger value="leave">Leave Request</TabsTrigger>
+              <TabsTrigger value="attendance">Attendance</TabsTrigger>
+            </>
+          )}
           <TabsTrigger value="holidays">Company Holidays</TabsTrigger>
         </TabsList>
 
@@ -973,66 +1224,66 @@ export default function MyAccountPage() {
 
                 {/* Statistics */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardDescription>Total Requests</CardDescription>
-                      <CardTitle className="text-2xl">{allLeaveRequests.length}</CardTitle>
-                    </CardHeader>
-                  </Card>
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardDescription>Pending</CardDescription>
-                      <CardTitle className="text-2xl">
-                        {allLeaveRequests.filter(r => r.status === 'pending').length}
-                      </CardTitle>
-                    </CardHeader>
-                  </Card>
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardDescription>Approved</CardDescription>
-                      <CardTitle className="text-2xl">
-                        {allLeaveRequests.filter(r => r.status === 'approved').length}
-                      </CardTitle>
-                    </CardHeader>
-                  </Card>
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardDescription>Rejected</CardDescription>
-                      <CardTitle className="text-2xl">
-                        {allLeaveRequests.filter(r => r.status === 'rejected').length}
-                      </CardTitle>
-                    </CardHeader>
-                  </Card>
+                  {loading ? (
+                    <>
+                      <StatsSkeleton />
+                      <StatsSkeleton />
+                      <StatsSkeleton />
+                      <StatsSkeleton />
+                    </>
+                  ) : (
+                    <>
+                      <Card>
+                        <CardHeader className="pb-3">
+                          <CardDescription>Total Requests</CardDescription>
+                          <CardTitle className="text-2xl">{allLeaveRequests.length}</CardTitle>
+                        </CardHeader>
+                      </Card>
+                      <Card>
+                        <CardHeader className="pb-3">
+                          <CardDescription>Pending</CardDescription>
+                          <CardTitle className="text-2xl">
+                            {allLeaveRequests.filter(r => r.status === 'pending').length}
+                          </CardTitle>
+                        </CardHeader>
+                      </Card>
+                      <Card>
+                        <CardHeader className="pb-3">
+                          <CardDescription>Approved</CardDescription>
+                          <CardTitle className="text-2xl">
+                            {allLeaveRequests.filter(r => r.status === 'approved').length}
+                          </CardTitle>
+                        </CardHeader>
+                      </Card>
+                      <Card>
+                        <CardHeader className="pb-3">
+                          <CardDescription>Rejected</CardDescription>
+                          <CardTitle className="text-2xl">
+                            {allLeaveRequests.filter(r => r.status === 'rejected').length}
+                          </CardTitle>
+                        </CardHeader>
+                      </Card>
+                    </>
+                  )}
                 </div>
 
                 {/* Table */}
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Employee</TableHead>
-                      <TableHead>Leave Type</TableHead>
-                      <TableHead>From Date</TableHead>
-                      <TableHead>To Date</TableHead>
-                      <TableHead>Reason</TableHead>
-                      <TableHead>Status</TableHead>
-                      {(canApproveLeaves || canDeleteRecords) && <TableHead className="text-right">Actions</TableHead>}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {loading ? (
+                <div className="max-h-[600px] overflow-y-auto rounded-md border text-[13px]">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                       <TableRow>
-                        <TableCell colSpan={7} className="py-4">
-                          <div className="space-y-3">
-                            {Array.from({ length: 5 }).map((_, i) => (
-                              <div key={i} className="flex items-center gap-4">
-                                {Array.from({ length: 7 }).map((_, j) => (
-                                  <Skeleton key={j} className="h-5 w-full" />
-                                ))}
-                              </div>
-                            ))}
-                          </div>
-                        </TableCell>
+                        <TableHead>Employee</TableHead>
+                        <TableHead>Leave Type</TableHead>
+                        <TableHead>From Date</TableHead>
+                        <TableHead>To Date</TableHead>
+                        <TableHead>Reason</TableHead>
+                        <TableHead>Status</TableHead>
+                        {(canApproveLeaves || canDeleteRecords) && <TableHead className="text-right">Actions</TableHead>}
                       </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                    {loading ? (
+                       <TableSkeleton columns={7} rows={10} />
                     ) : allLeaveRequests.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
@@ -1090,9 +1341,35 @@ export default function MyAccountPage() {
                     )}
                   </TableBody>
                 </Table>
-              </CardContent>
-            </Card>
-          </TabsContent>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-between space-x-2 py-4 border-t">
+                <div className="text-sm text-muted-foreground">
+                  Page {leavePage + 1}
+                </div>
+                <div className="space-x-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLeavePage(prev => Math.max(0, prev - 1))}
+                    disabled={leavePage === 0 || loading}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setLeavePage(prev => prev + 1)}
+                    disabled={allLeaveRequests.length < PAGE_SIZE || loading}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
         )}
 
         {/* Admin/Manager: All Attendance Tab */}
@@ -1200,6 +1477,16 @@ export default function MyAccountPage() {
                         </DialogFooter>
                       </DialogContent>
                     </Dialog>
+                    <Button
+                      onClick={handleAttendanceRefresh}
+                      disabled={refreshing}
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </Button>
                     <input
                       ref={fileInputRef}
                       type="file"
@@ -1211,6 +1498,7 @@ export default function MyAccountPage() {
                       onClick={() => fileInputRef.current?.click()}
                       disabled={isUploading}
                       variant="outline"
+                      size="sm"
                     >
                       {isUploading ? (
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1222,153 +1510,298 @@ export default function MyAccountPage() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-6">
+                {/* Global Today Summary */}
+                {summaryLoading ? (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <StatsSkeleton />
+                    <StatsSkeleton />
+                    <StatsSkeleton />
+                    <StatsSkeleton />
+                  </div>
+                ) : todaySummary && (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <Card className="bg-primary/5 border-primary/10">
+                      <CardHeader className="pb-2 pt-4">
+                        <CardDescription className="text-xs font-medium uppercase tracking-wider">Total Workforce</CardDescription>
+                        <CardTitle className="text-2xl">{todaySummary.totalEmployees}</CardTitle>
+                      </CardHeader>
+                      <CardContent className="pb-4">
+                        <div className="flex items-center text-xs text-muted-foreground">
+                          <Users className="mr-1 h-3 w-3" />
+                          Active Employees
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card className="bg-emerald-500/5 border-emerald-500/10">
+                      <CardHeader className="pb-2 pt-4">
+                        <CardDescription className="text-xs font-medium uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Present Today</CardDescription>
+                        <CardTitle className="text-2xl text-emerald-600 dark:text-emerald-400">{todaySummary.present}</CardTitle>
+                      </CardHeader>
+                      <CardContent className="pb-4">
+                        <div className="flex items-center text-xs text-muted-foreground">
+                          <UserCheck className="mr-1 h-3 w-3 text-emerald-500" />
+                          {todaySummary.onTime} on time · {todaySummary.late} late
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card className="bg-red-500/5 border-red-500/10">
+                      <CardHeader className="pb-2 pt-4">
+                        <CardDescription className="text-xs font-medium uppercase tracking-wider text-red-600 dark:text-red-400">Absent Today</CardDescription>
+                        <CardTitle className="text-2xl text-red-600 dark:text-red-400">{todaySummary.absent}</CardTitle>
+                      </CardHeader>
+                      <CardContent className="pb-4">
+                        <div className="flex items-center text-xs text-muted-foreground">
+                          <UserX className="mr-1 h-3 w-3 text-red-500" />
+                          {todaySummary.totalEmployees > 0 ? `${Math.round((todaySummary.absent / todaySummary.totalEmployees) * 100)}% absence` : '0%'}
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card className="bg-blue-500/5 border-blue-500/10">
+                      <CardHeader className="pb-2 pt-4">
+                        <CardDescription className="text-xs font-medium uppercase tracking-wider text-blue-600 dark:text-blue-400">Still On-Site</CardDescription>
+                        <CardTitle className="text-2xl text-blue-600 dark:text-blue-400">{todaySummary.stillWorking}</CardTitle>
+                      </CardHeader>
+                      <CardContent className="pb-4">
+                        <div className="flex items-center text-xs text-muted-foreground">
+                          <Clock className="mr-1 h-3 w-3 text-blue-500" />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                )}
                 {/* Filters */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <Label>Employee</Label>
-                    <Select value={selectedEmployeeFilter} onValueChange={setSelectedEmployeeFilter}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Employees</SelectItem>
-                        {employees.map(emp => (
-                          <SelectItem key={emp.id} value={emp.id.toString()}>
-                            {(() => {
-                              const user = users.find(u => u.id === emp.userId);
-                              return user ? `${user.firstName} ${user.lastName} (${emp.employeeId})` : emp.employeeId;
-                            })()}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Month</Label>
-                    <Select
-                      value={selectedMonth.toString()}
-                      onValueChange={(value) => setSelectedMonth(parseInt(value))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 12 }, (_, i) => (
-                          <SelectItem key={i + 1} value={(i + 1).toString()}>
-                            {new Date(2024, i).toLocaleString('default', { month: 'long' })}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Year</Label>
-                    <Select
-                      value={selectedYear.toString()}
-                      onValueChange={(value) => setSelectedYear(parseInt(value))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 5 }, (_, i) => {
-                          const year = new Date().getFullYear() - 2 + i;
-                          return (
-                            <SelectItem key={year} value={year.toString()}>
-                              {year}
+                <div className="flex flex-col space-y-4">
+                  <div className="flex flex-wrap items-end gap-4">
+                    <div className="flex-1 min-w-[200px] space-y-2">
+                      <Label>Search</Label>
+                      <div className="relative">
+                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Search name, dept, email..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="pl-8"
+                        />
+                      </div>
+                    </div>
+                    <div className="w-[200px] space-y-2">
+                      <Label>Employee</Label>
+                      <Select value={selectedEmployeeFilter} onValueChange={setSelectedEmployeeFilter}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Employees</SelectItem>
+                          {employees.map(emp => (
+                            <SelectItem key={emp.id} value={emp.id.toString()}>
+                              {(() => {
+                                const user = users.find(u => u.id === emp.userId);
+                                return user ? `${user.firstName} ${user.lastName} (${emp.employeeId})` : emp.employeeId;
+                              })()}
                             </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="w-[140px] space-y-2">
+                      <Label>Method</Label>
+                      <Select value={methodFilter} onValueChange={setMethodFilter}>
+                        <SelectTrigger>
+                          <Filter className="h-3.5 w-3.5 mr-1" />
+                          <SelectValue placeholder="Method" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Methods</SelectItem>
+                          <SelectItem value="nfc">NFC Only</SelectItem>
+                          <SelectItem value="manual">Manual Entry</SelectItem>
+                          <SelectItem value="legacy">Manual marking</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="w-[140px] space-y-2">
+                      <Label>Month</Label>
+                      <Select
+                        value={selectedMonth.toString()}
+                        onValueChange={(value) => setSelectedMonth(parseInt(value))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 12 }, (_, i) => (
+                            <SelectItem key={i + 1} value={(i + 1).toString()}>
+                              {new Date(2024, i).toLocaleString('default', { month: 'long' })}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="w-[100px] space-y-2">
+                      <Label>Year</Label>
+                      <Select
+                        value={selectedYear.toString()}
+                        onValueChange={(value) => setSelectedYear(parseInt(value))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 5 }, (_, i) => {
+                            const year = new Date().getFullYear() - 2 + i;
+                            return (
+                              <SelectItem key={year} value={year.toString()}>
+                                {year}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </div>
 
                 {/* Stats */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardDescription>Working Days</CardDescription>
-                      <CardTitle className="text-2xl">{stats.workingDays}</CardTitle>
-                    </CardHeader>
-                  </Card>
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardDescription>Present Days</CardDescription>
-                      <CardTitle className="text-2xl">{stats.presentDays}</CardTitle>
-                    </CardHeader>
-                  </Card>
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardDescription>Leave Days</CardDescription>
-                      <CardTitle className="text-2xl">{stats.leaveDays}</CardTitle>
-                    </CardHeader>
-                  </Card>
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardDescription>Holidays</CardDescription>
-                      <CardTitle className="text-2xl">{stats.holidays}</CardTitle>
-                    </CardHeader>
-                  </Card>
-                </div>
+                {loading ? (
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                    <StatsSkeleton />
+                    <StatsSkeleton />
+                    <StatsSkeleton />
+                    <StatsSkeleton />
+                    <StatsSkeleton />
+                    <StatsSkeleton />
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                    <Card>
+                      <CardHeader className="pb-3 text-center md:text-left">
+                        <CardDescription>Working Days</CardDescription>
+                        <CardTitle className="text-2xl">{stats.workingDays}</CardTitle>
+                      </CardHeader>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-3 text-center md:text-left">
+                        <CardDescription>Present Days</CardDescription>
+                        <CardTitle className="text-2xl">{stats.presentDays}</CardTitle>
+                      </CardHeader>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-3 text-center md:text-left">
+                        <CardDescription>Leave Days</CardDescription>
+                        <CardTitle className="text-2xl">{stats.leaveDays}</CardTitle>
+                      </CardHeader>
+                    </Card>
+                    <Card>
+                      <CardHeader className="pb-3 text-center md:text-left">
+                        <CardDescription>Holidays</CardDescription>
+                        <CardTitle className="text-2xl">{stats.holidays}</CardTitle>
+                      </CardHeader>
+                    </Card>
+                    <Card className="border-primary/20 bg-primary/5">
+                      <CardHeader className="pb-3 text-center md:text-left">
+                        <div className="flex items-center justify-between">
+                          <CardDescription className="text-primary font-medium">Month Total</CardDescription>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${stats.monthlyDifference >= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                            {formatDuration(stats.monthlyDifference)}
+                          </span>
+                        </div>
+                        <CardTitle className="text-2xl text-primary">{stats.monthlyTotalHours} hrs</CardTitle>
+                      </CardHeader>
+                    </Card>
+                    <Card className={stats.weeklyTotalHours >= stats.weeklyTarget ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"}>
+                      <CardHeader className="pb-3 text-center md:text-left">
+                        <CardDescription className="flex items-center justify-between">
+                          <span className="font-medium text-[10px] md:text-xs">Weekly (40h)</span>
+                          <span className="hidden xl:inline text-[10px] uppercase font-bold text-muted-foreground">{stats.weeklyDifference >= 0 ? 'Goal Met' : 'Awaiting Progress'}</span>
+                        </CardDescription>
+                        <div className="flex items-baseline justify-center md:justify-start gap-2">
+                          <CardTitle className="text-xl md:text-2xl">
+                            {stats.weeklyTotalHours}
+                            <span className="text-xs font-normal text-muted-foreground ml-1">/40</span>
+                          </CardTitle>
+                          <span className={`text-[10px] font-medium ${stats.weeklyDifference >= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                            ({formatDuration(stats.weeklyDifference)})
+                          </span>
+                        </div>
+                      </CardHeader>
+                    </Card>
+                  </div>
+                )}
 
                 {/* Table */}
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>No</TableHead>
-                      <TableHead>Employee</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>In Time</TableHead>
-                      <TableHead>Out Time</TableHead>
-                      <TableHead>Work Hours</TableHead>
-                      <TableHead>Status</TableHead>
-                      {(canDeleteRecords || canEditAttendance) && <TableHead className="text-right">Actions</TableHead>}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {loading ? (
+                <div className="max-h-[600px] overflow-y-auto rounded-md border text-[13px]">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                       <TableRow>
-                        <TableCell colSpan={canDeleteRecords || canEditAttendance ? 8 : 7} className="py-4">
-                          <div className="space-y-3">
-                            {Array.from({ length: 5 }).map((_, i) => (
-                              <div key={i} className="flex items-center gap-4">
-                                {Array.from({ length: 7 }).map((_, j) => (
-                                  <Skeleton key={j} className="h-5 w-full" />
-                                ))}
-                              </div>
-                            ))}
-                          </div>
-                        </TableCell>
+                        <TableHead>Employee</TableHead>
+                        <TableHead>Department</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead>In Time</TableHead>
+                        <TableHead>Out Time</TableHead>
+                        <TableHead>Work Hours</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Method</TableHead>
+                        {(canDeleteRecords || canEditAttendance) && <TableHead className="text-right">Actions</TableHead>}
                       </TableRow>
-                    ) : allAttendance.length === 0 ? (
+                    </TableHeader>
+                    <TableBody>
+                    {loading ? (
+                       <TableSkeleton columns={canDeleteRecords || canEditAttendance ? 9 : 8} rows={10} />
+                    ) : filteredAttendance.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={canDeleteRecords || canEditAttendance ? 8 : 7} className="text-center py-8 text-muted-foreground">
+                        <TableCell colSpan={canDeleteRecords || canEditAttendance ? 9 : 8} className="text-center py-8 text-muted-foreground">
                           No attendance records found
                         </TableCell>
                       </TableRow>
                     ) : (
-                      allAttendance.map((record, index) => {
-                        const workHours = calculateWorkHours(record.checkIn, record.checkOut);
+                      filteredAttendance.map((record) => {
+                        const employee = record.employee;
+                        const firstName = employee?.firstName || '';
+                        const lastName = employee?.lastName || '';
+                        const department = employee?.department || '—';
+                        
+                        const timeIn = record.timeIn ? new Date(record.timeIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
+                        const timeOut = record.timeOut ? new Date(record.timeOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
+                        
+                        const duration = record.duration ?  `${Math.floor(record.duration / 60)}h ${record.duration % 60}m` : (record.checkIn && record.checkOut ? calculateWorkHours(record.checkIn, record.checkOut) + 'h' : '—');
 
                         return (
                           <TableRow key={record.id}>
-                            <TableCell>{index + 1}</TableCell>
-                            <TableCell className="font-medium">
-                              {getEmployeeName(record.employeeId)}
-                            </TableCell>
-                            <TableCell>{new Date(record.date).toLocaleDateString()}</TableCell>
                             <TableCell>
-                              {record.checkIn ? new Date(record.checkIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-medium">
+                                  {firstName?.[0]}{lastName?.[0]}
+                                </div>
+                                <div>
+                                  <div className="font-medium text-sm">
+                                    {firstName} {lastName}
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground uppercase">
+                                    {record.employeeId}
+                                  </div>
+                                </div>
+                              </div>
                             </TableCell>
-                            <TableCell>
-                              {record.checkOut ? new Date(record.checkOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                            <TableCell className="text-sm">{department}</TableCell>
+                            <TableCell className="text-sm">
+                              {formatDateOrdinal(record.date)}
                             </TableCell>
-                            <TableCell>
-                              {workHours > 0 ? (
-                                <span className="font-medium">{workHours} hrs</span>
-                              ) : '—'}
+                            <TableCell className="text-sm font-mono">{timeIn}</TableCell>
+                            <TableCell className="text-sm font-mono">{timeOut}</TableCell>
+                            <TableCell className="text-sm">
+                              {(() => {
+                                const stats = calculateWorkHours(record.timeIn || record.checkIn, record.timeOut || record.checkOut);
+                                return (
+                                  <div className="flex flex-col">
+                                    <span>{stats.hours} hrs</span>
+                                    {stats.hours > 0 && (
+                                      <span className={`text-[10px] font-semibold ${stats.type === 'Full Day' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                        {stats.type}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell>
                               <Badge
@@ -1377,9 +1810,27 @@ export default function MyAccountPage() {
                                     record.status === 'absent' ? 'destructive' :
                                       'secondary'
                                 }
+                                className={record.status === 'present' ? 'bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/20' : ''}
                               >
                                 {record.status}
                               </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {record.checkInMethod === 'nfc' ? (
+                                <Badge variant="outline" className="bg-violet-500/5 text-violet-700 border-violet-200">
+                                  <Fingerprint className="h-3 w-3 mr-1" />
+                                  NFC
+                                </Badge>
+                              ) : record.checkInMethod === 'legacy' ? (
+                                <Badge variant="outline" className="bg-amber-500/10 text-amber-700 border-amber-200">
+                                  <Clock className="h-3 w-3 mr-1" />
+                                  Manual
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="bg-slate-500/5 text-slate-700">
+                                  Manual
+                                </Badge>
+                              )}
                             </TableCell>
                             {/* Actions */}
                             {(canDeleteRecords || canEditAttendance) && (
@@ -1412,8 +1863,41 @@ export default function MyAccountPage() {
                     )}
                   </TableBody>
                 </Table>
-              </CardContent>
-            </Card>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-between space-x-2 py-4 border-t">
+                <div className="text-sm text-muted-foreground">
+                  Page {attendancePage + 1}
+                </div>
+                <div className="space-x-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAttendancePage(prev => Math.max(0, prev - 1))}
+                    disabled={attendancePage === 0 || loading}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAttendancePage(prev => prev + 1)}
+                    disabled={allAttendance.length < PAGE_SIZE || loading}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        )}
+
+        {/* Admin/Manager: Screens Tab */}
+        {isFullAccessUser && (
+          <TabsContent value="all-screens">
+            <ReaderManagement currentUser={currentUser} />
           </TabsContent>
         )}
 
@@ -1554,26 +2038,37 @@ export default function MyAccountPage() {
                     </Select>
                   </div>
                   <div className="flex items-end">
-                    <Button onClick={fetchLeaveRequests} className="w-full">
-                      Apply Filter
+                    <Button 
+                      variant="outline"
+                      onClick={() => {
+                        setLeaveStartDate('');
+                        setLeaveEndDate('');
+                        setLeaveStatusFilter('all');
+                      }} 
+                      className="w-full"
+                    >
+                      Clear
                     </Button>
                   </div>
                 </div>
 
                 {/* Table */}
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Leave Type</TableHead>
-                      <TableHead>From Date</TableHead>
-                      <TableHead>To Date</TableHead>
-                      <TableHead>Reason</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Applied On</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {leaveRequests.length === 0 ? (
+                <div className="max-h-[600px] overflow-y-auto rounded-md border">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-background z-10">
+                      <TableRow>
+                        <TableHead>Leave Type</TableHead>
+                        <TableHead>From Date</TableHead>
+                        <TableHead>To Date</TableHead>
+                        <TableHead>Reason</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Applied On</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                    {loading ? (
+                       <TableSkeleton columns={6} rows={8} />
+                    ) : leaveRequests.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                           No leave requests found
@@ -1595,9 +2090,35 @@ export default function MyAccountPage() {
                     )}
                   </TableBody>
                 </Table>
-              </CardContent>
-            </Card>
-          </TabsContent>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-between pt-4 border-t">
+                <div className="text-sm text-muted-foreground">
+                  Page {personalLeavePage + 1}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPersonalLeavePage(p => Math.max(0, p - 1))}
+                    disabled={personalLeavePage === 0 || loading}
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPersonalLeavePage(p => p + 1)}
+                    disabled={leaveRequests.length < PAGE_SIZE || loading}
+                  >
+                    Next <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
         )}
 
         {/* Employee: Attendance Tab - Keep existing code */}
@@ -1751,48 +2272,79 @@ export default function MyAccountPage() {
                 </div>
 
                 {/* Stats */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                   <Card>
-                    <CardHeader className="pb-3">
+                    <CardHeader className="pb-3 text-center md:text-left">
                       <CardDescription>Working Days</CardDescription>
                       <CardTitle className="text-2xl">{stats.workingDays}</CardTitle>
                     </CardHeader>
                   </Card>
                   <Card>
-                    <CardHeader className="pb-3">
+                    <CardHeader className="pb-3 text-center md:text-left">
                       <CardDescription>Present Days</CardDescription>
                       <CardTitle className="text-2xl">{stats.presentDays}</CardTitle>
                     </CardHeader>
                   </Card>
                   <Card>
-                    <CardHeader className="pb-3">
+                    <CardHeader className="pb-3 text-center md:text-left">
                       <CardDescription>Leave Days</CardDescription>
                       <CardTitle className="text-2xl">{stats.leaveDays}</CardTitle>
                     </CardHeader>
                   </Card>
                   <Card>
-                    <CardHeader className="pb-3">
+                    <CardHeader className="pb-3 text-center md:text-left">
                       <CardDescription>Holidays</CardDescription>
                       <CardTitle className="text-2xl">{stats.holidays}</CardTitle>
+                    </CardHeader>
+                  </Card>
+                  <Card className="border-primary/20 bg-primary/5">
+                    <CardHeader className="pb-3 text-center md:text-left">
+                      <div className="flex items-center justify-between">
+                        <CardDescription className="text-primary font-medium">Month Total</CardDescription>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${stats.monthlyDifference >= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                          {formatDuration(stats.monthlyDifference)}
+                        </span>
+                      </div>
+                      <CardTitle className="text-2xl text-primary">{stats.monthlyTotalHours} hrs</CardTitle>
+                    </CardHeader>
+                  </Card>
+                  <Card className={stats.weeklyTotalHours >= stats.weeklyTarget ? "border-emerald-500/30 bg-emerald-500/5" : "border-amber-500/30 bg-amber-500/5"}>
+                    <CardHeader className="pb-3 text-center md:text-left">
+                      <CardDescription className="flex items-center justify-between">
+                        <span className="font-medium text-[10px] md:text-xs">Weekly (40h)</span>
+                        <span className="hidden xl:inline text-[10px] uppercase font-bold text-muted-foreground">{stats.weeklyDifference >= 0 ? 'Goal Met' : 'Awaiting Progress'}</span>
+                      </CardDescription>
+                      <div className="flex items-baseline justify-center md:justify-start gap-2">
+                        <CardTitle className="text-xl md:text-2xl">
+                          {stats.weeklyTotalHours}
+                          <span className="text-xs font-normal text-muted-foreground ml-1">/40</span>
+                        </CardTitle>
+                        <span className={`text-[10px] font-medium ${stats.weeklyDifference >= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                          ({formatDuration(stats.weeklyDifference)})
+                        </span>
+                      </div>
                     </CardHeader>
                   </Card>
                 </div>
 
                 {/* Table */}
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>No</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>In Time</TableHead>
-                      <TableHead>Out Time</TableHead>
-                      <TableHead>Work Hours</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Remarks</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {attendance.length === 0 ? (
+                <div className="max-h-[600px] overflow-y-auto rounded-md border">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-background z-10">
+                      <TableRow>
+                        <TableHead>No</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead>In Time</TableHead>
+                        <TableHead>Out Time</TableHead>
+                        <TableHead>Work Hours</TableHead>
+                        <TableHead>Method</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                    {loading ? (
+                       <TableSkeleton columns={7} rows={10} />
+                    ) : attendance.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                           No attendance records found
@@ -1800,44 +2352,85 @@ export default function MyAccountPage() {
                       </TableRow>
                     ) : (
                       attendance.map((record, index) => {
-                        const workHours = calculateWorkHours(record.checkIn, record.checkOut);
+                        // Support both old checkIn and new timeIn fields
+                        const tIn = record.timeIn || record.checkIn;
+                        const tOut = record.timeOut || record.checkOut;
+                        const workHours = calculateWorkHours(tIn, tOut);
 
                         return (
                           <TableRow key={record.id}>
-                            <TableCell>{index + 1}</TableCell>
-                            <TableCell>{new Date(record.date).toLocaleDateString()}</TableCell>
+                            <TableCell>{personalAttendancePage * PAGE_SIZE + index + 1}</TableCell>
+                            <TableCell className="font-medium">{formatDateOrdinal(record.date)}</TableCell>
                             <TableCell>
-                              {record.checkIn ? new Date(record.checkIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                              {tIn ? new Date(tIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
                             </TableCell>
                             <TableCell>
-                              {record.checkOut ? new Date(record.checkOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                              {tOut ? new Date(tOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
                             </TableCell>
                             <TableCell>
-                              {workHours > 0 ? (
-                                <span className="font-medium">{workHours} hrs</span>
-                              ) : '—'}
+                              {(() => {
+                                const stats = calculateWorkHours(tIn, tOut);
+                                return (
+                                  <div className="flex flex-col">
+                                    <span>{stats.hours} hrs</span>
+                                    {stats.hours > 0 && (
+                                      <span className={`text-[10px] font-semibold ${stats.type === 'Full Day' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                        {stats.type}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell>
-                              <Badge
-                                variant={
-                                  record.status === 'present' ? 'default' :
-                                    record.status === 'absent' ? 'destructive' :
-                                      'secondary'
-                                }
-                              >
+                              <Badge variant="outline" className="capitalize text-[10px] px-1.5 py-0">
+                                {record.checkInMethod === 'legacy' ? 'Manual' : (record.checkInMethod || 'Manual')}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge className={
+                                record.status === 'present' ? 'bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25 border-emerald-200' :
+                                record.status === 'absent' ? 'bg-red-500/15 text-red-700 hover:bg-red-500/25 border-red-200' :
+                                'bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 border-amber-200'
+                              }>
                                 {record.status}
                               </Badge>
                             </TableCell>
-                            <TableCell className="max-w-xs truncate">{record.notes || '—'}</TableCell>
                           </TableRow>
                         );
                       })
                     )}
                   </TableBody>
                 </Table>
-              </CardContent>
-            </Card>
-          </TabsContent>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-between pt-4 border-t">
+                <div className="text-sm text-muted-foreground">
+                  Page {personalAttendancePage + 1}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPersonalAttendancePage(p => Math.max(0, p - 1))}
+                    disabled={personalAttendancePage === 0 || loading}
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPersonalAttendancePage(p => p + 1)}
+                    disabled={attendance.length < PAGE_SIZE || loading}
+                  >
+                    Next <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
         )}
 
         {/* Company Holidays Tab - Keep existing code */}

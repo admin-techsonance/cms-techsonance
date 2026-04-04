@@ -167,7 +167,7 @@ export function KanbanBoard({ sprintId, projectId, onTaskClick, onCreateTask }: 
                   </div>
                 )}
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-3 max-h-[600px] overflow-y-auto px-4 pb-4">
                 {columnTasks.length === 0 ? (
                   <div className="text-center py-8 text-sm text-muted-foreground">
                     No tasks

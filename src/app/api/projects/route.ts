@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { projects, clients, users } from '@/db/schema';
-import { eq, like, and, or, desc, asc } from 'drizzle-orm';
+import { projects, clients, users, projectMembers } from '@/db/schema';
+import { eq, like, and, or, desc, asc, gte, lte } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
 import { safeErrorMessage } from '@/lib/constants';
 
@@ -60,13 +60,14 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status');
     const priority = searchParams.get('priority');
     const createdBy = searchParams.get('createdBy');
+    const assignedTo = searchParams.get('assignedTo');
+    const startDate = searchParams.get('startDate');
+    const endDate = searchParams.get('endDate');
     const isActive = searchParams.get('isActive');
     const sortBy = searchParams.get('sort');
     const order = searchParams.get('order') ?? 'desc';
 
-    let query = db.select().from(projects);
     const conditions = [];
-
     if (search) {
       conditions.push(
         or(
@@ -112,13 +113,48 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    if (isActive !== null && isActive !== undefined) {
+    if (assignedTo) {
+      const assignedToNum = parseInt(assignedTo);
+      if (!isNaN(assignedToNum)) {
+        // This will be handled by the join condition
+      }
+    }
+
+    if (startDate) {
+      conditions.push(gte(projects.startDate, startDate));
+    }
+
+    if (endDate) {
+      conditions.push(lte(projects.endDate, endDate));
+    }
+
+    if (isActive !== null && isActive !== undefined && isActive !== 'all') {
       const isActiveBool = isActive === 'true';
       conditions.push(eq(projects.isActive, isActiveBool));
     }
 
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
+    let query: any;
+    if (assignedTo && !isNaN(parseInt(assignedTo))) {
+      query = db.select({
+        id: projects.id,
+        name: projects.name,
+        description: projects.description,
+        clientId: projects.clientId,
+        status: projects.status,
+        priority: projects.priority,
+        startDate: projects.startDate,
+        endDate: projects.endDate,
+        budget: projects.budget,
+        isActive: projects.isActive,
+        createdBy: projects.createdBy,
+        createdAt: projects.createdAt,
+        updatedAt: projects.updatedAt,
+      })
+        .from(projects)
+        .innerJoin(projectMembers, eq(projects.id, projectMembers.projectId))
+        .where(and(eq(projectMembers.userId, parseInt(assignedTo)), ...conditions));
+    } else {
+      query = db.select().from(projects).where(and(...conditions));
     }
 
     if (sortBy) {
