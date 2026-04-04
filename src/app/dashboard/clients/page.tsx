@@ -34,6 +34,8 @@ export default function ClientsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
+  const pageSize = 10;
 
   useEffect(() => {
     fetchClients();
@@ -60,6 +62,17 @@ export default function ClientsPage() {
     client.email.toLowerCase().includes(search.toLowerCase())
   );
 
+  // Calculate paginated clients
+  const paginatedClients = filteredClients.slice(
+    currentPage * pageSize,
+    (currentPage + 1) * pageSize
+  );
+
+  // Reset page when search changes
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [search]);
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -84,85 +97,110 @@ export default function ClientsPage() {
                 {filteredClients.length} client{filteredClients.length !== 1 ? 's' : ''} found
               </CardDescription>
             </div>
-            <div className="relative w-64">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search clients..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-8"
-              />
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <InlineTableSkeleton rows={5} columns={7} />
-          ) : filteredClients.length === 0 ? (
-            <div className="text-center py-8">
-              <Building2 className="mx-auto h-12 w-12 text-muted-foreground" />
-              <h3 className="mt-4 text-lg font-semibold">No clients found</h3>
-              <p className="text-sm text-muted-foreground">
-                {search ? 'Try a different search term' : 'Get started by adding your first client'}
-              </p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Company</TableHead>
-                  <TableHead>Contact Person</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>Industry</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredClients.map((client) => (
-                  <TableRow key={client.id}>
-                    <TableCell className="font-medium">{client.companyName}</TableCell>
-                    <TableCell>{client.contactPerson}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Mail className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm">{client.email}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {client.phone ? (
-                        <div className="flex items-center gap-2">
-                          <Phone className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-sm">{client.phone}</span>
-                        </div>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>{client.industry || '—'}</TableCell>
-                    <TableCell>
-                      <Badge variant={
-                        client.status === 'active' ? 'default' :
-                        client.status === 'inactive' ? 'secondary' :
-                        'outline'
-                      }>
-                        {client.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Link href={`/dashboard/clients/${client.id}`}>
-                        <Button variant="ghost" size="sm">
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                      </Link>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
+                <div className="relative w-64">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search clients..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="pl-8"
+                  />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <InlineTableSkeleton rows={5} columns={7} />
+              ) : filteredClients.length === 0 ? (
+                <div className="text-center py-8">
+                  <Building2 className="mx-auto h-12 w-12 text-muted-foreground" />
+                  <h3 className="mt-4 text-lg font-semibold">No clients found</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {search ? 'Try a different search term' : 'Get started by adding your first client'}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-md border max-h-[600px] overflow-y-auto">
+                    <Table>
+                      <TableHeader className="sticky top-0 bg-background z-10">
+                        <TableRow>
+                          <TableHead>Company</TableHead>
+                          <TableHead>Contact Person</TableHead>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Phone</TableHead>
+                          <TableHead>Industry</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {paginatedClients.map((client) => (
+                          <TableRow key={client.id}>
+                            <TableCell className="font-medium">{client.companyName}</TableCell>
+                            <TableCell>{client.contactPerson}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <Mail className="h-4 w-4 text-muted-foreground" />
+                                <span className="text-sm">{client.email}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {client.phone ? (
+                                <div className="flex items-center gap-2">
+                                  <Phone className="h-4 w-4 text-muted-foreground" />
+                                  <span className="text-sm">{client.phone}</span>
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell>{client.industry || '—'}</TableCell>
+                            <TableCell>
+                              <Badge variant={
+                                client.status === 'active' ? 'default' :
+                                client.status === 'inactive' ? 'secondary' :
+                                'outline'
+                              }>
+                                {client.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Link href={`/dashboard/clients/${client.id}`}>
+                                <Button variant="ghost" size="sm">
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              </Link>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Pagination */}
+                  <div className="flex items-center justify-end space-x-2 py-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+                      disabled={currentPage === 0}
+                    >
+                      Previous
+                    </Button>
+                    <div className="text-sm font-medium">Page {currentPage + 1}</div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(p => p + 1)}
+                      disabled={(currentPage + 1) * pageSize >= filteredClients.length}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </>
+              )}
+            </CardContent>
       </Card>
 
       <ClientFormDialog

@@ -78,6 +78,8 @@ export default function HelpDeskPage() {
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [searchFilter, setSearchFilter] = useState('');
   const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState('all');
+  const [currentPage, setCurrentPage] = useState(0);
+  const pageSize = 10;
   
   const [editingTicket, setEditingTicket] = useState<Ticket | null>(null);
   const [deletingTicket, setDeletingTicket] = useState<Ticket | null>(null);
@@ -110,6 +112,7 @@ export default function HelpDeskPage() {
     if (!currentUser) return;
 
     const timer = setTimeout(() => {
+      setCurrentPage(0); // Reset to first page when any filter changes
       if (hasFullAccess(currentUser.role as UserRole)) {
         fetchAllTickets();
       } else {
@@ -685,71 +688,93 @@ export default function HelpDeskPage() {
             )}
           </div>
 
-          {/* Table */}
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Ticket #</TableHead>
-                <TableHead>Subject</TableHead>
-                <TableHead>Priority</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead>Updated</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                 <TableSkeleton columns={7} rows={10} />
-              ) : ticketsData.length === 0 ? (
+          <div className="max-h-[600px] overflow-y-auto mt-4">
+            <Table>
+              <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                    No support tickets found
-                  </TableCell>
+                  <TableHead>Ticket #</TableHead>
+                  <TableHead>Subject</TableHead>
+                  <TableHead>Priority</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead>Updated</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ) : (
-                ticketsData.map((ticket) => (
-                  <TableRow key={ticket.id}>
-                    <TableCell className="font-medium">{ticket.ticketNumber}</TableCell>
-                    <TableCell className="max-w-xs truncate">{ticket.subject}</TableCell>
-                    <TableCell>{getPriorityBadge(ticket.priority)}</TableCell>
-                    <TableCell>{getStatusBadge(ticket.status)}</TableCell>
-                    <TableCell>{new Date(ticket.createdAt).toLocaleDateString()}</TableCell>
-                    <TableCell>{new Date(ticket.updatedAt).toLocaleDateString()}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => handleViewTicket(ticket)}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        {isAdmin && (
-                          <>
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => handleEditTicket(ticket)}
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => setDeletingTicket(ticket)}
-                            >
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
-                          </>
-                        )}
-                      </div>
+              </TableHeader>
+              <TableBody>
+                {loading ? (
+                   <TableSkeleton columns={7} rows={10} />
+                ) : ticketsData.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      No support tickets found
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                ) : (
+                  ticketsData.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map((ticket) => (
+                    <TableRow key={ticket.id}>
+                      <TableCell className="font-medium">{ticket.ticketNumber}</TableCell>
+                      <TableCell className="max-w-xs truncate">{ticket.subject}</TableCell>
+                      <TableCell>{getPriorityBadge(ticket.priority)}</TableCell>
+                      <TableCell>{getStatusBadge(ticket.status)}</TableCell>
+                      <TableCell>{new Date(ticket.createdAt).toLocaleDateString()}</TableCell>
+                      <TableCell>{new Date(ticket.updatedAt).toLocaleDateString()}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            onClick={() => handleViewTicket(ticket)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          {isAdmin && (
+                            <>
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                onClick={() => handleEditTicket(ticket)}
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                onClick={() => setDeletingTicket(ticket)}
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="flex items-center justify-end space-x-2 pt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
+              disabled={currentPage === 0}
+            >
+              Previous
+            </Button>
+            <div className="text-sm font-medium">
+              Page {currentPage + 1} of {Math.ceil(ticketsData.length / pageSize) || 1}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCurrentPage(Math.min(Math.ceil(ticketsData.length / pageSize) - 1, currentPage + 1))}
+              disabled={currentPage >= Math.ceil(ticketsData.length / pageSize) - 1}
+            >
+              Next
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

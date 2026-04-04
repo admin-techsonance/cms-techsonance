@@ -85,6 +85,9 @@ export default function PayrollPage() {
     const [isFetching, setIsFetching] = useState(false);
     const [totalWorkingDays, setTotalWorkingDays] = useState(0);
     const [businessSettings, setBusinessSettings] = useState<BusinessSettings | null>(null);
+    const [attendancePage, setAttendancePage] = useState(0);
+    const [payrollPage, setPayrollPage] = useState(0);
+    const pageSize = 10;
 
     useEffect(() => {
         fetchEmployees();
@@ -225,6 +228,7 @@ export default function PayrollPage() {
                 });
 
                 setAttendanceSummary(Array.from(employeeMap.values()));
+                setAttendancePage(0); // Reset to first page
                 toast.success('Attendance summary fetched successfully');
             }
         } catch (error) {
@@ -252,6 +256,7 @@ export default function PayrollPage() {
             if (response.ok) {
                 const data = await response.json();
                 setGeneratedPayrolls(data);
+                setPayrollPage(0); // Reset to first page
             }
         } catch (error) {
             console.error('Error fetching payrolls:', error);
@@ -631,50 +636,73 @@ export default function PayrollPage() {
                         </div>
                     </CardHeader>
                     <CardContent>
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead className="w-12">
-                                        <Checkbox
-                                            checked={selectedEmployees.length === attendanceSummary.length}
-                                            onCheckedChange={toggleSelectAll}
-                                        />
-                                    </TableHead>
-                                    <TableHead>Employee</TableHead>
-                                    <TableHead>Present</TableHead>
-                                    <TableHead>Half Days</TableHead>
-                                    <TableHead>Leave</TableHead>
-                                    <TableHead>Absent</TableHead>
-                                    <TableHead>Work %</TableHead>
-                                    <TableHead>Base Salary</TableHead>
-                                    <TableHead>Calculated Salary</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {attendanceSummary.map((summary) => (
-                                    <TableRow key={summary.employeeId}>
-                                        <TableCell>
+                        <div className="max-h-[400px] overflow-y-auto">
+                            <Table>
+                                <TableHeader className="sticky top-0 bg-background z-10">
+                                    <TableRow>
+                                        <TableHead className="w-12">
                                             <Checkbox
-                                                checked={selectedEmployees.includes(summary.employeeId)}
-                                                onCheckedChange={() => toggleEmployeeSelection(summary.employeeId)}
+                                                checked={selectedEmployees.length === attendanceSummary.length}
+                                                onCheckedChange={toggleSelectAll}
                                             />
-                                        </TableCell>
-                                        <TableCell className="font-medium">{summary.employeeName}</TableCell>
-                                        <TableCell>{summary.presentDays}</TableCell>
-                                        <TableCell>{summary.halfDays}</TableCell>
-                                        <TableCell>{summary.leaveDays}</TableCell>
-                                        <TableCell>{summary.absentDays}</TableCell>
-                                        <TableCell>
-                                            <Badge variant={summary.workPercentage >= 80 ? 'default' : 'secondary'}>
-                                                {summary.workPercentage}%
-                                            </Badge>
-                                        </TableCell>
-                                        <TableCell>₹{summary.baseSalary.toLocaleString()}</TableCell>
-                                        <TableCell className="font-semibold">₹{summary.calculatedSalary.toLocaleString()}</TableCell>
+                                        </TableHead>
+                                        <TableHead>Employee</TableHead>
+                                        <TableHead>Present</TableHead>
+                                        <TableHead>Half Days</TableHead>
+                                        <TableHead>Leave</TableHead>
+                                        <TableHead>Absent</TableHead>
+                                        <TableHead>Work %</TableHead>
+                                        <TableHead>Base Salary</TableHead>
+                                        <TableHead>Calculated Salary</TableHead>
                                     </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
+                                </TableHeader>
+                                <TableBody>
+                                    {attendanceSummary.slice(attendancePage * pageSize, (attendancePage + 1) * pageSize).map((summary) => (
+                                        <TableRow key={summary.employeeId}>
+                                            <TableCell>
+                                                <Checkbox
+                                                    checked={selectedEmployees.includes(summary.employeeId)}
+                                                    onCheckedChange={() => toggleEmployeeSelection(summary.employeeId)}
+                                                />
+                                            </TableCell>
+                                            <TableCell className="font-medium">{summary.employeeName}</TableCell>
+                                            <TableCell>{summary.presentDays}</TableCell>
+                                            <TableCell>{summary.halfDays}</TableCell>
+                                            <TableCell>{summary.leaveDays}</TableCell>
+                                            <TableCell>{summary.absentDays}</TableCell>
+                                            <TableCell>
+                                                <Badge variant={summary.workPercentage >= 80 ? 'default' : 'secondary'}>
+                                                    {summary.workPercentage}%
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell>₹{summary.baseSalary.toLocaleString()}</TableCell>
+                                            <TableCell className="font-semibold">₹{summary.calculatedSalary.toLocaleString()}</TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                        <div className="flex items-center justify-end space-x-2 py-4">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setAttendancePage(Math.max(0, attendancePage - 1))}
+                                disabled={attendancePage === 0}
+                            >
+                                Previous
+                            </Button>
+                            <div className="text-sm font-medium">
+                                Page {attendancePage + 1} of {Math.ceil(attendanceSummary.length / pageSize) || 1}
+                            </div>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setAttendancePage(Math.min(Math.ceil(attendanceSummary.length / pageSize) - 1, attendancePage + 1))}
+                                disabled={attendancePage >= Math.ceil(attendanceSummary.length / pageSize) - 1}
+                            >
+                                Next
+                            </Button>
+                        </div>
                     </CardContent>
                 </Card>
             )}
@@ -701,80 +729,103 @@ export default function PayrollPage() {
                         </div>
                     </CardHeader>
                     <CardContent>
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Employee</TableHead>
-                                    <TableHead>Month</TableHead>
-                                    <TableHead>Base Salary</TableHead>
-                                    <TableHead>Present Days</TableHead>
-                                    <TableHead>Net Salary</TableHead>
-                                    <TableHead>Status</TableHead>
-                                    <TableHead className="text-right">Actions</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {generatedPayrolls.map((payroll) => (
-                                    <TableRow key={payroll.id}>
-                                        <TableCell className="font-medium">{getEmployeeName(payroll.employeeId)}</TableCell>
-                                        <TableCell>{payroll.month}</TableCell>
-                                        <TableCell>₹{payroll.baseSalary.toLocaleString()}</TableCell>
-                                        <TableCell>{payroll.presentDays + (payroll.halfDays * 0.5)}</TableCell>
-                                        <TableCell className="font-semibold">₹{payroll.netSalary.toLocaleString()}</TableCell>
-                                        <TableCell>
-                                            <Badge
-                                                variant={
-                                                    payroll.status === 'paid' ? 'default' :
-                                                        payroll.status === 'approved' ? 'secondary' :
-                                                            'outline'
-                                                }
-                                            >
-                                                {payroll.status}
-                                            </Badge>
-                                        </TableCell>
-                                        <TableCell className="text-right">
-                                            <div className="flex justify-end gap-2">
-                                                <Button
-                                                    size="sm"
-                                                    variant="ghost"
-                                                    onClick={() => handleDownloadPayslip(payroll)}
-                                                    title="Download Payslip"
+                        <div className="max-h-[400px] overflow-y-auto">
+                            <Table>
+                                <TableHeader className="sticky top-0 bg-background z-10">
+                                    <TableRow>
+                                        <TableHead>Employee</TableHead>
+                                        <TableHead>Month</TableHead>
+                                        <TableHead>Base Salary</TableHead>
+                                        <TableHead>Present Days</TableHead>
+                                        <TableHead>Net Salary</TableHead>
+                                        <TableHead>Status</TableHead>
+                                        <TableHead className="text-right">Actions</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {generatedPayrolls.slice(payrollPage * pageSize, (payrollPage + 1) * pageSize).map((payroll) => (
+                                        <TableRow key={payroll.id}>
+                                            <TableCell className="font-medium">{getEmployeeName(payroll.employeeId)}</TableCell>
+                                            <TableCell>{payroll.month}</TableCell>
+                                            <TableCell>₹{payroll.baseSalary.toLocaleString()}</TableCell>
+                                            <TableCell>{payroll.presentDays + (payroll.halfDays * 0.5)}</TableCell>
+                                            <TableCell className="font-semibold">₹{payroll.netSalary.toLocaleString()}</TableCell>
+                                            <TableCell>
+                                                <Badge
+                                                    variant={
+                                                        payroll.status === 'paid' ? 'default' :
+                                                            payroll.status === 'approved' ? 'secondary' :
+                                                                'outline'
+                                                    }
                                                 >
-                                                    <Download className="h-4 w-4" />
-                                                </Button>
-                                                {payroll.status === 'draft' && (
-                                                    <>
-                                                        <Button
-                                                            size="sm"
-                                                            variant="ghost"
-                                                            onClick={() => handleUpdateStatus(payroll.id, 'approved')}
-                                                        >
-                                                            <Check className="h-4 w-4" />
-                                                        </Button>
-                                                        <Button
-                                                            size="sm"
-                                                            variant="ghost"
-                                                            onClick={() => handleDeletePayroll(payroll.id)}
-                                                        >
-                                                            Delete
-                                                        </Button>
-                                                    </>
-                                                )}
-                                                {payroll.status === 'approved' && (
+                                                    {payroll.status}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                <div className="flex justify-end gap-2">
                                                     <Button
                                                         size="sm"
                                                         variant="ghost"
-                                                        onClick={() => handleUpdateStatus(payroll.id, 'paid')}
+                                                        onClick={() => handleDownloadPayslip(payroll)}
+                                                        title="Download Payslip"
                                                     >
-                                                        Mark Paid
+                                                        <Download className="h-4 w-4" />
                                                     </Button>
-                                                )}
-                                            </div>
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
+                                                    {payroll.status === 'draft' && (
+                                                        <>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="ghost"
+                                                                onClick={() => handleUpdateStatus(payroll.id, 'approved')}
+                                                            >
+                                                                <Check className="h-4 w-4" />
+                                                            </Button>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="ghost"
+                                                                onClick={() => handleDeletePayroll(payroll.id)}
+                                                            >
+                                                                Delete
+                                                            </Button>
+                                                        </>
+                                                    )}
+                                                    {payroll.status === 'approved' && (
+                                                        <Button
+                                                            size="sm"
+                                                            variant="ghost"
+                                                            onClick={() => handleUpdateStatus(payroll.id, 'paid')}
+                                                        >
+                                                            Mark Paid
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                        <div className="flex items-center justify-end space-x-2 py-4">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setPayrollPage(Math.max(0, payrollPage - 1))}
+                                disabled={payrollPage === 0}
+                            >
+                                Previous
+                            </Button>
+                            <div className="text-sm font-medium">
+                                Page {payrollPage + 1} of {Math.ceil(generatedPayrolls.length / pageSize) || 1}
+                            </div>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setPayrollPage(Math.min(Math.ceil(generatedPayrolls.length / pageSize) - 1, payrollPage + 1))}
+                                disabled={payrollPage >= Math.ceil(generatedPayrolls.length / pageSize) - 1}
+                            >
+                                Next
+                            </Button>
+                        </div>
                     </CardContent>
                 </Card>
             )}

@@ -80,6 +80,9 @@ export default function InquiryPage() {
   const [selectedInquiry, setSelectedInquiry] = useState<number | null>(null);
   const [inquiryFeeds, setInquiryFeeds] = useState<InquiryFeed[]>([]);
   const [feedsLoading, setFeedsLoading] = useState(false);
+  const [inquiryPage, setInquiryPage] = useState(0);
+  const [feedPage, setFeedPage] = useState(0);
+  const pageSize = 10;
 
   // Add/Edit Inquiry
   const [showInquiryDialog, setShowInquiryDialog] = useState(false);
@@ -157,6 +160,7 @@ export default function InquiryPage() {
       if (response.ok) {
         const data = await response.json();
         setInquiries(data);
+        setInquiryPage(0); // Reset to first page
       }
     } catch (error) {
       console.error('Error fetching inquiries:', error);
@@ -277,6 +281,7 @@ export default function InquiryPage() {
       if (response.ok) {
         const data = await response.json();
         setInquiryFeeds(data);
+        setFeedPage(0); // Reset to first page
       }
     } catch (error) {
       console.error('Error fetching inquiry feeds:', error);
@@ -663,112 +668,135 @@ export default function InquiryPage() {
               </Button>
 
               {/* Table */}
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">
-                      <Checkbox />
-                    </TableHead>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Alias Name</TableHead>
-                    <TableHead>Tag</TableHead>
-                    <TableHead>Due Date</TableHead>
-                    <TableHead>App. Status</TableHead>
-                    <TableHead>Action</TableHead>
-                    <TableHead>Favourite</TableHead>
-                    {(canEdit || canDelete) && <TableHead className="text-right">Actions</TableHead>}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loading ? (
+              <div className="max-h-[500px] overflow-y-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-background z-10">
                     <TableRow>
-                      <TableCell colSpan={canEdit || canDelete ? 9 : 8} className="py-4">
-                        <div className="space-y-3">
-                          {Array.from({ length: 5 }).map((_, i) => (
-                            <div key={i} className="flex items-center gap-4">
-                              {Array.from({ length: 6 }).map((_, j) => (
-                                <Skeleton key={j} className="h-5 w-full" />
-                              ))}
-                            </div>
-                          ))}
-                        </div>
-                      </TableCell>
+                      <TableHead className="w-12">
+                        <Checkbox />
+                      </TableHead>
+                      <TableHead>ID</TableHead>
+                      <TableHead>Alias Name</TableHead>
+                      <TableHead>Tag</TableHead>
+                      <TableHead>Due Date</TableHead>
+                      <TableHead>App. Status</TableHead>
+                      <TableHead>Action</TableHead>
+                      <TableHead>Favourite</TableHead>
+                      {(canEdit || canDelete) && <TableHead className="text-right">Actions</TableHead>}
                     </TableRow>
-                  ) : inquiries.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={canEdit || canDelete ? 9 : 8} className="text-center py-8 text-muted-foreground">
-                        No inquiries found
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    inquiries.map((inquiry) => (
-                      <TableRow key={inquiry.id}>
-                        <TableCell>
-                          <Checkbox />
+                  </TableHeader>
+                  <TableBody>
+                    {loading ? (
+                      <TableRow>
+                        <TableCell colSpan={canEdit || canDelete ? 9 : 8} className="py-4">
+                          <div className="space-y-3">
+                            {Array.from({ length: 5 }).map((_, i) => (
+                              <div key={i} className="flex items-center gap-4">
+                                {Array.from({ length: 6 }).map((_, j) => (
+                                  <Skeleton key={j} className="h-5 w-full" />
+                                ))}
+                              </div>
+                            ))}
+                          </div>
                         </TableCell>
-                        <TableCell className="font-medium">{inquiry.id}</TableCell>
-                        <TableCell>{inquiry.aliasName}</TableCell>
-                        <TableCell>{getTagBadge(inquiry.tag)}</TableCell>
-                        <TableCell>
-                          {inquiry.dueDate ? new Date(inquiry.dueDate).toLocaleDateString() : '—'}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={inquiry.appStatus === 'open' ? 'default' : 'secondary'}>
-                            {inquiry.appStatus || 'N/A'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => fetchInquiryFeeds(inquiry.id)}
-                          >
-                            <MessageSquare className="mr-2 h-4 w-4" />
-                            View Feeds
-                          </Button>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => toggleFavourite(inquiry)}
-                          >
-                            {inquiry.isFavourite ? (
-                              <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
-                            ) : (
-                              <StarOff className="h-4 w-4" />
-                            )}
-                          </Button>
-                        </TableCell>
-                        {(canEdit || canDelete) && (
-                          <TableCell className="text-right">
-                            <div className="flex justify-end gap-2">
-                              {canEdit && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => openEditDialog(inquiry)}
-                                >
-                                  Edit
-                                </Button>
-                              )}
-                              {canDelete && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => setDeletingInquiry(inquiry)}
-                                >
-                                  <Trash2 className="h-4 w-4 text-destructive" />
-                                </Button>
-                              )}
-                            </div>
-                          </TableCell>
-                        )}
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+                    ) : inquiries.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={canEdit || canDelete ? 9 : 8} className="text-center py-8 text-muted-foreground">
+                          No inquiries found
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      inquiries.slice(inquiryPage * pageSize, (inquiryPage + 1) * pageSize).map((inquiry) => (
+                        <TableRow key={inquiry.id}>
+                          <TableCell>
+                            <Checkbox />
+                          </TableCell>
+                          <TableCell className="font-medium">{inquiry.id}</TableCell>
+                          <TableCell>{inquiry.aliasName}</TableCell>
+                          <TableCell>{getTagBadge(inquiry.tag)}</TableCell>
+                          <TableCell>
+                            {inquiry.dueDate ? new Date(inquiry.dueDate).toLocaleDateString() : '—'}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={inquiry.appStatus === 'open' ? 'default' : 'secondary'}>
+                              {inquiry.appStatus || 'N/A'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => fetchInquiryFeeds(inquiry.id)}
+                            >
+                              <MessageSquare className="mr-2 h-4 w-4" />
+                              View Feeds
+                            </Button>
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => toggleFavourite(inquiry)}
+                            >
+                              {inquiry.isFavourite ? (
+                                <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                              ) : (
+                                <StarOff className="h-4 w-4" />
+                              )}
+                            </Button>
+                          </TableCell>
+                          {(canEdit || canDelete) && (
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-2">
+                                {canEdit && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => openEditDialog(inquiry)}
+                                  >
+                                    Edit
+                                  </Button>
+                                )}
+                                {canDelete && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setDeletingInquiry(inquiry)}
+                                  >
+                                    <Trash2 className="h-4 w-4 text-destructive" />
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          )}
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="flex items-center justify-end space-x-2 pt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setInquiryPage(Math.max(0, inquiryPage - 1))}
+                  disabled={inquiryPage === 0}
+                >
+                  Previous
+                </Button>
+                <div className="text-sm font-medium">
+                  Page {inquiryPage + 1} of {Math.ceil(inquiries.length / pageSize) || 1}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setInquiryPage(Math.min(Math.ceil(inquiries.length / pageSize) - 1, inquiryPage + 1))}
+                  disabled={inquiryPage >= Math.ceil(inquiries.length / pageSize) - 1}
+                >
+                  Next
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -858,58 +886,82 @@ export default function InquiryPage() {
                   Please select an inquiry to view its feeds
                 </div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Inquiry ID</TableHead>
-                      <TableHead>Commented By</TableHead>
-                      <TableHead>Commented At</TableHead>
-                      <TableHead>Technology</TableHead>
-                      <TableHead>Description</TableHead>
-                      {canDelete && <TableHead className="text-right">Actions</TableHead>}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {inquiryFeeds.length === 0 ? (
+                <>
+                  <div className="max-h-[400px] overflow-y-auto">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-background z-10">
                       <TableRow>
-                        <TableCell colSpan={canDelete ? 6 : 5} className="text-center py-8 text-muted-foreground">
-                          No communication feeds found for this inquiry
-                        </TableCell>
+                        <TableHead>Inquiry ID</TableHead>
+                        <TableHead>Commented By</TableHead>
+                        <TableHead>Commented At</TableHead>
+                        <TableHead>Technology</TableHead>
+                        <TableHead>Description</TableHead>
+                        {canDelete && <TableHead className="text-right">Actions</TableHead>}
                       </TableRow>
-                    ) : (
-                      inquiryFeeds.map((feed) => (
-                        <TableRow key={feed.id}>
-                          <TableCell className="font-medium">{feed.inquiryId}</TableCell>
-                          <TableCell>User #{feed.commentedBy}</TableCell>
-                          <TableCell>
-                            {new Date(feed.createdAt).toLocaleString()}
+                    </TableHeader>
+                    <TableBody>
+                      {inquiryFeeds.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={canDelete ? 6 : 5} className="text-center py-8 text-muted-foreground">
+                            No communication feeds found for this inquiry
                           </TableCell>
-                          <TableCell>
-                            {feed.technology ? (
-                              <Badge variant="outline">{feed.technology}</Badge>
-                            ) : (
-                              '—'
-                            )}
-                          </TableCell>
-                          <TableCell className="max-w-md">
-                            <p className="line-clamp-2">{feed.description}</p>
-                          </TableCell>
-                          {canDelete && (
-                            <TableCell className="text-right">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setDeletingFeed(feed)}
-                              >
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            </TableCell>
-                          )}
                         </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
+                      ) : (
+                        inquiryFeeds.slice(feedPage * pageSize, (feedPage + 1) * pageSize).map((feed) => (
+                          <TableRow key={feed.id}>
+                            <TableCell className="font-medium">{feed.inquiryId}</TableCell>
+                            <TableCell>User #{feed.commentedBy}</TableCell>
+                            <TableCell>
+                              {new Date(feed.createdAt).toLocaleString()}
+                            </TableCell>
+                            <TableCell>
+                              {feed.technology ? (
+                                <Badge variant="outline">{feed.technology}</Badge>
+                              ) : (
+                                '—'
+                              )}
+                            </TableCell>
+                            <TableCell className="max-w-md">
+                              <p className="line-clamp-2">{feed.description}</p>
+                            </TableCell>
+                            {canDelete && (
+                              <TableCell className="text-right">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setDeletingFeed(feed)}
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </TableCell>
+                            )}
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="flex items-center justify-end space-x-2 pt-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setFeedPage(Math.max(0, feedPage - 1))}
+                    disabled={feedPage === 0}
+                  >
+                    Previous
+                  </Button>
+                  <div className="text-sm font-medium">
+                    Page {feedPage + 1} of {Math.ceil(inquiryFeeds.length / pageSize) || 1}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setFeedPage(Math.min(Math.ceil(inquiryFeeds.length / pageSize) - 1, feedPage + 1))}
+                    disabled={feedPage >= Math.ceil(inquiryFeeds.length / pageSize) - 1}
+                  >
+                    </Button>
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>

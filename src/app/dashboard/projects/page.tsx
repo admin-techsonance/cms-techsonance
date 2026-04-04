@@ -90,6 +90,11 @@ export default function ProjectsPage() {
   const [sortBy, setSortBy] = useState<string>('default');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
+  // Reset page when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search]);
+
   useEffect(() => {
     fetchCurrentUser();
   }, []);

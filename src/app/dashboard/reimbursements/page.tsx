@@ -100,6 +100,8 @@ export default function ReimbursementsPage() {
     // Admin view
     const [selectedReimbursement, setSelectedReimbursement] = useState<Reimbursement | null>(null);
     const [adminComments, setAdminComments] = useState('');
+    const [currentPage, setCurrentPage] = useState(0);
+    const pageSize = 10;
 
     useEffect(() => {
         fetchCurrentUser();
@@ -122,6 +124,7 @@ export default function ReimbursementsPage() {
         
         const timer = setTimeout(() => {
             fetchReimbursements();
+            setCurrentPage(0); // Reset to first page when any filter changes
         }, 300);
 
         return () => clearTimeout(timer);
@@ -697,80 +700,103 @@ export default function ReimbursementsPage() {
                     </div>
 
                     {/* Table */}
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead>Request ID</TableHead>
-                                {isAdmin && <TableHead>Employee</TableHead>}
-                                <TableHead>Category</TableHead>
-                                <TableHead>Amount</TableHead>
-                                <TableHead>Expense Date</TableHead>
-                                <TableHead>Status</TableHead>
-                                <TableHead>Submitted</TableHead>
-                                <TableHead className="text-right">Actions</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {loading ? (
-                                <TableSkeleton columns={isAdmin ? 8 : 7} rows={10} />
-                            ) : reimbursements.length === 0 ? (
+                    <div className="max-h-[500px] overflow-y-auto">
+                        <Table>
+                            <TableHeader className="sticky top-0 bg-background z-10">
                                 <TableRow>
-                                    <TableCell colSpan={isAdmin ? 8 : 7} className="text-center py-8 text-muted-foreground">
-                                        No reimbursement requests found
-                                    </TableCell>
+                                    <TableHead>Request ID</TableHead>
+                                    {isAdmin && <TableHead>Employee</TableHead>}
+                                    <TableHead>Category</TableHead>
+                                    <TableHead>Amount</TableHead>
+                                    <TableHead>Expense Date</TableHead>
+                                    <TableHead>Status</TableHead>
+                                    <TableHead>Submitted</TableHead>
+                                    <TableHead className="text-right">Actions</TableHead>
                                 </TableRow>
-                            ) : (
-                                reimbursements.map((reimbursement) => (
-                                    <TableRow key={reimbursement.id}>
-                                        <TableCell className="font-medium">{reimbursement.requestId}</TableCell>
-                                        {isAdmin && <TableCell>{getEmployeeName(reimbursement.employeeId)}</TableCell>}
-                                        <TableCell>{getCategoryName(reimbursement.categoryId)}</TableCell>
-                                        <TableCell>{formatAmount(reimbursement.amount)}</TableCell>
-                                        <TableCell>{new Date(reimbursement.expenseDate).toLocaleDateString()}</TableCell>
-                                        <TableCell>{getStatusBadge(reimbursement.status)}</TableCell>
-                                        <TableCell>
-                                            {reimbursement.submittedAt ? new Date(reimbursement.submittedAt).toLocaleDateString() : '—'}
-                                        </TableCell>
-                                        <TableCell className="text-right">
-                                            <div className="flex justify-end gap-2">
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    onClick={() => setSelectedReimbursement(reimbursement)}
-                                                >
-                                                    View
-                                                </Button>
-                                                {isAdmin && reimbursement.status === 'submitted' && (
-                                                    <>
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            onClick={() => {
-                                                                setSelectedReimbursement(reimbursement);
-                                                                setAdminComments('');
-                                                            }}
-                                                        >
-                                                            <Check className="h-4 w-4 text-green-600" />
-                                                        </Button>
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            onClick={() => {
-                                                                setSelectedReimbursement(reimbursement);
-                                                                setAdminComments('');
-                                                            }}
-                                                        >
-                                                            <X className="h-4 w-4 text-red-600" />
-                                                        </Button>
-                                                    </>
-                                                )}
-                                            </div>
+                            </TableHeader>
+                            <TableBody>
+                                {loading ? (
+                                    <TableSkeleton columns={isAdmin ? 8 : 7} rows={10} />
+                                ) : reimbursements.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={isAdmin ? 8 : 7} className="text-center py-8 text-muted-foreground">
+                                            No reimbursement requests found
                                         </TableCell>
                                     </TableRow>
-                                ))
-                            )}
-                        </TableBody>
-                    </Table>
+                                ) : (
+                                    reimbursements.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map((reimbursement) => (
+                                        <TableRow key={reimbursement.id}>
+                                            <TableCell className="font-medium">{reimbursement.requestId}</TableCell>
+                                            {isAdmin && <TableCell>{getEmployeeName(reimbursement.employeeId)}</TableCell>}
+                                            <TableCell>{getCategoryName(reimbursement.categoryId)}</TableCell>
+                                            <TableCell>{formatAmount(reimbursement.amount)}</TableCell>
+                                            <TableCell>{new Date(reimbursement.expenseDate).toLocaleDateString()}</TableCell>
+                                            <TableCell>{getStatusBadge(reimbursement.status)}</TableCell>
+                                            <TableCell>
+                                                {reimbursement.submittedAt ? new Date(reimbursement.submittedAt).toLocaleDateString() : '—'}
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                <div className="flex justify-end gap-2">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => setSelectedReimbursement(reimbursement)}
+                                                    >
+                                                        View
+                                                    </Button>
+                                                    {isAdmin && reimbursement.status === 'submitted' && (
+                                                        <>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                onClick={() => {
+                                                                    setSelectedReimbursement(reimbursement);
+                                                                    setAdminComments('');
+                                                                }}
+                                                            >
+                                                                <Check className="h-4 w-4 text-green-600" />
+                                                            </Button>
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                onClick={() => {
+                                                                    setSelectedReimbursement(reimbursement);
+                                                                    setAdminComments('');
+                                                                }}
+                                                            >
+                                                                <X className="h-4 w-4 text-red-600" />
+                                                            </Button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))
+                                )}
+                            </TableBody>
+                        </Table>
+                    </div>
+                    <div className="flex items-center justify-end space-x-2 pt-4">
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
+                            disabled={currentPage === 0}
+                        >
+                            Previous
+                        </Button>
+                        <div className="text-sm font-medium">
+                            Page {currentPage + 1} of {Math.ceil(reimbursements.length / pageSize) || 1}
+                        </div>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCurrentPage(Math.min(Math.ceil(reimbursements.length / pageSize) - 1, currentPage + 1))}
+                            disabled={currentPage >= Math.ceil(reimbursements.length / pageSize) - 1}
+                        >
+                            Next
+                        </Button>
+                    </div>
                 </CardContent>
             </Card>
 

@@ -140,6 +140,10 @@ export default function DailyUpdatePage() {
   const [extraWorkTotal, setExtraWorkTotal] = useState(0);
   const [coveredWorkPage, setCoveredWorkPage] = useState(0);
   const [coveredWorkTotal, setCoveredWorkTotal] = useState(0);
+  const [allReportsPage, setAllReportsPage] = useState(0);
+  const [projectsPage, setProjectsPage] = useState(0);
+  const [tabProjects, setTabProjects] = useState<Project[]>([]);
+  const [loadingTabProjects, setLoadingTabProjects] = useState(false);
   const pageSize = 10;
 
   // New filters for Extra/Covered Work
@@ -168,7 +172,7 @@ export default function DailyUpdatePage() {
       fetchAllDailyReports();
       fetchEmployees();
     }
-  }, [currentUser, selectedEmployeeFilter, adminStartDate, adminEndDate, adminStatusFilter]);
+  }, [currentUser, selectedEmployeeFilter, adminStartDate, adminEndDate, adminStatusFilter, allReportsPage]);
 
   const fetchExistingReport = async () => {
     if (!currentUser || !date) return;
@@ -293,8 +297,8 @@ export default function DailyUpdatePage() {
 
       // Check if user has full access (admin, hr_manager, cms_administrator)
       if (currentUser && hasFullAccess(currentUser.role as UserRole)) {
-        // Fetch all projects for admin roles
-        const response = await fetch('/api/projects?limit=100', {
+        // Fetch all projects for admin roles (larger limit for filters)
+        const response = await fetch('/api/projects?limit=1000', {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (response.ok) {
@@ -313,7 +317,7 @@ export default function DailyUpdatePage() {
             .filter((m: any) => m.userId === currentUser?.id)
             .map((m: any) => m.projectId);
 
-          const projectsResponse = await fetch('/api/projects?limit=100', {
+          const projectsResponse = await fetch('/api/projects?limit=1000', {
             headers: { 'Authorization': `Bearer ${token}` }
           });
 
@@ -328,6 +332,53 @@ export default function DailyUpdatePage() {
       }
     } catch (error) {
       console.error('Error fetching projects list:', error);
+    }
+  };
+
+  const fetchTabProjects = async () => {
+    setLoadingTabProjects(true);
+    try {
+      const token = localStorage.getItem('session_token');
+
+      // Check if user has full access (admin, hr_manager, cms_administrator)
+      if (currentUser && hasFullAccess(currentUser.role as UserRole)) {
+        // Fetch all projects for admin roles
+        const response = await fetch(`/api/projects?limit=${pageSize}&offset=${projectsPage * pageSize}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setTabProjects(data);
+        }
+      } else {
+        // For other roles, fetch only assigned projects
+        const memberResponse = await fetch('/api/project-members?limit=1000', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (memberResponse.ok) {
+          const members = await memberResponse.json();
+          const userProjectIds = members
+            .filter((m: any) => m.userId === currentUser?.id)
+            .map((m: any) => m.projectId);
+
+          const projectsResponse = await fetch(`/api/projects?limit=${pageSize}&offset=${projectsPage * pageSize}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+
+          if (projectsResponse.ok) {
+            const allProjects = await projectsResponse.json();
+            const filteredProjects = allProjects.filter((p: Project) =>
+              userProjectIds.includes(p.id)
+            );
+            setTabProjects(filteredProjects);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching projects list:', error);
+    } finally {
+      setLoadingTabProjects(false);
     }
   };
 
@@ -372,7 +423,7 @@ export default function DailyUpdatePage() {
     setLoading(true);
     try {
       const token = localStorage.getItem('session_token');
-      let url = '/api/daily-reports?limit=100';
+      let url = `/api/daily-reports?limit=${pageSize}&offset=${allReportsPage * pageSize}`;
 
       if (selectedEmployeeFilter !== 'all') url += `&employeeId=${selectedEmployeeFilter}`;
       if (adminStartDate) url += `&startDate=${adminStartDate}`;
@@ -702,6 +753,12 @@ export default function DailyUpdatePage() {
 
   const isAdmin = currentUser && hasFullAccess(currentUser.role as UserRole);
 
+  useEffect(() => {
+    if (currentUser) {
+      fetchTabProjects();
+    }
+  }, [currentUser, projectsPage]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -826,16 +883,17 @@ export default function DailyUpdatePage() {
                 )}
 
                 {/* Table */}
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Employee Name</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Submitted At</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
+                <div className="rounded-md border max-h-[600px] overflow-y-auto">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-background z-10">
+                      <TableRow>
+                        <TableHead>Employee Name</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Submitted At</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
                   <TableBody>
                     {loading ? (
                       <TableSkeleton columns={5} rows={5} />
@@ -885,7 +943,29 @@ export default function DailyUpdatePage() {
                     )}
                   </TableBody>
                 </Table>
-              </CardContent>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-end space-x-2 py-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAllReportsPage(p => Math.max(0, p - 1))}
+                  disabled={allReportsPage === 0}
+                >
+                  Previous
+                </Button>
+                <div className="text-sm font-medium">Page {allReportsPage + 1}</div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAllReportsPage(p => p + 1)}
+                  disabled={allDailyReports.length < pageSize}
+                >
+                  Next
+                </Button>
+              </div>
+            </CardContent>
             </Card>
           </TabsContent>
         )}
@@ -1388,46 +1468,69 @@ export default function DailyUpdatePage() {
               <CardDescription>View all your assigned projects</CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Project Name</TableHead>
-                    <TableHead>Start Date</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Priority</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {loadingProjects ? (
-                    <TableSkeleton columns={4} rows={5} />
-                  ) : projectsList.length === 0 ? (
+              <div className="rounded-md border max-h-[600px] overflow-y-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-background z-10">
                     <TableRow>
-                      <TableCell colSpan={4} className="text-center text-muted-foreground">
-                        No projects assigned
-                      </TableCell>
+                      <TableHead>Project Name</TableHead>
+                      <TableHead>Start Date</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Priority</TableHead>
                     </TableRow>
-                  ) : (
-                    projectsList.map((project: any) => (
-                      <TableRow key={project.id}>
-                        <TableCell className="font-medium">{project.name}</TableCell>
-                        <TableCell>
-                          {project.startDate ? new Date(project.startDate).toLocaleDateString() : '—'}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={project.status === 'in_progress' ? 'default' : 'secondary'}>
-                            {project.status?.replace('_', ' ') || 'N/A'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={project.priority === 'high' ? 'destructive' : 'default'}>
-                            {project.priority || 'N/A'}
-                          </Badge>
+                  </TableHeader>
+                  <TableBody>
+                    {loadingTabProjects ? (
+                      <TableSkeleton columns={4} rows={5} />
+                    ) : tabProjects.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="text-center text-muted-foreground">
+                          No projects assigned
                         </TableCell>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+                    ) : (
+                      tabProjects.map((project: any) => (
+                        <TableRow key={project.id}>
+                          <TableCell className="font-medium">{project.name}</TableCell>
+                          <TableCell>
+                            {project.startDate ? new Date(project.startDate).toLocaleDateString() : '—'}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={project.status === 'in_progress' ? 'default' : 'secondary'}>
+                              {project.status?.replace('_', ' ') || 'N/A'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={project.priority === 'high' ? 'destructive' : 'default'}>
+                              {project.priority || 'N/A'}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-end space-x-2 py-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setProjectsPage(p => Math.max(0, p - 1))}
+                  disabled={projectsPage === 0}
+                >
+                  Previous
+                </Button>
+                <div className="text-sm font-medium">Page {projectsPage + 1}</div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setProjectsPage(p => p + 1)}
+                  disabled={tabProjects.length < pageSize}
+                >
+                  Next
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

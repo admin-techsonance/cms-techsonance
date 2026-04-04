@@ -112,12 +112,17 @@ export async function GET(request: NextRequest) {
         nfcQuery = nfcQuery.where(and(...nfcConditions)) as any;
       }
 
-      nfcResults = (await nfcQuery).map(r => ({ ...r, _source: 'nfc' }));
+      // Map NFC results with prefixed IDs and flag
+      nfcResults = (await nfcQuery).map(r => ({ 
+        ...r, 
+        id: `nfc_${r.id}`, 
+        _source: 'nfc' 
+      }));
     }
 
     // ── Query 2: Old attendance table (legacy CMS entries) ──
     let legacyResults: any[] = [];
-    if (source !== 'nfc' && !readerId) { // Legacy table has no readerId, skip if filtering by reader
+    if (source !== 'nfc' && !readerId) {
       const legacyConditions = [];
       if (startDate) legacyConditions.push(gte(attendance.date, startDate));
       if (endDate) legacyConditions.push(lte(attendance.date, endDate));
@@ -153,9 +158,9 @@ export async function GET(request: NextRequest) {
 
       const rawLegacy = await legacyQuery;
 
-      // Normalize legacy records to match the new schema shape
+      // Normalize legacy records and prefix IDs
       legacyResults = rawLegacy.map(r => ({
-        id: r.id,
+        id: `legacy_${r.id}`,
         employeeId: r.employeeId,
         date: r.date,
         timeIn: r.checkIn,
@@ -181,14 +186,19 @@ export async function GET(request: NextRequest) {
           email: r.email,
           department: r.department,
           photoUrl: r.photoUrl,
-          status: r.empStatus,
+          status: r.status,
         },
         _source: 'legacy',
       }));
     }
 
+    // ── De-duplicate: Prefer NFC/RFID over Legacy ──
+    // We remove legacy records if there is an RFID record for the same employee and date
+    const rfidKeys = new Set(nfcResults.map(r => `${r.employeeId}_${r.date}`));
+    const filteredLegacy = legacyResults.filter(r => !rfidKeys.has(`${r.employeeId}_${r.date}`));
+
     // ── Merge, sort by date descending, and paginate ──
-    const merged = [...nfcResults, ...legacyResults]
+    const merged = [...nfcResults, ...filteredLegacy]
       .sort((a, b) => {
         const dateCompare = (b.date || '').localeCompare(a.date || '');
         if (dateCompare !== 0) return dateCompare;

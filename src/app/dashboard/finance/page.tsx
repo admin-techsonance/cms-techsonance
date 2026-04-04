@@ -176,6 +176,14 @@ export default function FinancePage() {
   const [reportYear, setReportYear] = useState(new Date().getFullYear().toString());
   const [monthSearch, setMonthSearch] = useState('');
 
+  // Pagination states
+  const [vendorPage, setVendorPage] = useState(0);
+  const [purchasePage, setPurchasePage] = useState(0);
+  const [categoryPage, setCategoryPage] = useState(0);
+  const [expensePage, setExpensePage] = useState(0);
+  const [invoicePage, setInvoicePage] = useState(0);
+  const pageSize = 10;
+
   useEffect(() => {
     fetchFinanceData();
   }, []);
@@ -870,36 +878,59 @@ export default function FinancePage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Vendor Name</TableHead>
-                      <TableHead>Contact</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {vendors.length === 0 ? (
-                      <TableRow><TableCell colSpan={3} className="text-center">No vendors found</TableCell></TableRow>
-                    ) : (
-                      vendors.map((vendor) => (
-                        <TableRow key={vendor.id}>
-                          <TableCell className="font-medium">{vendor.name}</TableCell>
-                          <TableCell>{vendor.email || vendor.phone}</TableCell>
-                          <TableCell><Badge variant="default">{vendor.status}</Badge></TableCell>
-                          <TableCell>
-                            <Button variant="ghost" size="sm" onClick={() => {
-                              setEditingVendor(vendor);
-                              setIsEditVendorOpen(true);
-                            }}><Pencil className="h-4 w-4 mr-2" /></Button>
-                            <Button variant="ghost" size="sm" onClick={() => handleDeleteVendor(vendor.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
+                <div className="max-h-[400px] overflow-y-auto">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-background z-10">
+                      <TableRow>
+                        <TableHead>Vendor Name</TableHead>
+                        <TableHead>Contact</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {vendors.length === 0 ? (
+                        <TableRow><TableCell colSpan={4} className="text-center">No vendors found</TableCell></TableRow>
+                      ) : (
+                        vendors.slice(vendorPage * pageSize, (vendorPage + 1) * pageSize).map((vendor) => (
+                          <TableRow key={vendor.id}>
+                            <TableCell className="font-medium">{vendor.name}</TableCell>
+                            <TableCell>{vendor.email || vendor.phone}</TableCell>
+                            <TableCell><Badge variant="default">{vendor.status}</Badge></TableCell>
+                            <TableCell>
+                              <Button variant="ghost" size="sm" onClick={() => {
+                                setEditingVendor(vendor);
+                                setIsEditVendorOpen(true);
+                              }}><Pencil className="h-4 w-4 mr-2" /></Button>
+                              <Button variant="ghost" size="sm" onClick={() => handleDeleteVendor(vendor.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="flex items-center justify-end space-x-2 py-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setVendorPage(Math.max(0, vendorPage - 1))}
+                    disabled={vendorPage === 0}
+                  >
+                    Previous
+                  </Button>
+                  <div className="text-sm font-medium">
+                    Page {vendorPage + 1} of {Math.ceil(vendors.length / pageSize) || 1}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setVendorPage(Math.min(Math.ceil(vendors.length / pageSize) - 1, vendorPage + 1))}
+                    disabled={vendorPage >= Math.ceil(vendors.length / pageSize) - 1}
+                  >
+                    Next
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 
@@ -954,38 +985,61 @@ export default function FinancePage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Vendor</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {purchases.length === 0 ? (
-                      <TableRow><TableCell colSpan={4} className="text-center">No purchases found</TableCell></TableRow>
-                    ) : (
-                      purchases.map((purchase) => (
-                        <TableRow key={purchase.id}>
-                          <TableCell>{purchase.date}</TableCell>
-                          <TableCell>{purchase.vendorName || purchase.vendorId}</TableCell>
-                          <TableCell>₹{purchase.amount}</TableCell>
-                          <TableCell><Badge variant="outline">{purchase.status}</Badge></TableCell>
-                          <TableCell>
-                            <Button variant="ghost" size="sm" onClick={() => {
-                              setEditingPurchase(purchase);
-                              setIsEditPurchaseOpen(true);
-                            }}><Pencil className="h-4 w-4 mr-2" /></Button>
-                            <Button variant="ghost" size="sm" onClick={() => handleDeletePurchase(purchase.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-                          </TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
+                <div className="max-h-[400px] overflow-y-auto">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-background z-10">
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Vendor</TableHead>
+                        <TableHead>Amount</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {purchases.length === 0 ? (
+                        <TableRow><TableCell colSpan={5} className="text-center">No purchases found</TableCell></TableRow>
+                      ) : (
+                        purchases.slice(purchasePage * pageSize, (purchasePage + 1) * pageSize).map((purchase) => (
+                          <TableRow key={purchase.id}>
+                            <TableCell>{purchase.date}</TableCell>
+                            <TableCell>{purchase.vendorName || purchase.vendorId}</TableCell>
+                            <TableCell>₹{purchase.amount}</TableCell>
+                            <TableCell><Badge variant="outline">{purchase.status}</Badge></TableCell>
+                            <TableCell>
+                              <Button variant="ghost" size="sm" onClick={() => {
+                                setEditingPurchase(purchase);
+                                setIsEditPurchaseOpen(true);
+                              }}><Pencil className="h-4 w-4 mr-2" /></Button>
+                              <Button variant="ghost" size="sm" onClick={() => handleDeletePurchase(purchase.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="flex items-center justify-end space-x-2 py-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPurchasePage(Math.max(0, purchasePage - 1))}
+                    disabled={purchasePage === 0}
+                  >
+                    Previous
+                  </Button>
+                  <div className="text-sm font-medium">
+                    Page {purchasePage + 1} of {Math.ceil(purchases.length / pageSize) || 1}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPurchasePage(Math.min(Math.ceil(purchases.length / pageSize) - 1, purchasePage + 1))}
+                    disabled={purchasePage >= Math.ceil(purchases.length / pageSize) - 1}
+                  >
+                    Next
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -1145,36 +1199,61 @@ export default function FinancePage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
-                  {expenseCategories.map((category, index) => {
-                    const categoryTotal = expenses
-                      .filter(e => e.category === category.name && e.status === 'approved')
-                      .reduce((sum, e) => sum + e.amount, 0);
-                    return (
-                      <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                        <div>
-                          <p className="font-medium">{category.name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {expenses.filter(e => e.category === category.name).length} expenses
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="text-right mr-2">
-                            <p className="font-bold">₹{(categoryTotal / 1000).toFixed(1)}K</p>
+                <div className="max-h-[400px] overflow-y-auto space-y-3">
+                  {expenseCategories.length === 0 ? (
+                    <p className="text-center py-4 text-muted-foreground">No categories found.</p>
+                  ) : (
+                    expenseCategories.slice(categoryPage * pageSize, (categoryPage + 1) * pageSize).map((category, index) => {
+                      const categoryTotal = expenses
+                        .filter(e => e.category === category.name && e.status === 'approved')
+                        .reduce((sum, e) => sum + e.amount, 0);
+                      return (
+                        <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                          <div>
+                            <p className="font-medium">{category.name}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {expenses.filter(e => e.category === category.name).length} expenses
+                            </p>
                           </div>
-                          <Button variant="ghost" size="sm" onClick={() => {
-                            setEditingCategory(category);
-                            setIsEditCategoryOpen(true);
-                          }}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleDeleteCategory(category.id)}>
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
+                          <div className="flex items-center gap-2">
+                            <div className="text-right mr-2">
+                              <p className="font-bold">₹{(categoryTotal / 1000).toFixed(1)}K</p>
+                            </div>
+                            <Button variant="ghost" size="sm" onClick={() => {
+                              setEditingCategory(category);
+                              setIsEditCategoryOpen(true);
+                            }}>
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => handleDeleteCategory(category.id)}>
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
+                </div>
+                <div className="flex items-center justify-end space-x-2 py-4">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCategoryPage(Math.max(0, categoryPage - 1))}
+                    disabled={categoryPage === 0}
+                  >
+                    Previous
+                  </Button>
+                  <div className="text-sm font-medium">
+                    Page {categoryPage + 1} of {Math.ceil(expenseCategories.length / pageSize) || 1}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCategoryPage(Math.min(Math.ceil(expenseCategories.length / pageSize) - 1, categoryPage + 1))}
+                    disabled={categoryPage >= Math.ceil(expenseCategories.length / pageSize) - 1}
+                  >
+                    Next
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -1260,56 +1339,81 @@ export default function FinancePage() {
                     <p className="mt-4 text-sm text-muted-foreground">No expenses recorded</p>
                   </div>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead>Description</TableHead>
-                        <TableHead>Amount</TableHead>
-                        <TableHead>Receipt</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {expenses.map((expense) => (
-                        <TableRow key={expense.id}>
-                          <TableCell>{new Date(expense.date).toLocaleDateString()}</TableCell>
-                          <TableCell className="font-medium">{expense.category}</TableCell>
-                          <TableCell>{expense.description}</TableCell>
-                          <TableCell>₹{(expense.amount / 1000).toFixed(2)}K</TableCell>
-                          <TableCell>
-                            <Button variant="ghost" size="sm">
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={
-                              expense.status === 'approved' ? 'default' :
-                                expense.status === 'rejected' ? 'destructive' :
-                                  'secondary'
-                            }>
-                              {expense.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            {expense.status === 'pending' && (
-                              <div className="flex gap-1">
-                                <Button variant="outline" size="sm" onClick={() => handleUpdateExpenseStatus(expense.id, 'approved')}>
-                                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <>
+                    <div className="max-h-[400px] overflow-y-auto">
+                      <Table>
+                        <TableHeader className="sticky top-0 bg-background z-10">
+                          <TableRow>
+                            <TableHead>Date</TableHead>
+                            <TableHead>Category</TableHead>
+                            <TableHead>Description</TableHead>
+                            <TableHead>Amount</TableHead>
+                            <TableHead>Receipt</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {expenses.slice(expensePage * pageSize, (expensePage + 1) * pageSize).map((expense) => (
+                            <TableRow key={expense.id}>
+                              <TableCell>{new Date(expense.date).toLocaleDateString()}</TableCell>
+                              <TableCell className="font-medium">{expense.category}</TableCell>
+                              <TableCell>{expense.description}</TableCell>
+                              <TableCell>₹{(expense.amount / 1000).toFixed(2)}K</TableCell>
+                              <TableCell>
+                                <Button variant="ghost" size="sm">
+                                  <Eye className="h-4 w-4" />
                                 </Button>
-                                <Button variant="outline" size="sm" onClick={() => handleUpdateExpenseStatus(expense.id, 'rejected')}>
-                                  <AlertCircle className="h-4 w-4 text-red-600" />
-                                </Button>
-                              </div>
-                            )}
-                            <Button variant="ghost" size="sm" onClick={() => handleDeleteExpense(expense.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant={
+                                  expense.status === 'approved' ? 'default' :
+                                    expense.status === 'rejected' ? 'destructive' :
+                                      'secondary'
+                                }>
+                                  {expense.status}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                {expense.status === 'pending' && (
+                                  <div className="flex gap-1">
+                                    <Button variant="outline" size="sm" onClick={() => handleUpdateExpenseStatus(expense.id, 'approved')}>
+                                      <CheckCircle className="h-4 w-4 text-green-600" />
+                                    </Button>
+                                    <Button variant="outline" size="sm" onClick={() => handleUpdateExpenseStatus(expense.id, 'rejected')}>
+                                      <AlertCircle className="h-4 w-4 text-red-600" />
+                                    </Button>
+                                  </div>
+                                )}
+                                <Button variant="ghost" size="sm" onClick={() => handleDeleteExpense(expense.id)}><Trash2 className="h-4 w-4 text-red-500" /></Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className="flex items-center justify-end space-x-2 py-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setExpensePage(Math.max(0, expensePage - 1))}
+                        disabled={expensePage === 0}
+                      >
+                        Previous
+                      </Button>
+                      <div className="text-sm font-medium">
+                        Page {expensePage + 1} of {Math.ceil(expenses.length / pageSize) || 1}
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setExpensePage(Math.min(Math.ceil(expenses.length / pageSize) - 1, expensePage + 1))}
+                        disabled={expensePage >= Math.ceil(expenses.length / pageSize) - 1}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </>
                 )}
               </CardContent>
             </Card >
@@ -1430,68 +1534,93 @@ export default function FinancePage() {
                   <p className="mt-4 text-sm text-muted-foreground">No invoices yet</p>
                 </div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Invoice #</TableHead>
-                      <TableHead>Client</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Due Date</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {invoices.map((invoice) => (
-                      <TableRow key={invoice.id}>
-                        <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
-                        <TableCell>
-                          {clients.find(c => c.id === invoice.clientId)?.companyName || invoice.clientId}
-                        </TableCell>
-                        <TableCell>₹{(invoice.totalAmount / 1000).toFixed(2)}K</TableCell>
-                        <TableCell>
-                          <Badge variant={
-                            invoice.status === 'paid' ? 'default' :
-                              invoice.status === 'sent' ? 'secondary' :
-                                invoice.status === 'overdue' ? 'destructive' :
-                                  'outline'
-                          }>
-                            {invoice.status}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{new Date(invoice.dueDate).toLocaleDateString()}</TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1 items-center">
-                            <Select
-                              value={invoice.status}
-                              onValueChange={(val) => handleUpdateInvoiceStatus(invoice.id, val)}
-                            >
-                              <SelectTrigger className="w-[100px] h-8 mr-2">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="draft">Draft</SelectItem>
-                                <SelectItem value="sent">Sent</SelectItem>
-                                <SelectItem value="paid">Paid</SelectItem>
-                                <SelectItem value="overdue">Overdue</SelectItem>
-                                <SelectItem value="cancelled">Cancelled</SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <Button variant="ghost" size="sm" onClick={() => handlePrintInvoice(invoice)}>
-                              <Printer className="h-4 w-4" />
-                            </Button>
-                            <Button variant="ghost" size="sm" onClick={() => handleEditInvoice(invoice)}>
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button variant="ghost" size="sm" onClick={() => handleDeleteInvoice(invoice.id)}>
-                              <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <>
+                  <div className="max-h-[400px] overflow-y-auto">
+                    <Table>
+                      <TableHeader className="sticky top-0 bg-background z-10">
+                        <TableRow>
+                          <TableHead>Invoice #</TableHead>
+                          <TableHead>Client</TableHead>
+                          <TableHead>Amount</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Due Date</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {invoices.slice(invoicePage * pageSize, (invoicePage + 1) * pageSize).map((invoice) => (
+                          <TableRow key={invoice.id}>
+                            <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
+                            <TableCell>
+                              {clients.find(c => c.id === invoice.clientId)?.companyName || invoice.clientId}
+                            </TableCell>
+                            <TableCell>₹{(invoice.totalAmount / 1000).toFixed(2)}K</TableCell>
+                            <TableCell>
+                              <Badge variant={
+                                invoice.status === 'paid' ? 'default' :
+                                  invoice.status === 'sent' ? 'secondary' :
+                                    invoice.status === 'overdue' ? 'destructive' :
+                                      'outline'
+                              }>
+                                {invoice.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{new Date(invoice.dueDate).toLocaleDateString()}</TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-1 items-center">
+                                <Select
+                                  value={invoice.status}
+                                  onValueChange={(val) => handleUpdateInvoiceStatus(invoice.id, val)}
+                                >
+                                  <SelectTrigger className="w-[100px] h-8 mr-2">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="draft">Draft</SelectItem>
+                                    <SelectItem value="sent">Sent</SelectItem>
+                                    <SelectItem value="paid">Paid</SelectItem>
+                                    <SelectItem value="overdue">Overdue</SelectItem>
+                                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <Button variant="ghost" size="sm" onClick={() => handlePrintInvoice(invoice)}>
+                                  <Printer className="h-4 w-4" />
+                                </Button>
+                                <Button variant="ghost" size="sm" onClick={() => handleEditInvoice(invoice)}>
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button variant="ghost" size="sm" onClick={() => handleDeleteInvoice(invoice.id)}>
+                                  <Trash2 className="h-4 w-4 text-red-500" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <div className="flex items-center justify-end space-x-2 py-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setInvoicePage(Math.max(0, invoicePage - 1))}
+                      disabled={invoicePage === 0}
+                    >
+                      Previous
+                    </Button>
+                    <div className="text-sm font-medium">
+                      Page {invoicePage + 1} of {Math.ceil(invoices.length / pageSize) || 1}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setInvoicePage(Math.min(Math.ceil(invoices.length / pageSize) - 1, invoicePage + 1))}
+                      disabled={invoicePage >= Math.ceil(invoices.length / pageSize) - 1}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>
@@ -1504,6 +1633,12 @@ export default function FinancePage() {
           {(() => {
             const [reportYear, setReportYear] = useState(new Date().getFullYear().toString());
             const [monthSearch, setMonthSearch] = useState('');
+
+            // Pagination states for Income tab
+            const [paidInvoicePage, setPaidInvoicePage] = useState(0);
+            const [pendingInvoicePage, setPendingInvoicePage] = useState(0);
+            const [monthlyReportPage, setMonthlyReportPage] = useState(0);
+            const incomePageSize = 5; // Smaller page size for income tab cards
 
             const totalPaid = invoices.filter(i => i.status === 'paid').reduce((acc, curr) => acc + curr.totalAmount, 0);
             const pendingPayments = invoices.filter(i => i.status === 'sent').reduce((acc, curr) => acc + curr.totalAmount, 0);
@@ -1614,24 +1749,58 @@ export default function FinancePage() {
                       <CardDescription>Successfully collected payments</CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Invoice #</TableHead>
-                            <TableHead>Amount</TableHead>
-                            <TableHead>Paid Date</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {invoices.filter(i => i.status === 'paid').sort((a, b) => new Date(b.paidDate || 0).getTime() - new Date(a.paidDate || 0).getTime()).slice(0, 5).map((invoice) => (
-                            <TableRow key={invoice.id}>
-                              <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
-                              <TableCell className="text-green-600">₹{(invoice.totalAmount / 1000).toFixed(2)}K</TableCell>
-                              <TableCell>{invoice.paidDate ? new Date(invoice.paidDate).toLocaleDateString() : '—'}</TableCell>
+                      <div className="max-h-[300px] overflow-y-auto">
+                        <Table>
+                          <TableHeader className="sticky top-0 bg-background z-10">
+                            <TableRow>
+                              <TableHead>Invoice #</TableHead>
+                              <TableHead>Amount</TableHead>
+                              <TableHead>Paid Date</TableHead>
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                          </TableHeader>
+                          <TableBody>
+                            {(() => {
+                              const paidInvoices = invoices.filter(i => i.status === 'paid').sort((a, b) => new Date(b.paidDate || 0).getTime() - new Date(a.paidDate || 0).getTime());
+                              return (
+                                <>
+                                  {paidInvoices.length === 0 ? (
+                                    <TableRow><TableCell colSpan={3} className="text-center">No paid invoices</TableCell></TableRow>
+                                  ) : (
+                                    paidInvoices.slice(paidInvoicePage * incomePageSize, (paidInvoicePage + 1) * incomePageSize).map((invoice) => (
+                                      <TableRow key={invoice.id}>
+                                        <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
+                                        <TableCell className="text-green-600">₹{(invoice.totalAmount / 1000).toFixed(2)}K</TableCell>
+                                        <TableCell>{invoice.paidDate ? new Date(invoice.paidDate).toLocaleDateString() : '—'}</TableCell>
+                                      </TableRow>
+                                    ))
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      <div className="flex items-center justify-end space-x-2 py-4">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPaidInvoicePage(Math.max(0, paidInvoicePage - 1))}
+                          disabled={paidInvoicePage === 0}
+                        >
+                          Previous
+                        </Button>
+                        <div className="text-sm font-medium">
+                          Page {paidInvoicePage + 1} of {Math.ceil(invoices.filter(i => i.status === 'paid').length / incomePageSize) || 1}
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPaidInvoicePage(Math.min(Math.ceil(invoices.filter(i => i.status === 'paid').length / incomePageSize) - 1, paidInvoicePage + 1))}
+                          disabled={paidInvoicePage >= Math.ceil(invoices.filter(i => i.status === 'paid').length / incomePageSize) - 1}
+                        >
+                          Next
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
 
@@ -1642,30 +1811,64 @@ export default function FinancePage() {
                       <CardDescription>Follow-up required</CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Invoice #</TableHead>
-                            <TableHead>Amount</TableHead>
-                            <TableHead>Due Date</TableHead>
-                            <TableHead>Status</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {invoices.filter(i => i.status === 'sent' || i.status === 'overdue').sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()).slice(0, 5).map((invoice) => (
-                            <TableRow key={invoice.id}>
-                              <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
-                              <TableCell>₹{(invoice.totalAmount / 1000).toFixed(2)}K</TableCell>
-                              <TableCell>{new Date(invoice.dueDate).toLocaleDateString()}</TableCell>
-                              <TableCell>
-                                <Badge variant={invoice.status === 'overdue' ? 'destructive' : 'secondary'}>
-                                  {invoice.status}
-                                </Badge>
-                              </TableCell>
+                      <div className="max-h-[300px] overflow-y-auto">
+                        <Table>
+                          <TableHeader className="sticky top-0 bg-background z-10">
+                            <TableRow>
+                              <TableHead>Invoice #</TableHead>
+                              <TableHead>Amount</TableHead>
+                              <TableHead>Due Date</TableHead>
+                              <TableHead>Status</TableHead>
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                          </TableHeader>
+                          <TableBody>
+                            {(() => {
+                              const pendingInvoices = invoices.filter(i => i.status === 'sent' || i.status === 'overdue').sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+                              return (
+                                <>
+                                  {pendingInvoices.length === 0 ? (
+                                    <TableRow><TableCell colSpan={4} className="text-center">No pending payments</TableCell></TableRow>
+                                  ) : (
+                                    pendingInvoices.slice(pendingInvoicePage * incomePageSize, (pendingInvoicePage + 1) * incomePageSize).map((invoice) => (
+                                      <TableRow key={invoice.id}>
+                                        <TableCell className="font-medium">{invoice.invoiceNumber}</TableCell>
+                                        <TableCell>₹{(invoice.totalAmount / 1000).toFixed(2)}K</TableCell>
+                                        <TableCell>{new Date(invoice.dueDate).toLocaleDateString()}</TableCell>
+                                        <TableCell>
+                                          <Badge variant={invoice.status === 'overdue' ? 'destructive' : 'secondary'}>
+                                            {invoice.status}
+                                          </Badge>
+                                        </TableCell>
+                                      </TableRow>
+                                    ))
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      <div className="flex items-center justify-end space-x-2 py-4">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPendingInvoicePage(Math.max(0, pendingInvoicePage - 1))}
+                          disabled={pendingInvoicePage === 0}
+                        >
+                          Previous
+                        </Button>
+                        <div className="text-sm font-medium">
+                          Page {pendingInvoicePage + 1} of {Math.ceil(invoices.filter(i => i.status === 'sent' || i.status === 'overdue').length / incomePageSize) || 1}
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPendingInvoicePage(Math.min(Math.ceil(invoices.filter(i => i.status === 'sent' || i.status === 'overdue').length / incomePageSize) - 1, pendingInvoicePage + 1))}
+                          disabled={pendingInvoicePage >= Math.ceil(invoices.filter(i => i.status === 'sent' || i.status === 'overdue').length / incomePageSize) - 1}
+                        >
+                          Next
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
 
@@ -1704,11 +1907,11 @@ export default function FinancePage() {
                       </div>
                     </CardHeader>
                     <CardContent>
-                      <div className="space-y-4">
+                      <div className="max-h-[400px] overflow-y-auto space-y-4">
                         {monthlyReports.length === 0 ? (
                           <p className="text-center py-4 text-muted-foreground">No income history available.</p>
                         ) : (
-                          monthlyReports.map((report) => (
+                          monthlyReports.slice(monthlyReportPage * incomePageSize, (monthlyReportPage + 1) * incomePageSize).map((report) => (
                             <div key={report.month} className="flex items-center justify-between p-4 border rounded-lg">
                               <div>
                                 <p className="font-medium">{report.month}</p>
@@ -1727,6 +1930,27 @@ export default function FinancePage() {
                             </div>
                           ))
                         )}
+                      </div>
+                      <div className="flex items-center justify-end space-x-2 py-4">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setMonthlyReportPage(Math.max(0, monthlyReportPage - 1))}
+                          disabled={monthlyReportPage === 0}
+                        >
+                          Previous
+                        </Button>
+                        <div className="text-sm font-medium">
+                          Page {monthlyReportPage + 1} of {Math.ceil(monthlyReports.length / incomePageSize) || 1}
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setMonthlyReportPage(Math.min(Math.ceil(monthlyReports.length / incomePageSize) - 1, monthlyReportPage + 1))}
+                          disabled={monthlyReportPage >= Math.ceil(monthlyReports.length / incomePageSize) - 1}
+                        >
+                          Next
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>
