@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getDatabase, ref, get } from "firebase/database";
 import { db } from "@/db";
-import { nfcTags, attendanceRecords } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { nfcTags, attendanceRecords, employees } from "@/db/schema";
+import { eq, or } from "drizzle-orm";
 
 // Initialize Firebase (singleton pattern for serverless)
 function getFirebaseDb() {
@@ -21,12 +21,39 @@ function getFirebaseDb() {
     return getDatabase(app);
 }
 
+// Helper to format time into ISO string (YYYY-MM-DDTHH:mm:ss)
+function formatToISO(dateStr: string, timeStr: string): string | null {
+    if (!dateStr || !timeStr) return null;
+    try {
+        if (timeStr.includes('T')) return timeStr;
+        let time = timeStr.trim();
+        const ampmMatch = time.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)/i);
+        if (ampmMatch) {
+            let hours = parseInt(ampmMatch[1], 10);
+            const minutes = ampmMatch[2];
+            const seconds = ampmMatch[3] || "00";
+            const ampm = ampmMatch[4].toLowerCase();
+            if (ampm === "pm" && hours < 12) hours += 12;
+            if (ampm === "am" && hours === 12) hours = 0;
+            time = `${String(hours).padStart(2, "0")}:${minutes}:${seconds}`;
+        }
+        const parts = time.split(":");
+        if (parts.length === 2) time = `${parts[0].padStart(2, "0")}:${parts[1].padStart(2, "0")}:00`;
+        return `${dateStr}T${time}`;
+    } catch {
+        return null;
+    }
+}
+
 // Helper to calculate duration in minutes
 function calculateDuration(dateStr: string, timeIn: string, timeOut: string): number | null {
     if (!timeIn || !timeOut || !dateStr) return null;
     try {
-        const inDate = new Date(`${dateStr}T${timeIn}`);
-        const outDate = new Date(`${dateStr}T${timeOut}`);
+        const isoIn = formatToISO(dateStr, timeIn);
+        const isoOut = formatToISO(dateStr, timeOut);
+        if (!isoIn || !isoOut) return null;
+        const inDate = new Date(isoIn);
+        const outDate = new Date(isoOut);
         const diffMs = outDate.getTime() - inDate.getTime();
         const diffMins = Math.round(diffMs / 60000);
         return diffMins > 0 ? diffMins : 0;
@@ -51,59 +78,114 @@ async function processAttendanceData(tagUid: string, rawData: any): Promise<{ cr
             const existingRecord = await db.select().from(attendanceRecords)
                 .where(eq(attendanceRecords.idempotencyKey, logKey)).limit(1);
 
-            if (existingRecord.length > 0) {
-                const record = existingRecord[0];
+                if (existingRecord.length > 0) {
+                    const record = existingRecord[0];
+                    const isoOut = entry.check_out ? formatToISO(dateKey, entry.check_out) : null;
 
-                if (!record.timeOut && entry.check_out) {
-                    const duration = calculateDuration(dateKey, record.timeIn, entry.check_out);
+                    // Update existing record with better data if needed
+                    const updates: any = {};
+                    const isoIn = formatToISO(dateKey, entry.check_in);
+                    
+                    if (record.timeIn !== isoIn && isoIn) {
+                        updates.timeIn = isoIn;
+                    }
+                    if (record.timeOut !== isoOut && isoOut) {
+                        updates.timeOut = isoOut;
+                        updates.duration = calculateDuration(dateKey, entry.check_in, entry.check_out!);
+                    }
+                    if (record.checkInMethod !== 'rfid' && record.checkInMethod !== 'nfc') {
+                        updates.checkInMethod = 'rfid';
+                    }
 
-                    await (db as any).update(attendanceRecords)
-                        .set({
-                            timeOut: entry.check_out,
-                            duration: duration,
-                            metadata: JSON.stringify(entry)
-                        })
-                        .where(eq(attendanceRecords.id, record.id));
-
-                    result.updated++;
-                } else {
-                    result.skipped++;
+                    if (Object.keys(updates).length > 0) {
+                        await (db as any).update(attendanceRecords)
+                            .set(updates)
+                            .where(eq(attendanceRecords.id, record.id));
+                        result.updated++;
+                    } else {
+                        result.skipped++;
+                    }
+                    continue;
                 }
-                continue;
+
+            // Find employee by tag, employeeId, or Primary Key (id)
+            let employeeId: number | null = null;
+            const normalizedUid = tagUid.replace(/[:\s]/g, '').toLowerCase();
+
+            const allEmps = await db.select().from(employees);
+            
+            // Log sample IDs once to aid discovery
+            if (result.created === 0 && result.updated === 0 && result.errors.length === 0) {
+                console.log(`[Firebase Discovery] Firebase Key: "${tagUid}" | Normalized: "${normalizedUid}"`);
+                console.log(`[Firebase Discovery] DB Sample (IDs):`, allEmps.slice(0, 5).map(e => ({ id: e.id, empId: e.employeeId })));
             }
 
-            // Find employee by tag
-            const tagRecord = await db.select().from(nfcTags)
-                .where(eq(nfcTags.tagUid, tagUid)).limit(1);
+            // 1. Check nfc_tags table (normalized)
+            const tagRecord = await db.select().from(nfcTags);
+            const matchingTag = tagRecord.find(t => t.tagUid.replace(/[:\s]/g, '').toLowerCase() === normalizedUid);
 
-            if (tagRecord.length === 0) {
-                result.errors.push(`Unknown tag: ${tagUid}`);
-                continue;
-            }
-
-            const employeeId = tagRecord[0].employeeId;
+            if (matchingTag) {
+                employeeId = matchingTag.employeeId;
+            } 
+            
+            // 2. Check if the entry ITSELF has an employee ID (inline)
             if (!employeeId) {
-                result.errors.push(`Tag ${tagUid} not assigned`);
+                const inlineEmpId = (entry as any).employee_id || (entry as any).employeeId || (entry as any).emp_id;
+                if (inlineEmpId) {
+                    const empMatch = allEmps.find(e => 
+                        String(e.id) === String(inlineEmpId) || 
+                        e.employeeId === String(inlineEmpId)
+                    );
+                    if (empMatch) {
+                        employeeId = empMatch.id;
+                        console.log(`[Firebase Mapping] Found employee via inline ID: ${inlineEmpId} for key ${tagUid}`);
+                    }
+                }
+            }
+
+            // 3. Fallback: Check employees table directly (PK id, nfcCardId, or employeeId)
+            if (!employeeId) {
+                const empMatch = allEmps.find(e => 
+                    String(e.id) === normalizedUid || // Match Primary Key "11" -> 11
+                    (e.nfcCardId?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid) ||
+                    (e.employeeId?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid)
+                );
+                
+                if (empMatch) {
+                    employeeId = empMatch.id;
+                    console.log(`[Firebase Mapping] Found employee via direct comparison: ${empMatch.id} (${empMatch.employeeId}) for key ${tagUid}`);
+                }
+            }
+
+            if (!employeeId) {
+                // Only log if we haven't seen this unknown tag too many times
+                if (result.errors.length < 10) {
+                    console.log(`[Firebase Debug] Mapping Failed for key "${tagUid}". Entry:`, JSON.stringify(entry));
+                }
+                result.errors.push(`Unknown tag/id: ${tagUid}`);
                 continue;
             }
 
-            const duration = entry.check_out ? calculateDuration(dateKey, entry.check_in, entry.check_out) : null;
+                const isoIn = formatToISO(dateKey, entry.check_in);
+                const isoOut = entry.check_out ? formatToISO(dateKey, entry.check_out) : null;
 
-            await (db as any).insert(attendanceRecords).values({
-                employeeId,
-                date: dateKey,
-                timeIn: entry.check_in,
-                timeOut: entry.check_out || null,
-                duration,
-                status: "present",
-                checkInMethod: "nfc",
-                tagUid,
-                idempotencyKey: logKey,
-                metadata: JSON.stringify(entry),
-                createdAt: new Date().toISOString()
-            });
+                const duration = entry.check_out ? calculateDuration(dateKey, entry.check_in, entry.check_out) : null;
 
-            result.created++;
+                await (db as any).insert(attendanceRecords).values({
+                    employeeId,
+                    date: dateKey,
+                    timeIn: isoIn,
+                    timeOut: isoOut,
+                    duration,
+                    status: "present",
+                    checkInMethod: "rfid",
+                    tagUid,
+                    idempotencyKey: logKey,
+                    metadata: JSON.stringify(entry),
+                    createdAt: new Date().toISOString()
+                });
+
+                result.created++;
         } catch (error) {
             result.errors.push(`${logKey}: ${String(error)}`);
         }

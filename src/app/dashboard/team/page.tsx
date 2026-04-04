@@ -60,6 +60,8 @@ export default function TeamPage() {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [deletingEmployee, setDeletingEmployee] = useState<{ employee: Employee; user: User } | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentPage, setCurrentPage] = useState(0);
+  const pageSize = 10;
 
   useEffect(() => {
     fetchCurrentUser();
@@ -166,6 +168,17 @@ export default function TeamPage() {
     );
   });
 
+  // Calculate paginated employees
+  const paginatedEmployees = filteredEmployees.slice(
+    currentPage * pageSize,
+    (currentPage + 1) * pageSize
+  );
+
+  // Reset page when search changes
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [search]);
+
   const isAdmin = currentUser && hasFullAccess(currentUser.role as UserRole);
 
   return (
@@ -255,73 +268,98 @@ export default function TeamPage() {
               <h3 className="mt-4 text-lg font-semibold">No employees found</h3>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Employee ID</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Department</TableHead>
-                  <TableHead>Designation</TableHead>
-                  <TableHead>Joining Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredEmployees.map((employee) => {
-                  const user = getUserById(employee.userId);
-                  return (
-                    <TableRow key={employee.id}>
-                      <TableCell className="font-medium">{employee.employeeId}</TableCell>
-                      <TableCell>
-                        {user ? `${user.firstName} ${user.lastName}` : 'Unknown'}
-                      </TableCell>
-                      <TableCell>{employee.department}</TableCell>
-                      <TableCell>{employee.designation}</TableCell>
-                      <TableCell>
-                        {new Date(employee.dateOfJoining).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={
-                          employee.status === 'active' ? 'default' :
-                          employee.status === 'on_leave' ? 'secondary' :
-                          'outline'
-                        }>
-                          {employee.status.replace('_', ' ')}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Link href={`/dashboard/team/${employee.id}`}>
-                            <Button variant="ghost" size="sm">
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                          </Link>
-                          {isAdmin && (
-                            <>
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                onClick={() => handleEdit(employee)}
-                              >
-                                <Edit className="h-4 w-4" />
-                              </Button>
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                onClick={() => user && setDeletingEmployee({ employee, user })}
-                              >
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                      </TableCell>
+            <>
+              <div className="rounded-md border max-h-[600px] overflow-y-auto">
+                <Table>
+                  <TableHeader className="sticky top-0 bg-background z-10">
+                    <TableRow>
+                      <TableHead>Employee ID</TableHead>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Department</TableHead>
+                      <TableHead>Designation</TableHead>
+                      <TableHead>Joining Date</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {paginatedEmployees.map((employee) => {
+                      const user = getUserById(employee.userId);
+                      return (
+                        <TableRow key={employee.id}>
+                          <TableCell className="font-medium">{employee.employeeId}</TableCell>
+                          <TableCell>
+                            {user ? `${user.firstName} ${user.lastName}` : 'Unknown'}
+                          </TableCell>
+                          <TableCell>{employee.department}</TableCell>
+                          <TableCell>{employee.designation}</TableCell>
+                          <TableCell>
+                            {new Date(employee.dateOfJoining).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant={
+                              employee.status === 'active' ? 'default' :
+                              employee.status === 'on_leave' ? 'secondary' :
+                              'outline'
+                            }>
+                              {employee.status.replace('_', ' ')}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Link href={`/dashboard/team/${employee.id}`}>
+                                <Button variant="ghost" size="sm">
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                              </Link>
+                              {isAdmin && (
+                                <>
+                                  <Button 
+                                    variant="ghost" 
+                                    size="sm"
+                                    onClick={() => handleEdit(employee)}
+                                  >
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                  <Button 
+                                    variant="ghost" 
+                                    size="sm"
+                                    onClick={() => user && setDeletingEmployee({ employee, user })}
+                                  >
+                                    <Trash2 className="h-4 w-4 text-destructive" />
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination */}
+              <div className="flex items-center justify-end space-x-2 py-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+                  disabled={currentPage === 0}
+                >
+                  Previous
+                </Button>
+                <div className="text-sm font-medium">Page {currentPage + 1}</div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(p => p + 1)}
+                  disabled={(currentPage + 1) * pageSize >= filteredEmployees.length}
+                >
+                  Next
+                </Button>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

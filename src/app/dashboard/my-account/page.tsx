@@ -402,9 +402,21 @@ export default function MyAccountPage() {
 
   const handleAttendanceRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([fetchTodaySummary(), fetchAllAttendance()]);
-    setRefreshing(false);
-    toast.success('Attendance data refreshed');
+    try {
+      const token = localStorage.getItem('session_token');
+      // Trigger Firebase sync first
+      await fetch('/api/firebase/poll', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      // Then refresh the UI data
+      await Promise.all([fetchTodaySummary(), fetchAllAttendance()]);
+      toast.success('Attendance data synced with Firebase');
+    } catch (error) {
+      console.error('Refresh error:', error);
+      toast.error('Failed to sync with Firebase');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const fetchLeaveRequests = async () => {
@@ -730,8 +742,13 @@ export default function MyAccountPage() {
 
   const handleEditAttendance = (record: any) => {
     setEditingAttendance(record);
-    const checkIn = record.checkIn ? new Date(record.checkIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
-    const checkOut = record.checkOut ? new Date(record.checkOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+    
+    // Support both new timeIn/timeOut and legacy checkIn/checkOut
+    const rawIn = record.timeIn || record.checkIn;
+    const rawOut = record.timeOut || record.checkOut;
+    
+    const checkIn = rawIn ? new Date(rawIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+    const checkOut = rawOut ? new Date(rawOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
 
     setEditAttendanceForm({
       timeIn: checkIn,
@@ -2383,8 +2400,17 @@ export default function MyAccountPage() {
                               })()}
                             </TableCell>
                             <TableCell>
-                              <Badge variant="outline" className="capitalize text-[10px] px-1.5 py-0">
-                                {record.checkInMethod === 'legacy' ? 'Manual' : (record.checkInMethod || 'Manual')}
+                              <Badge 
+                                variant="outline" 
+                                className={`capitalize text-[10px] px-1.5 py-0 ${
+                                  (record.checkInMethod === 'rfid' || record.checkInMethod === 'nfc') 
+                                    ? 'bg-blue-500/10 text-blue-700 border-blue-200' 
+                                    : ''
+                                }`}
+                              >
+                                {(record.checkInMethod === 'rfid' || record.checkInMethod === 'nfc') ? 'RFID Attendance' : 
+                                 record.checkInMethod === 'legacy' ? 'Manual' : 
+                                 (record.checkInMethod || 'Manual')}
                               </Badge>
                             </TableCell>
                             <TableCell>
