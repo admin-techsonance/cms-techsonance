@@ -125,20 +125,23 @@ export async function GET(request: NextRequest) {
       conditions.push(lte(leaveRequests.endDate, endDate));
     }
 
-    let query = db.select().from(leaveRequests);
+    const query = db.select().from(leaveRequests);
+    
+    // @ts-ignore - Drizzle dynamic query building type loss
+    let dynamicQuery: any = query;
 
     if (conditions.length > 0) {
-      query = query.where(and(...conditions));
+      dynamicQuery = dynamicQuery.where(and(...conditions));
     }
 
     // Apply sorting
     if (order === 'asc') {
-      query = query.orderBy(leaveRequests.createdAt);
+      dynamicQuery = dynamicQuery.orderBy(leaveRequests.createdAt);
     } else {
-      query = query.orderBy(desc(leaveRequests.createdAt));
+      dynamicQuery = dynamicQuery.orderBy(desc(leaveRequests.createdAt));
     }
 
-    const results = await query.limit(limit).offset(offset);
+    const results = await dynamicQuery.limit(limit).offset(offset);
 
     return NextResponse.json(results, { status: 200 });
 
@@ -159,7 +162,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { leaveType, startDate, endDate, reason } = body;
+    const { leaveType, startDate, endDate, reason, leavePeriod, actualDays } = body;
     const isAdmin = hasFullAccess(user.role as UserRole);
 
     // Validate required fields
@@ -275,6 +278,8 @@ export async function POST(request: NextRequest) {
         endDate: endDate,
         reason: reason.trim(),
         status: 'pending',
+        leavePeriod: leavePeriod || 'full_day',
+        actualDays: actualDays || 1.0,
         approvedBy: null,
         createdAt: now,
         updatedAt: now,

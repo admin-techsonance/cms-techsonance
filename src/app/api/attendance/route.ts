@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { attendance, attendanceRecords, employees, users } from '@/db/schema';
-import { eq, and, gte, lte, desc } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, asc } from 'drizzle-orm';
 import { getCurrentUser } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
@@ -105,7 +105,7 @@ export async function GET(request: NextRequest) {
         .from(attendanceRecords)
         .leftJoin(employees, eq(attendanceRecords.employeeId, employees.id))
         .leftJoin(users, eq(employees.userId, users.id))
-        .orderBy(desc(attendanceRecords.date), desc(attendanceRecords.timeIn))
+        .orderBy(asc(attendanceRecords.date), asc(attendanceRecords.timeIn))
         .limit(limit + offset); // Fetch enough for merging
 
       if (nfcConditions.length > 0) {
@@ -149,7 +149,7 @@ export async function GET(request: NextRequest) {
         .from(attendance)
         .leftJoin(employees, eq(attendance.employeeId, employees.id))
         .leftJoin(users, eq(employees.userId, users.id))
-        .orderBy(desc(attendance.date))
+        .orderBy(asc(attendance.date))
         .limit(limit + offset);
 
       if (legacyConditions.length > 0) {
@@ -200,9 +200,9 @@ export async function GET(request: NextRequest) {
     // ── Merge, sort by date descending, and paginate ──
     const merged = [...nfcResults, ...filteredLegacy]
       .sort((a, b) => {
-        const dateCompare = (b.date || '').localeCompare(a.date || '');
+        const dateCompare = (a.date || '').localeCompare(b.date || '');
         if (dateCompare !== 0) return dateCompare;
-        return (b.timeIn || '').localeCompare(a.timeIn || '');
+        return (a.timeIn || '').localeCompare(b.timeIn || '');
       })
       .slice(offset, offset + limit);
 
@@ -223,10 +223,26 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { employeeId, date, timeIn, timeOut, duration, location, readerId, notes, status } = body;
+    let { employeeId, date, timeIn, timeOut, duration, location, readerId, notes, status } = body;
 
-    // Permissions check
-    const isAdmin = ['admin', 'cms_administrator', 'hr_manager', 'management'].includes(user.role);
+    if (!employeeId) {
+      return NextResponse.json({ 
+        error: 'employeeId is required',
+        code: 'MISSING_EMPLOYEE_ID'
+      }, { status: 400 });
+    }
+
+    // Parse employeeId to number
+    const parsedEmployeeId = parseInt(employeeId);
+    if (isNaN(parsedEmployeeId)) {
+      return NextResponse.json({ 
+        error: 'Invalid employeeId. Must be a number.',
+        code: 'INVALID_EMPLOYEE_ID'
+      }, { status: 400 });
+    }
+
+    // Permissions check - including project_manager for consolidated view
+    const isAdmin = ['admin', 'cms_administrator', 'hr_manager', 'project_manager', 'management'].includes(user.role);
     
     if (!isAdmin) {
       // If not admin, check if the employeeId belongs to the current user
@@ -235,7 +251,7 @@ export async function POST(request: NextRequest) {
         .where(eq(employees.userId, user.id))
         .limit(1);
         
-      if (userEmployee.length === 0 || userEmployee[0].id !== parseInt(employeeId)) {
+      if (userEmployee.length === 0 || userEmployee[0].id !== parsedEmployeeId) {
         return NextResponse.json({ 
           error: 'Insufficient permissions. You can only log your own attendance.',
           code: 'FORBIDDEN'
@@ -247,13 +263,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ 
         error: "User ID cannot be provided in request body",
         code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
-
-    if (!employeeId) {
-      return NextResponse.json({ 
-        error: 'employeeId is required',
-        code: 'MISSING_EMPLOYEE_ID'
       }, { status: 400 });
     }
 
@@ -326,7 +335,7 @@ export async function POST(request: NextRequest) {
     const employeeExists = await db
       .select()
       .from(employees)
-      .where(eq(employees.id, employeeId))
+      .where(eq(employees.id, parsedEmployeeId))
       .limit(1);
 
     if (employeeExists.length === 0) {
@@ -336,20 +345,32 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    const existingAttendance = await db
-      .select()
+    // Check for existing attendance in BOTH modern and legacy tables
+    const existingModern = await db
+      .select({ id: attendanceRecords.id })
       .from(attendanceRecords)
       .where(
         and(
-          eq(attendanceRecords.employeeId, employeeId),
+          eq(attendanceRecords.employeeId, parsedEmployeeId),
           eq(attendanceRecords.date, date)
         )
       )
       .limit(1);
 
-    if (existingAttendance.length > 0) {
+    const existingLegacy = await db
+      .select({ id: attendance.id })
+      .from(attendance)
+      .where(
+        and(
+          eq(attendance.employeeId, parsedEmployeeId),
+          eq(attendance.date, date)
+        )
+      )
+      .limit(1);
+
+    if (existingModern.length > 0 || existingLegacy.length > 0) {
       return NextResponse.json({ 
-        error: 'Attendance record already exists for this employee on this date',
+        error: 'Attendance record already exists for this employee on this date. You cannot log a second record for the same day.',
         code: 'DUPLICATE_ENTRY'
       }, { status: 400 });
     }
@@ -365,7 +386,7 @@ export async function POST(request: NextRequest) {
 
     const newAttendance = await db.insert(attendanceRecords)
       .values({
-        employeeId,
+        employeeId: parsedEmployeeId,
         date,
         timeIn,
         timeOut: timeOut || null,

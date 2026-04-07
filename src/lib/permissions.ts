@@ -15,6 +15,9 @@ export type UserRole =
   | 'ui_ux_designer'
   | 'digital_marketing'
   | 'business_analyst'
+  | 'management'
+  | 'intern'
+  | 'architect'
   | 'client';
 
 export interface Permission {
@@ -138,7 +141,7 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
 
   // Project Manager - Projects and team management
   project_manager: {
-    dashboard: viewOnly,
+    dashboard: fullAccess,
     clients: defaultPermission,
     projects: fullAccess,
     team: defaultPermission,
@@ -146,7 +149,7 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     content: defaultPermission,
     settings: defaultPermission,
     dailyUpdate: fullAccess,
-    myAccount: { ...viewEditCreate, canApprove: false },
+    myAccount: fullAccess,
     helpDesk: fullAccess,
     inquiry: fullAccess,
     tasks: fullAccess,
@@ -168,6 +171,23 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     inquiry: fullAccess,
     tasks: viewOnly,
     reimbursements: viewEditCreate,
+  },
+
+  // Management Role
+  management: {
+    dashboard: fullAccess,
+    clients: fullAccess,
+    projects: fullAccess,
+    team: fullAccess,
+    finance: fullAccess,
+    content: fullAccess,
+    settings: fullAccess,
+    dailyUpdate: fullAccess,
+    myAccount: fullAccess,
+    helpDesk: fullAccess,
+    inquiry: fullAccess,
+    tasks: fullAccess,
+    reimbursements: fullAccess,
   },
 
   // Developer - Same as existing developer role
@@ -272,6 +292,40 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     reimbursements: viewEditCreate,
   },
 
+  // Intern Role
+  intern: {
+    dashboard: viewOnly,
+    clients: viewOnly,
+    projects: viewOnly,
+    team: viewOnly,
+    finance: defaultPermission,
+    content: defaultPermission,
+    settings: defaultPermission,
+    dailyUpdate: viewAndCreate,
+    myAccount: { ...viewAndCreate, canApprove: false },
+    helpDesk: viewAndCreate,
+    inquiry: viewOnly,
+    tasks: viewAndCreate,
+    reimbursements: defaultPermission,
+  },
+
+  // Architect Role
+  architect: {
+    dashboard: viewOnly,
+    clients: viewOnly,
+    projects: fullAccess,
+    team: viewOnly,
+    finance: defaultPermission,
+    content: defaultPermission,
+    settings: defaultPermission,
+    dailyUpdate: viewEditCreate,
+    myAccount: { ...viewEditCreate, canApprove: false },
+    helpDesk: viewEditCreate,
+    inquiry: viewOnly,
+    tasks: fullAccess,
+    reimbursements: viewEditCreate,
+  },
+
   // Client - Limited access
   client: {
     dashboard: viewOnly,
@@ -318,7 +372,7 @@ export function getRolePermissions(role: UserRole): RolePermissions | null {
  * Check if user has full access (admin-like roles)
  */
 export function hasFullAccess(role: UserRole): boolean {
-  return role === 'admin' || role === 'hr_manager' || role === 'cms_administrator';
+  return role === 'admin' || role === 'hr_manager' || role === 'cms_administrator' || role === 'project_manager' || role === 'management';
 }
 
 /**
@@ -349,6 +403,9 @@ export function getRoleName(role: UserRole): string {
     ui_ux_designer: 'UI/UX Designer',
     digital_marketing: 'Digital Marketing',
     business_analyst: 'Business Analyst',
+    management: 'Management',
+    intern: 'Intern',
+    architect: 'Architect',
     client: 'Client',
   };
 

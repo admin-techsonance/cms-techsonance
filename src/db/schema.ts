@@ -179,6 +179,8 @@ export const leaveRequests = sqliteTable('leave_requests', {
   endDate: text('end_date').notNull(),
   reason: text('reason').notNull(),
   status: text('status').notNull().default('pending'),
+  leavePeriod: text('leave_period').notNull().default('full_day'),
+  actualDays: real('actual_days').notNull().default(1),
   approvedBy: integer('approved_by').references(() => users.id),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),

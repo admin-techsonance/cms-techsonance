@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { employees, nfcTags, attendanceRecords } from "@/db/schema";
-import { eq, or } from "drizzle-orm";
+import { eq, or, and } from "drizzle-orm";
 
 // Helper to format time into ISO string (YYYY-MM-DDTHH:mm:ss)
 function formatToISO(dateStr: string, timeStr: string): string | null {
@@ -53,22 +53,58 @@ async function processAttendanceRecord(tagUid: string, dateKey: string, entry: {
     const logKey = `${tagUid}_${dateKey}_${entry.check_in}`;
 
     try {
-        // Check if record exists
-        const existingRecord = await db.select().from(attendanceRecords)
-            .where(eq(attendanceRecords.idempotencyKey, logKey)).limit(1);
+        // 1. Find employee by tag, employeeId, or Primary Key (id)
+        let employeeId: number | null = null;
+        const normalizedUid = tagUid.replace(/[:\s]/g, '').toLowerCase();
+        const allEmps = await db.select().from(employees);
+
+        // A. Check nfc_tags table
+        const tagRecord = await db.select().from(nfcTags);
+        const matchingTag = tagRecord.find(t => t.tagUid.replace(/[:\s]/g, '').toLowerCase() === normalizedUid);
+        if (matchingTag) employeeId = matchingTag.employeeId;
+
+        // B. Check inline ID
+        if (!employeeId) {
+            const inlineEmpId = (entry as any).employee_id || (entry as any).employeeId || (entry as any).emp_id;
+            if (inlineEmpId) {
+                const empMatch = allEmps.find(e => String(e.id) === String(inlineEmpId) || e.employeeId === String(inlineEmpId));
+                if (empMatch) employeeId = empMatch.id;
+            }
+        }
+
+        // C. Fallback: employees table direct match
+        if (!employeeId) {
+            const empMatch = allEmps.find(e => 
+                String(e.id) === normalizedUid || 
+                (e.nfcCardId?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid) ||
+                (e.employeeId?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid)
+            );
+            if (empMatch) employeeId = empMatch.id;
+        }
+
+        if (!employeeId) {
+            return { success: false, error: `Unknown Tag UID or Employee ID: ${tagUid}`, logKey };
+        }
+
+        // 2. Check if a record already exists for this employee on this date
+        const existingRecord = await db.select()
+            .from(attendanceRecords)
+            .where(
+                and(
+                    eq(attendanceRecords.employeeId, employeeId),
+                    eq(attendanceRecords.date, dateKey)
+                )
+            ).limit(1);
 
         if (existingRecord.length > 0) {
-            // Record exists: Check for UPDATE (Check Out)
             const record = existingRecord[0];
             const isoOut = entry.check_out ? formatToISO(dateKey, entry.check_out) : null;
-
             const updates: any = {};
-            if (record.timeOut !== isoOut && isoOut) {
+
+            // If we have a new checkout time (or it was missing), and it's DIFFERENT or newer
+            if (isoOut && (!record.timeOut || record.timeOut !== isoOut)) {
                 updates.timeOut = isoOut;
                 updates.duration = calculateDuration(dateKey, record.timeIn, entry.check_out!);
-            }
-            if (record.checkInMethod !== 'rfid' && record.checkInMethod !== 'nfc') {
-                updates.checkInMethod = 'rfid';
             }
 
             if (Object.keys(updates).length > 0) {
@@ -80,55 +116,7 @@ async function processAttendanceRecord(tagUid: string, dateKey: string, entry: {
             return { success: true, action: "skipped", logKey };
         }
 
-        // Find employee by tag, employeeId, or Primary Key (id)
-        let employeeId: number | null = null;
-        const normalizedUid = tagUid.replace(/[:\s]/g, '').toLowerCase();
-
-        const allEmps = await db.select().from(employees);
-
-        // 1. Check nfc_tags table (normalized)
-        const tagRecord = await db.select().from(nfcTags);
-        const matchingTag = tagRecord.find(t => t.tagUid.replace(/[:\s]/g, '').toLowerCase() === normalizedUid);
-
-        if (matchingTag) {
-            employeeId = matchingTag.employeeId;
-        } 
-        
-        // 2. Check if the entry ITSELF has an employee ID (inline)
-        if (!employeeId) {
-            const inlineEmpId = (entry as any).employee_id || (entry as any).employeeId || (entry as any).emp_id;
-            if (inlineEmpId) {
-                const empMatch = allEmps.find(e => 
-                    String(e.id) === String(inlineEmpId) || 
-                    e.employeeId === String(inlineEmpId)
-                );
-                if (empMatch) {
-                    employeeId = empMatch.id;
-                    console.log(`[Firebase Mapping] Found employee via inline ID: ${inlineEmpId} for key ${tagUid}`);
-                }
-            }
-        }
-
-        // 3. Fallback: Check employees table directly (PK id, nfcCardId, or employeeId)
-        if (!employeeId) {
-            const empMatch = allEmps.find(e => 
-                String(e.id) === normalizedUid || // Match Primary Key "11" -> 11
-                (e.nfcCardId?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid) ||
-                (e.employeeId?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid)
-            );
-            
-            if (empMatch) {
-                employeeId = empMatch.id;
-                console.log(`[Firebase Mapping] Found employee via direct comparison: ${empMatch.id} (${empMatch.employeeId}) for key ${tagUid}`);
-            }
-        }
-
-        if (!employeeId) {
-            console.log(`[Firebase Discovery] Mapping Failed for key "${tagUid}". Entry data:`, JSON.stringify(entry));
-            console.log(`[Firebase Discovery] DB Sample (IDs):`, allEmps.slice(0, 5).map(e => ({ id: e.id, empId: e.employeeId })));
-            return { success: false, error: `Unknown Tag UID or Employee ID: ${tagUid}`, logKey };
-        }
-
+        // 3. Insert new record
         const isoIn = formatToISO(dateKey, entry.check_in);
         const isoOut = entry.check_out ? formatToISO(dateKey, entry.check_out) : null;
         const duration = (isoIn && isoOut && entry.check_out) ? calculateDuration(dateKey, entry.check_in, entry.check_out) : null;
