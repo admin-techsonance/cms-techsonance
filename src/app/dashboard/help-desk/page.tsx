@@ -95,6 +95,30 @@ export default function HelpDeskPage() {
     priority: 'medium',
   });
 
+  const formatDateOrdinal = (dateStr: string) => {
+    try {
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return dateStr;
+      
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      
+      const dayName = days[date.getDay()];
+      const day = date.getDate();
+      const monthName = months[date.getMonth()];
+      const year = date.getFullYear();
+      
+      let suffix = 'th';
+      if (day % 10 === 1 && day !== 11) suffix = 'st';
+      else if (day % 10 === 2 && day !== 12) suffix = 'nd';
+      else if (day % 10 === 3 && day !== 13) suffix = 'rd';
+      
+      return `${dayName}, ${day}${suffix} ${monthName} ${year}`;
+    } catch (e) {
+      return dateStr;
+    }
+  };
+
   useEffect(() => {
     fetchCurrentUser();
   }, []);
@@ -345,13 +369,25 @@ export default function HelpDeskPage() {
     try {
       const token = localStorage.getItem('session_token');
 
+      // Fetch first available client for the ticket
       const clientsResponse = await fetch('/api/clients?limit=1', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      const clients = await clientsResponse.json();
       
-      if (!clients || clients.length === 0) {
-        toast.error('No clients found. Please contact admin.');
+      let clientId: number;
+      
+      if (clientsResponse.ok) {
+        const clients = await clientsResponse.json();
+        if (clients && clients.length > 0) {
+          clientId = clients[0].id;
+        } else {
+          // If no clients found, try to use a fallback or show error
+          toast.error('No client records found. A client must exist to create a ticket.');
+          setLoading(false);
+          return;
+        }
+      } else {
+        toast.error('Failed to verify client records. Please try again.');
         setLoading(false);
         return;
       }
@@ -366,7 +402,7 @@ export default function HelpDeskPage() {
         },
         body: JSON.stringify({
           ticketNumber: ticketNumber,
-          clientId: clients[0].id,
+          clientId: clientId,
           subject: `[${ticketForm.supportType.toUpperCase().replace('_', ' ')}] ${ticketForm.subject}`,
           description: ticketForm.description,
           priority: ticketForm.priority,
@@ -696,17 +732,16 @@ export default function HelpDeskPage() {
                   <TableHead>Subject</TableHead>
                   <TableHead>Priority</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead>Updated</TableHead>
+                  <TableHead>Created At</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
-                   <TableSkeleton columns={7} rows={10} />
+                   <TableSkeleton columns={6} rows={10} />
                 ) : ticketsData.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                    <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                       No support tickets found
                     </TableCell>
                   </TableRow>
@@ -717,8 +752,7 @@ export default function HelpDeskPage() {
                       <TableCell className="max-w-xs truncate">{ticket.subject}</TableCell>
                       <TableCell>{getPriorityBadge(ticket.priority)}</TableCell>
                       <TableCell>{getStatusBadge(ticket.status)}</TableCell>
-                      <TableCell>{new Date(ticket.createdAt).toLocaleDateString()}</TableCell>
-                      <TableCell>{new Date(ticket.updatedAt).toLocaleDateString()}</TableCell>
+                      <TableCell>{formatDateOrdinal(ticket.createdAt)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <Button 
@@ -808,7 +842,7 @@ export default function HelpDeskPage() {
                 </div>
                 <div className="space-y-2">
                   <Label className="text-muted-foreground">Created</Label>
-                  <p>{new Date(selectedTicket.createdAt).toLocaleString()}</p>
+                  <p>{formatDateOrdinal(selectedTicket.createdAt)}</p>
                 </div>
               </div>
 
@@ -826,7 +860,7 @@ export default function HelpDeskPage() {
 
               <div className="space-y-2">
                 <Label className="text-muted-foreground">Last Updated</Label>
-                <p>{new Date(selectedTicket.updatedAt).toLocaleString()}</p>
+                <p>{formatDateOrdinal(selectedTicket.updatedAt)}</p>
               </div>
             </div>
           )}
