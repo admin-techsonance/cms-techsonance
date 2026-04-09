@@ -1,12 +1,22 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  taskFormSchema,
+  taskPriorityOptions,
+  taskStatusOptions,
+  taskStoryPointOptions,
+  type TaskFormValues,
+} from '@/lib/forms/schemas';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -18,25 +28,6 @@ interface TaskDialogProps {
   sprintId?: number;
   initialStatus?: string;
   task?: any;
-}
-
-interface FormData {
-  projectId: string;
-  sprintId: string;
-  title: string;
-  description: string;
-  assignedTo: string;
-  status: string;
-  priority: string;
-  storyPoints: string;
-  dueDate: string;
-}
-
-interface FormErrors {
-  projectId?: string;
-  title?: string;
-  assignedTo?: string;
-  storyPoints?: string;
 }
 
 interface Project {
@@ -62,56 +53,61 @@ export function TaskDialog({ open, onOpenChange, onSuccess, projectId, sprintId,
   const [projects, setProjects] = useState<Project[]>([]);
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [users, setUsers] = useState<User[]>([]);
-  const [formData, setFormData] = useState<FormData>({
-    projectId: projectId?.toString() || '',
-    sprintId: sprintId?.toString() || '',
-    title: '',
-    description: '',
-    assignedTo: '',
-    status: initialStatus || 'todo',
-    priority: 'medium',
-    storyPoints: '',
-    dueDate: '',
+  const form = useForm<TaskFormValues>({
+    resolver: zodResolver(taskFormSchema),
+    defaultValues: {
+      projectId: projectId?.toString() || '',
+      sprintId: sprintId?.toString() || '',
+      title: '',
+      description: '',
+      assignedTo: '',
+      status: (initialStatus as TaskFormValues['status']) || 'todo',
+      priority: 'medium',
+      storyPoints: '',
+      dueDate: '',
+    },
   });
-  const [errors, setErrors] = useState<FormErrors>({});
 
   useEffect(() => {
     if (open) {
       fetchData();
       if (task) {
-        setFormData({
+        form.reset({
           projectId: task.projectId?.toString() || '',
           sprintId: task.sprintId?.toString() || '',
           title: task.title || '',
           description: task.description || '',
           assignedTo: task.assignedTo?.toString() || '',
-          status: task.status || 'todo',
-          priority: task.priority || 'medium',
+          status: (task.status as TaskFormValues['status']) || 'todo',
+          priority: (task.priority as TaskFormValues['priority']) || 'medium',
           storyPoints: task.storyPoints?.toString() || '',
-          dueDate: task.dueDate || '',
+          dueDate: task.dueDate ? task.dueDate.split('T')[0] : '',
         });
       } else {
-        // Reset form for new task with props
-        setFormData({
+        form.reset({
           projectId: projectId?.toString() || '',
           sprintId: sprintId?.toString() || '',
           title: '',
           description: '',
           assignedTo: '',
-          status: initialStatus || 'todo',
+          status: (initialStatus as TaskFormValues['status']) || 'todo',
           priority: 'medium',
           storyPoints: '',
           dueDate: '',
         });
       }
     }
-  }, [open, task, projectId, sprintId, initialStatus]);
+  }, [open, task, projectId, sprintId, initialStatus, form]);
+
+  const selectedProjectId = form.watch('projectId');
 
   useEffect(() => {
-    if (formData.projectId) {
-      fetchSprints(parseInt(formData.projectId));
+    if (selectedProjectId) {
+      fetchSprints(parseInt(selectedProjectId, 10));
+    } else {
+      setSprints([]);
     }
-  }, [formData.projectId]);
+  }, [selectedProjectId]);
 
   const fetchData = async () => {
     setLoadingData(true);
@@ -132,15 +128,16 @@ export function TaskDialog({ open, onOpenChange, onSuccess, projectId, sprintId,
 
       if (projectsRes.ok) {
         const data = await projectsRes.json();
-        setProjects(data);
+        setProjects(Array.isArray(data) ? data : data.data ?? []);
       }
 
       if (usersRes.ok) {
         const data = await usersRes.json();
-        setUsers(data);
+        const items = Array.isArray(data) ? data : data.data ?? [];
+        setUsers(items);
       }
-    } catch (error) {
-      console.error('Error fetching data:', error);
+    } catch {
+      toast.error('Failed to load task setup data');
     } finally {
       setLoadingData(false);
     }
@@ -157,76 +154,40 @@ export function TaskDialog({ open, onOpenChange, onSuccess, projectId, sprintId,
 
       if (response.ok) {
         const data = await response.json();
-        setSprints(data.filter((s: Sprint) => s.status !== 'cancelled'));
+        const items = (Array.isArray(data) ? data : data.data ?? []) as Sprint[];
+        setSprints(items.filter((sprint) => sprint.status !== 'cancelled'));
       }
-    } catch (error) {
-      console.error('Error fetching sprints:', error);
+    } catch {
+      toast.error('Failed to load sprints');
     }
   };
 
-  const validateForm = (): boolean => {
-    const newErrors: FormErrors = {};
-
-    if (!formData.projectId) {
-      newErrors.projectId = 'Project is required';
-    }
-
-    if (!formData.title.trim()) {
-      newErrors.title = 'Task title is required';
-    } else if (formData.title.trim().length < 3) {
-      newErrors.title = 'Title must be at least 3 characters';
-    }
-
-    if (!formData.assignedTo) {
-      newErrors.assignedTo = 'Assignee is required';
-    }
-
-    if (formData.storyPoints) {
-      const points = parseInt(formData.storyPoints);
-      const validPoints = [1, 2, 3, 5, 8, 13, 21];
-      if (isNaN(points) || !validPoints.includes(points)) {
-        newErrors.storyPoints = 'Story points must be 1, 2, 3, 5, 8, 13, or 21';
-      }
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!validateForm()) {
-      toast.error('Please fix the validation errors');
-      return;
-    }
-
+  const handleSubmit = async (values: TaskFormValues) => {
     setLoading(true);
 
     try {
-      const token = localStorage.getItem('session_token');
       const payload: any = {
-        projectId: parseInt(formData.projectId),
-        title: formData.title.trim(),
-        assignedTo: parseInt(formData.assignedTo),
-        status: formData.status,
-        priority: formData.priority,
+        projectId: parseInt(values.projectId, 10),
+        title: values.title.trim(),
+        assignedTo: parseInt(values.assignedTo, 10),
+        status: values.status,
+        priority: values.priority,
       };
 
-      if (formData.description.trim()) {
-        payload.description = formData.description.trim();
+      if (values.description?.trim()) {
+        payload.description = values.description.trim();
       }
 
-      if (formData.sprintId) {
-        payload.sprintId = parseInt(formData.sprintId);
+      if (values.sprintId) {
+        payload.sprintId = parseInt(values.sprintId, 10);
       }
 
-      if (formData.storyPoints) {
-        payload.storyPoints = parseInt(formData.storyPoints);
+      if (values.storyPoints) {
+        payload.storyPoints = parseInt(values.storyPoints, 10);
       }
 
-      if (formData.dueDate) {
-        payload.dueDate = formData.dueDate;
+      if (values.dueDate) {
+        payload.dueDate = values.dueDate;
       }
 
       const url = task ? `/api/tasks?id=${task.id}` : '/api/tasks';
@@ -236,7 +197,6 @@ export function TaskDialog({ open, onOpenChange, onSuccess, projectId, sprintId,
         method,
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(payload),
       });
@@ -249,33 +209,24 @@ export function TaskDialog({ open, onOpenChange, onSuccess, projectId, sprintId,
       toast.success(`Task ${task ? 'updated' : 'created'} successfully`);
       onOpenChange(false);
       onSuccess();
-      
+
       if (!task) {
-        setFormData({
+        form.reset({
           projectId: projectId?.toString() || '',
           sprintId: sprintId?.toString() || '',
           title: '',
           description: '',
           assignedTo: '',
-          status: initialStatus || 'todo',
+          status: (initialStatus as TaskFormValues['status']) || 'todo',
           priority: 'medium',
           storyPoints: '',
           dueDate: '',
         });
       }
-      setErrors({});
     } catch (error) {
-      console.error('Error saving task:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to save task');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleChange = (field: keyof FormData, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-    if (errors[field as keyof FormErrors]) {
-      setErrors(prev => ({ ...prev, [field]: undefined }));
     }
   };
 
@@ -289,18 +240,25 @@ export function TaskDialog({ open, onOpenChange, onSuccess, projectId, sprintId,
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <Form {...form}>
+        <form onSubmit={form.handleSubmit(handleSubmit, () => toast.error('Please fix the validation errors'))} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="projectId"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="projectId">Project *</Label>
               <Select
-                value={formData.projectId}
-                onValueChange={(value) => handleChange('projectId', value)}
+                value={field.value}
+                onValueChange={field.onChange}
                 disabled={loading || loadingData || !!projectId || !!task}
               >
-                <SelectTrigger className={errors.projectId ? 'border-destructive' : ''}>
+                <FormControl>
+                <SelectTrigger>
                   <SelectValue placeholder="Select project" />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
                   {projects.map((project) => (
                     <SelectItem key={project.id} value={project.id.toString()}>
@@ -309,21 +267,27 @@ export function TaskDialog({ open, onOpenChange, onSuccess, projectId, sprintId,
                   ))}
                 </SelectContent>
               </Select>
-              {errors.projectId && (
-                <p className="text-xs text-destructive">{errors.projectId}</p>
+              <FormMessage className="text-xs" />
+            </FormItem>
               )}
-            </div>
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="sprintId"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="sprintId">Sprint</Label>
               <Select
-                value={formData.sprintId || 'none'}
-                onValueChange={(value) => handleChange('sprintId', value === 'none' ? '' : value)}
-                disabled={loading || !formData.projectId}
+                value={field.value || 'none'}
+                onValueChange={(value) => field.onChange(value === 'none' ? '' : value)}
+                disabled={loading || !selectedProjectId}
               >
+                <FormControl>
                 <SelectTrigger>
                   <SelectValue placeholder="Select sprint (optional)" />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
                   <SelectItem value="none">No Sprint</SelectItem>
                   {sprints.map((sprint) => (
@@ -333,47 +297,68 @@ export function TaskDialog({ open, onOpenChange, onSuccess, projectId, sprintId,
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="title"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="title">Task Title *</Label>
+            <FormControl>
             <Input
               id="title"
-              value={formData.title}
-              onChange={(e) => handleChange('title', e.target.value)}
+              {...field}
               disabled={loading}
               placeholder="e.g., Implement user authentication"
-              className={errors.title ? 'border-destructive' : ''}
             />
-            {errors.title && (
-              <p className="text-xs text-destructive">{errors.title}</p>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
             )}
-          </div>
+          />
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="description"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="description">Description</Label>
+            <FormControl>
             <Textarea
               id="description"
-              value={formData.description}
-              onChange={(e) => handleChange('description', e.target.value)}
+              {...field}
               disabled={loading}
               placeholder="Describe the task in detail..."
               rows={3}
             />
-          </div>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="assignedTo"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="assignedTo">Assigned To *</Label>
               <Select
-                value={formData.assignedTo}
-                onValueChange={(value) => handleChange('assignedTo', value)}
+                value={field.value}
+                onValueChange={field.onChange}
                 disabled={loading || loadingData}
               >
-                <SelectTrigger className={errors.assignedTo ? 'border-destructive' : ''}>
+                <FormControl>
+                <SelectTrigger>
                   <SelectValue placeholder="Select user" />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
                   {users.map((user) => (
                     <SelectItem key={user.id} value={user.id.toString()}>
@@ -382,86 +367,119 @@ export function TaskDialog({ open, onOpenChange, onSuccess, projectId, sprintId,
                   ))}
                 </SelectContent>
               </Select>
-              {errors.assignedTo && (
-                <p className="text-xs text-destructive">{errors.assignedTo}</p>
+              <FormMessage className="text-xs" />
+            </FormItem>
               )}
-            </div>
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="status"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="status">Status</Label>
               <Select
-                value={formData.status}
-                onValueChange={(value) => handleChange('status', value)}
+                value={field.value}
+                onValueChange={field.onChange}
                 disabled={loading}
               >
+                <FormControl>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
-                  <SelectItem value="todo">To Do</SelectItem>
-                  <SelectItem value="in_progress">In Progress</SelectItem>
-                  <SelectItem value="review">Review</SelectItem>
-                  <SelectItem value="done">Done</SelectItem>
+                  {taskStatusOptions.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {status === 'todo' ? 'To Do' : status === 'in_progress' ? 'In Progress' : status.charAt(0).toUpperCase() + status.slice(1)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-            </div>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
           <div className="grid grid-cols-3 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="priority"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="priority">Priority</Label>
               <Select
-                value={formData.priority}
-                onValueChange={(value) => handleChange('priority', value)}
+                value={field.value}
+                onValueChange={field.onChange}
                 disabled={loading}
               >
+                <FormControl>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
+                  {taskPriorityOptions.map((priority) => (
+                    <SelectItem key={priority} value={priority}>
+                      {priority.charAt(0).toUpperCase() + priority.slice(1)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-            </div>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="storyPoints"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="storyPoints">Story Points</Label>
               <Select
-                value={formData.storyPoints || 'none'}
-                onValueChange={(value) => handleChange('storyPoints', value === 'none' ? '' : value)}
+                value={field.value || 'none'}
+                onValueChange={(value) => field.onChange(value === 'none' ? '' : value)}
                 disabled={loading}
               >
-                <SelectTrigger className={errors.storyPoints ? 'border-destructive' : ''}>
+                <FormControl>
+                <SelectTrigger>
                   <SelectValue placeholder="Select" />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
                   <SelectItem value="none">None</SelectItem>
-                  <SelectItem value="1">1</SelectItem>
-                  <SelectItem value="2">2</SelectItem>
-                  <SelectItem value="3">3</SelectItem>
-                  <SelectItem value="5">5</SelectItem>
-                  <SelectItem value="8">8</SelectItem>
-                  <SelectItem value="13">13</SelectItem>
-                  <SelectItem value="21">21</SelectItem>
+                  {taskStoryPointOptions.map((storyPoint) => (
+                    <SelectItem key={storyPoint} value={storyPoint}>
+                      {storyPoint}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-              {errors.storyPoints && (
-                <p className="text-xs text-destructive">{errors.storyPoints}</p>
+              <FormMessage className="text-xs" />
+            </FormItem>
               )}
-            </div>
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="dueDate"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="dueDate">Due Date</Label>
+              <FormControl>
               <Input
                 id="dueDate"
                 type="date"
-                value={formData.dueDate}
-                onChange={(e) => handleChange('dueDate', e.target.value)}
+                {...field}
                 disabled={loading}
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
           <DialogFooter>
@@ -485,6 +503,7 @@ export function TaskDialog({ open, onOpenChange, onSuccess, projectId, sprintId,
             </Button>
           </DialogFooter>
         </form>
+        </Form>
       </DialogContent>
     </Dialog>
   );

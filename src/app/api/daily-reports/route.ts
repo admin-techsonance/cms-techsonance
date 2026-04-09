@@ -1,408 +1,83 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { db } from '@/db';
-import { dailyReports, users, employees } from '@/db/schema';
-import { eq, and, gte, lte, desc } from 'drizzle-orm';
-import { getCurrentUser } from '@/lib/auth';
-import { hasFullAccess, type UserRole } from '@/lib/permissions';
-import {
-  DAILY_REPORT_STATUSES,
-  DEFAULT_PAGE_SIZE,
-  MAX_PAGE_SIZE,
-  isValidDateFormat,
-  isValidEnum,
-  safeErrorMessage,
-} from '@/lib/constants';
+import { dailyReports, employees, users } from '@/db/schema';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '@/server/http/errors';
+import { createDailyReportSchema, updateDailyReportSchema } from '@/server/validation/reports';
 
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const searchParams = request.nextUrl.searchParams;
-    const id = searchParams.get('id');
-
-    // Single record by ID
-    if (id) {
-      if (!id || isNaN(parseInt(id))) {
-        return NextResponse.json({ 
-          error: 'Valid ID is required',
-          code: 'INVALID_ID' 
-        }, { status: 400 });
-      }
-
-      // Admin/HR can view any report, others only their own
-      let conditions = [eq(dailyReports.id, parseInt(id))];
-      if (!hasFullAccess(user.role as UserRole)) {
-        conditions.push(eq(dailyReports.userId, user.id));
-      }
-
-      const record = await db.select({
-        id: dailyReports.id,
-        userId: dailyReports.userId,
-        employeeId: employees.id,
-        firstName: users.firstName,
-        lastName: users.lastName,
-        email: users.email,
-        date: dailyReports.date,
-        availableStatus: dailyReports.availableStatus,
-        createdAt: dailyReports.createdAt,
-        updatedAt: dailyReports.updatedAt,
-      })
-        .from(dailyReports)
-        .innerJoin(users, eq(dailyReports.userId, users.id))
-        .leftJoin(employees, eq(users.id, employees.userId))
-        .where(and(...conditions))
-        .limit(1);
-
-      if (record.length === 0) {
-        return NextResponse.json({ 
-          error: 'Daily report not found',
-          code: 'NOT_FOUND' 
-        }, { status: 404 });
-      }
-
-      return NextResponse.json(record[0], { status: 200 });
-    }
-
-    // List with pagination and filters
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
-    const startDate = searchParams.get('startDate');
-    const endDate = searchParams.get('endDate');
-    const employeeId = searchParams.get('employeeId');
-    const availableStatus = searchParams.get('availableStatus');
-
-    let conditions = [];
-
-    // Admin/HR can view all reports, others only their own
-    if (!hasFullAccess(user.role as UserRole)) {
-      conditions.push(eq(dailyReports.userId, user.id));
-    }
-
-    // Employee filter (for admin)
-    if (employeeId && employeeId !== 'all') {
-      conditions.push(eq(employees.id, parseInt(employeeId)));
-    }
-
-    // Status filter
-    if (availableStatus && availableStatus !== 'all') {
-      conditions.push(eq(dailyReports.availableStatus, availableStatus));
-    }
-
-    // Date range filters
-    if (startDate) {
-      if (!isValidDateFormat(startDate)) {
-        return NextResponse.json({ 
-          error: 'Invalid startDate format. Use YYYY-MM-DD',
-          code: 'INVALID_DATE_FORMAT' 
-        }, { status: 400 });
-      }
-      conditions.push(gte(dailyReports.date, startDate));
-    }
-
-    if (endDate) {
-      if (!isValidDateFormat(endDate)) {
-        return NextResponse.json({ 
-          error: 'Invalid endDate format. Use YYYY-MM-DD',
-          code: 'INVALID_DATE_FORMAT' 
-        }, { status: 400 });
-      }
-      conditions.push(lte(dailyReports.date, endDate));
-    }
-
-    const results = await db.select({
-      id: dailyReports.id,
-      userId: dailyReports.userId,
-      employeeId: employees.id,
-      firstName: users.firstName,
-      lastName: users.lastName,
-      email: users.email,
-      date: dailyReports.date,
-      availableStatus: dailyReports.availableStatus,
-      createdAt: dailyReports.createdAt,
-      updatedAt: dailyReports.updatedAt,
-    })
-      .from(dailyReports)
-      .innerJoin(users, eq(dailyReports.userId, users.id))
-      .leftJoin(employees, eq(users.id, employees.userId))
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(desc(dailyReports.createdAt))
-      .limit(limit)
-      .offset(offset);
-
-    return NextResponse.json(results, { status: 200 });
-
-  } catch (error) {
-    console.error('GET error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+export const GET = withApiHandler(async (request, context) => {
+  const user = context.auth!.user;
+  const isAdminLike = user.role === 'Admin' || user.role === 'SuperAdmin' || user.role === 'Manager';
+  const searchParams = new URL(request.url).searchParams;
+  const id = searchParams.get('id');
+  if (id) {
+    const conditions = [eq(dailyReports.id, Number(id))];
+    if (!isAdminLike) conditions.push(eq(dailyReports.userId, user.id));
+    const [record] = await db.select({
+      id: dailyReports.id, userId: dailyReports.userId, employeeId: employees.id, firstName: users.firstName, lastName: users.lastName, email: users.email, date: dailyReports.date, availableStatus: dailyReports.availableStatus, createdAt: dailyReports.createdAt, updatedAt: dailyReports.updatedAt,
+    }).from(dailyReports).innerJoin(users, eq(dailyReports.userId, users.id)).leftJoin(employees, eq(users.id, employees.userId)).where(and(...conditions)).limit(1);
+    if (!record) throw new NotFoundError('Daily report not found');
+    return NextResponse.json(record);
   }
-}
+  const limit = Math.min(Number(searchParams.get('limit') ?? '10'), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const startDate = searchParams.get('startDate');
+  const endDate = searchParams.get('endDate');
+  const employeeId = searchParams.get('employeeId');
+  const availableStatus = searchParams.get('availableStatus');
+  const conditions = [];
+  if (!isAdminLike) conditions.push(eq(dailyReports.userId, user.id));
+  if (isAdminLike && employeeId && employeeId !== 'all') conditions.push(eq(employees.id, Number(employeeId)));
+  if (availableStatus && availableStatus !== 'all') conditions.push(eq(dailyReports.availableStatus, availableStatus));
+  if (startDate) conditions.push(gte(dailyReports.date, startDate));
+  if (endDate) conditions.push(lte(dailyReports.date, endDate));
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+  const baseQuery = db.select({
+    id: dailyReports.id, userId: dailyReports.userId, employeeId: employees.id, firstName: users.firstName, lastName: users.lastName, email: users.email, date: dailyReports.date, availableStatus: dailyReports.availableStatus, createdAt: dailyReports.createdAt, updatedAt: dailyReports.updatedAt,
+  }).from(dailyReports).innerJoin(users, eq(dailyReports.userId, users.id)).leftJoin(employees, eq(users.id, employees.userId));
+  const [rows, countRows] = await Promise.all([
+    (whereClause ? baseQuery.where(whereClause) : baseQuery).orderBy(desc(dailyReports.createdAt)).limit(limit).offset(offset),
+    (whereClause ? db.select({ count: sql<number>`count(*)` }).from(dailyReports).innerJoin(users, eq(dailyReports.userId, users.id)).leftJoin(employees, eq(users.id, employees.userId)).where(whereClause) : db.select({ count: sql<number>`count(*)` }).from(dailyReports)),
+  ]);
+  return NextResponse.json({ success: true, data: rows, message: 'Daily reports fetched successfully', errors: null, meta: { page: Math.floor(offset / limit) + 1, limit, total: Number(countRows[0]?.count ?? 0) } });
+}, { requireAuth: true, roles: ['Employee'] });
 
-export async function POST(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const body = await request.json();
-
-    // Security check: reject if userId provided in body
-    if ('userId' in body || 'user_id' in body) {
-      return NextResponse.json({ 
-        error: 'User ID cannot be provided in request body',
-        code: 'USER_ID_NOT_ALLOWED' 
-      }, { status: 400 });
-    }
-
-    const { date, availableStatus } = body;
-
-    // Validate required fields
-    if (!date) {
-      return NextResponse.json({ 
-        error: 'date is required',
-        code: 'MISSING_REQUIRED_FIELD' 
-      }, { status: 400 });
-    }
-
-    if (!availableStatus) {
-      return NextResponse.json({ 
-        error: 'availableStatus is required',
-        code: 'MISSING_REQUIRED_FIELD' 
-      }, { status: 400 });
-    }
-
-    // Validate date format
-    if (!isValidDateFormat(date)) {
-      return NextResponse.json({ 
-        error: 'Invalid date format. Use YYYY-MM-DD',
-        code: 'INVALID_DATE_FORMAT' 
-      }, { status: 400 });
-    }
-
-    // Validate availableStatus enum
-    if (!isValidEnum(availableStatus, DAILY_REPORT_STATUSES)) {
-      return NextResponse.json({ 
-        error: `Invalid availableStatus. Must be one of: ${DAILY_REPORT_STATUSES.join(', ')}`,
-        code: 'INVALID_STATUS' 
-      }, { status: 400 });
-    }
-
-    // Check for duplicate (same user + same date)
-    const existingReport = await db.select()
-      .from(dailyReports)
-      .where(and(
-        eq(dailyReports.userId, user.id),
-        eq(dailyReports.date, date)
-      ))
-      .limit(1);
-
-    if (existingReport.length > 0) {
-      // Update the existing report instead of rejecting
-      const now = new Date().toISOString();
-      const updated = await db.update(dailyReports)
-        .set({
-          availableStatus: availableStatus,
-          updatedAt: now
-        })
-        .where(eq(dailyReports.id, existingReport[0].id))
-        .returning();
-
-      return NextResponse.json(updated[0], { status: 200 });
-    }
-
-    // Create new daily report
-    const now = new Date().toISOString();
-    const newReport = await db.insert(dailyReports)
-      .values({
-        userId: user.id,
-        date: date,
-        availableStatus: availableStatus,
-        createdAt: now,
-        updatedAt: now
-      })
-      .returning();
-
-    return NextResponse.json(newReport[0], { status: 201 });
-
-  } catch (error) {
-    console.error('POST error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+export const POST = withApiHandler(async (request, context) => {
+  const payload = createDailyReportSchema.parse(await request.json());
+  const [existing] = await db.select().from(dailyReports).where(and(eq(dailyReports.userId, context.auth!.user.id), eq(dailyReports.date, payload.date))).limit(1);
+  if (existing) {
+    const [updated] = await db.update(dailyReports).set({ availableStatus: payload.availableStatus, updatedAt: new Date().toISOString() }).where(eq(dailyReports.id, existing.id)).returning();
+    return NextResponse.json(updated);
   }
-}
+  const now = new Date().toISOString();
+  const [created] = await db.insert(dailyReports).values({ userId: context.auth!.user.id, date: payload.date, availableStatus: payload.availableStatus, createdAt: now, updatedAt: now }).returning();
+  return NextResponse.json(created, { status: 201 });
+}, { requireAuth: true, roles: ['Employee'] });
 
-export async function PUT(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const searchParams = request.nextUrl.searchParams;
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: 'Valid ID is required',
-        code: 'INVALID_ID' 
-      }, { status: 400 });
-    }
-
-    const body = await request.json();
-
-    // Security check: reject if userId provided in body
-    if ('userId' in body || 'user_id' in body) {
-      return NextResponse.json({ 
-        error: 'User ID cannot be provided in request body',
-        code: 'USER_ID_NOT_ALLOWED' 
-      }, { status: 400 });
-    }
-
-    // Check if record exists and belongs to user
-    const existingReport = await db.select()
-      .from(dailyReports)
-      .where(and(
-        eq(dailyReports.id, parseInt(id)),
-        eq(dailyReports.userId, user.id)
-      ))
-      .limit(1);
-
-    if (existingReport.length === 0) {
-      return NextResponse.json({ 
-        error: 'Daily report not found',
-        code: 'NOT_FOUND' 
-      }, { status: 404 });
-    }
-
-    const { date, availableStatus } = body;
-    const updates: any = {};
-
-    // Validate and add date if provided
-    if (date !== undefined) {
-      if (!isValidDateFormat(date)) {
-        return NextResponse.json({ 
-          error: 'Invalid date format. Use YYYY-MM-DD',
-          code: 'INVALID_DATE_FORMAT' 
-        }, { status: 400 });
-      }
-
-      // Check for duplicate if date is being changed
-      if (date !== existingReport[0].date) {
-        const duplicateCheck = await db.select()
-          .from(dailyReports)
-          .where(and(
-            eq(dailyReports.userId, user.id),
-            eq(dailyReports.date, date)
-          ))
-          .limit(1);
-
-        if (duplicateCheck.length > 0) {
-          return NextResponse.json({ 
-            error: 'A daily report for this date already exists',
-            code: 'DUPLICATE_REPORT' 
-          }, { status: 400 });
-        }
-      }
-
-      updates.date = date;
-    }
-
-    // Validate and add availableStatus if provided
-    if (availableStatus !== undefined) {
-      if (!isValidEnum(availableStatus, DAILY_REPORT_STATUSES)) {
-        return NextResponse.json({ 
-          error: `Invalid availableStatus. Must be one of: ${DAILY_REPORT_STATUSES.join(', ')}`,
-          code: 'INVALID_STATUS' 
-        }, { status: 400 });
-      }
-      updates.availableStatus = availableStatus;
-    }
-
-    // Check if there are any updates
-    if (Object.keys(updates).length === 0) {
-      return NextResponse.json({ 
-        error: 'No valid fields to update',
-        code: 'NO_UPDATES' 
-      }, { status: 400 });
-    }
-
-    // Update the record
-    updates.updatedAt = new Date().toISOString();
-
-    const updated = await db.update(dailyReports)
-      .set(updates)
-      .where(and(
-        eq(dailyReports.id, parseInt(id)),
-        eq(dailyReports.userId, user.id)
-      ))
-      .returning();
-
-    return NextResponse.json(updated[0], { status: 200 });
-
-  } catch (error) {
-    console.error('PUT error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+export const PUT = withApiHandler(async (request, context) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid daily report id is required');
+  const payload = updateDailyReportSchema.parse(await request.json());
+  const [existing] = await db.select().from(dailyReports).where(and(eq(dailyReports.id, id), eq(dailyReports.userId, context.auth!.user.id))).limit(1);
+  if (!existing) throw new NotFoundError('Daily report not found');
+  if (payload.date && payload.date !== existing.date) {
+    const [duplicate] = await db.select().from(dailyReports).where(and(eq(dailyReports.userId, context.auth!.user.id), eq(dailyReports.date, payload.date))).limit(1);
+    if (duplicate) throw new ConflictError('A daily report for this date already exists');
   }
-}
+  const [updated] = await db.update(dailyReports).set({
+    ...(payload.date !== undefined ? { date: payload.date } : {}),
+    ...(payload.availableStatus !== undefined ? { availableStatus: payload.availableStatus } : {}),
+    updatedAt: new Date().toISOString(),
+  }).where(eq(dailyReports.id, id)).returning();
+  return NextResponse.json(updated);
+}, { requireAuth: true, roles: ['Employee'] });
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+export const DELETE = withApiHandler(async (request, context) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid daily report id is required');
+  const [deleted] = await db.delete(dailyReports).where(and(eq(dailyReports.id, id), eq(dailyReports.userId, context.auth!.user.id))).returning();
+  if (!deleted) throw new NotFoundError('Daily report not found');
+  return NextResponse.json({ message: 'Daily report deleted successfully', report: deleted });
+}, { requireAuth: true, roles: ['Employee'] });
 
-    const searchParams = request.nextUrl.searchParams;
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: 'Valid ID is required',
-        code: 'INVALID_ID' 
-      }, { status: 400 });
-    }
-
-    // Check if record exists and belongs to user
-    const existingReport = await db.select()
-      .from(dailyReports)
-      .where(and(
-        eq(dailyReports.id, parseInt(id)),
-        eq(dailyReports.userId, user.id)
-      ))
-      .limit(1);
-
-    if (existingReport.length === 0) {
-      return NextResponse.json({ 
-        error: 'Daily report not found',
-        code: 'NOT_FOUND' 
-      }, { status: 404 });
-    }
-
-    // Delete the record
-    const deleted = await db.delete(dailyReports)
-      .where(and(
-        eq(dailyReports.id, parseInt(id)),
-        eq(dailyReports.userId, user.id)
-      ))
-      .returning();
-
-    return NextResponse.json({ 
-      message: 'Daily report deleted successfully',
-      deletedReport: deleted[0]
-    }, { status: 200 });
-
-  } catch (error) {
-    console.error('DELETE error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
-  }
-}

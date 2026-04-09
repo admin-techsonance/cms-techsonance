@@ -1,11 +1,21 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  employeeDepartmentOptions,
+  employeeEditFormSchema,
+  employeeRoleOptions,
+  employeeStatusOptions,
+  type EmployeeEditFormValues,
+} from '@/lib/forms/schemas';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -41,70 +51,67 @@ interface EditEmployeeDialogProps {
 
 export function EditEmployeeDialog({ open, onOpenChange, onSuccess, employee, user }: EditEmployeeDialogProps) {
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({
-    firstName: '',
-    lastName: '',
-    email: '',
-    phone: '',
-    role: '',
-    employeeId: '',
-    department: '',
-    designation: '',
-    dateOfJoining: '',
-    dateOfBirth: '',
-    salary: '',
-    skills: '',
-    status: 'active',
+  const form = useForm<EmployeeEditFormValues>({
+    resolver: zodResolver(employeeEditFormSchema),
+    defaultValues: {
+      firstName: '',
+      lastName: '',
+      email: '',
+      phone: '',
+      role: 'developer',
+      employeeId: '',
+      department: 'Engineering',
+      designation: '',
+      dateOfJoining: '',
+      dateOfBirth: '',
+      salary: '',
+      skills: '',
+      status: 'active',
+    },
   });
 
   useEffect(() => {
     if (employee && user && open) {
-      const skills = employee.skills 
+      const skills = employee.skills
         ? (typeof employee.skills === 'string' ? JSON.parse(employee.skills) : employee.skills)
         : [];
-      
-      setFormData({
+
+      form.reset({
         firstName: user.firstName || '',
         lastName: user.lastName || '',
         email: user.email || '',
         phone: user.phone || '',
-        role: user.role || 'developer',
+        role: (user.role as EmployeeEditFormValues['role']) || 'developer',
         employeeId: employee.employeeId || '',
-        department: employee.department || '',
+        department: (employee.department as EmployeeEditFormValues['department']) || 'Engineering',
         designation: employee.designation || '',
         dateOfJoining: employee.dateOfJoining ? employee.dateOfJoining.split('T')[0] : '',
         dateOfBirth: employee.dateOfBirth ? employee.dateOfBirth.split('T')[0] : '',
         salary: employee.salary?.toString() || '',
         skills: Array.isArray(skills) ? skills.join(', ') : '',
-        status: employee.status || 'active',
+        status: (employee.status as EmployeeEditFormValues['status']) || 'active',
       });
     }
-  }, [employee, user, open]);
+  }, [employee, user, open, form]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const handleSubmit = async (values: EmployeeEditFormValues) => {
     if (!employee || !user) return;
 
     setLoading(true);
 
     try {
-      const token = localStorage.getItem('session_token');
-
-      // Update user information
       const userPayload = {
-        firstName: formData.firstName.trim(),
-        lastName: formData.lastName.trim(),
-        email: formData.email.trim(),
-        phone: formData.phone.trim() || null,
-        role: formData.role,
+        firstName: values.firstName.trim(),
+        lastName: values.lastName.trim(),
+        email: values.email.trim(),
+        phone: values.phone?.trim() || null,
+        role: values.role,
       };
 
       const userResponse = await fetch(`/api/users?id=${user.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(userPayload),
       });
@@ -114,23 +121,21 @@ export function EditEmployeeDialog({ open, onOpenChange, onSuccess, employee, us
         throw new Error(errorData.error || 'Failed to update user information');
       }
 
-      // Update employee information
       const employeePayload = {
-        employeeId: formData.employeeId.trim(),
-        department: formData.department,
-        designation: formData.designation.trim(),
-        dateOfJoining: formData.dateOfJoining,
-        dateOfBirth: formData.dateOfBirth || null,
-        salary: formData.salary ? parseInt(formData.salary) : null,
-        skills: formData.skills.trim() ? formData.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
-        status: formData.status,
+        employeeId: values.employeeId.trim(),
+        department: values.department,
+        designation: values.designation.trim(),
+        dateOfJoining: values.dateOfJoining,
+        dateOfBirth: values.dateOfBirth || null,
+        salary: values.salary ? parseInt(values.salary, 10) : null,
+        skills: values.skills?.trim() ? values.skills.split(',').map((skill) => skill.trim()).filter(Boolean) : [],
+        status: values.status,
       };
 
       const employeeResponse = await fetch(`/api/employees?id=${employee.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(employeePayload),
       });
@@ -144,7 +149,6 @@ export function EditEmployeeDialog({ open, onOpenChange, onSuccess, employee, us
       onOpenChange(false);
       onSuccess();
     } catch (error) {
-      console.error('Error updating employee:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to update employee');
     } finally {
       setLoading(false);
@@ -161,184 +165,288 @@ export function EditEmployeeDialog({ open, onOpenChange, onSuccess, employee, us
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <Form {...form}>
+        <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="firstName"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="firstName">First Name *</Label>
+              <FormControl>
               <Input
                 id="firstName"
-                value={formData.firstName}
-                onChange={(e) => setFormData(prev => ({ ...prev, firstName: e.target.value }))}
+                {...field}
                 disabled={loading}
-                required
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="lastName"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="lastName">Last Name *</Label>
+              <FormControl>
               <Input
                 id="lastName"
-                value={formData.lastName}
-                onChange={(e) => setFormData(prev => ({ ...prev, lastName: e.target.value }))}
+                {...field}
                 disabled={loading}
-                required
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="email"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="email">Email *</Label>
+            <FormControl>
             <Input
               id="email"
               type="email"
-              value={formData.email}
-              onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
+              {...field}
               disabled={loading}
-              required
             />
-          </div>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="phone"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="phone">Phone</Label>
+              <FormControl>
               <Input
                 id="phone"
                 type="tel"
-                value={formData.phone}
-                onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
+                {...field}
                 disabled={loading}
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="role"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="role">Role *</Label>
               <Select
-                value={formData.role}
-                onValueChange={(value) => setFormData(prev => ({ ...prev, role: value }))}
+                value={field.value}
+                onValueChange={field.onChange}
                 disabled={loading}
               >
+                <FormControl>
                 <SelectTrigger>
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
-                  <SelectItem value="developer">Developer</SelectItem>
-                  <SelectItem value="project_manager">Project Manager</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
+                  {employeeRoleOptions.map((role) => (
+                    <SelectItem key={role} value={role}>
+                      {role === 'project_manager' ? 'Project Manager' : role.charAt(0).toUpperCase() + role.slice(1)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-            </div>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="employeeId"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="employeeId">Employee ID *</Label>
+              <FormControl>
               <Input
                 id="employeeId"
-                value={formData.employeeId}
-                onChange={(e) => setFormData(prev => ({ ...prev, employeeId: e.target.value }))}
+                {...field}
                 disabled={loading}
-                required
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="status"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="status">Status *</Label>
               <Select
-                value={formData.status}
-                onValueChange={(value) => setFormData(prev => ({ ...prev, status: value }))}
+                value={field.value}
+                onValueChange={field.onChange}
                 disabled={loading}
               >
+                <FormControl>
                 <SelectTrigger>
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="on_leave">On Leave</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
+                  {employeeStatusOptions.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {status === 'on_leave' ? 'On Leave' : status.charAt(0).toUpperCase() + status.slice(1)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-            </div>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="department"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="department">Department *</Label>
             <Select
-              value={formData.department}
-              onValueChange={(value) => setFormData(prev => ({ ...prev, department: value }))}
+              value={field.value}
+              onValueChange={field.onChange}
               disabled={loading}
             >
+              <FormControl>
               <SelectTrigger>
                 <SelectValue placeholder="Select department" />
               </SelectTrigger>
+              </FormControl>
               <SelectContent>
-                <SelectItem value="Engineering">Engineering</SelectItem>
-                <SelectItem value="Design">Design</SelectItem>
-                <SelectItem value="Marketing">Marketing</SelectItem>
-                <SelectItem value="Sales">Sales</SelectItem>
-                <SelectItem value="HR">HR</SelectItem>
-                <SelectItem value="Finance">Finance</SelectItem>
-                <SelectItem value="Operations">Operations</SelectItem>
+                {employeeDepartmentOptions.map((department) => (
+                  <SelectItem key={department} value={department}>
+                    {department}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
-          </div>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="designation"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="designation">Designation *</Label>
+            <FormControl>
             <Input
               id="designation"
-              value={formData.designation}
-              onChange={(e) => setFormData(prev => ({ ...prev, designation: e.target.value }))}
+              {...field}
               disabled={loading}
-              required
             />
-          </div>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="dateOfJoining"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="dateOfJoining">Date of Joining *</Label>
+              <FormControl>
               <Input
                 id="dateOfJoining"
                 type="date"
-                value={formData.dateOfJoining}
-                onChange={(e) => setFormData(prev => ({ ...prev, dateOfJoining: e.target.value }))}
+                {...field}
                 disabled={loading}
-                required
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="dateOfBirth"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="dateOfBirth">Date of Birth</Label>
+              <FormControl>
               <Input
                 id="dateOfBirth"
                 type="date"
-                value={formData.dateOfBirth}
-                onChange={(e) => setFormData(prev => ({ ...prev, dateOfBirth: e.target.value }))}
+                {...field}
                 disabled={loading}
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="salary"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="salary">Salary (Annual)</Label>
+            <FormControl>
             <Input
               id="salary"
               type="number"
-              value={formData.salary}
-              onChange={(e) => setFormData(prev => ({ ...prev, salary: e.target.value }))}
+              {...field}
               disabled={loading}
             />
-          </div>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="skills"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="skills">Skills (comma separated)</Label>
+            <FormControl>
             <Input
               id="skills"
-              value={formData.skills}
-              onChange={(e) => setFormData(prev => ({ ...prev, skills: e.target.value }))}
+              {...field}
               disabled={loading}
               placeholder="e.g., JavaScript, React, Node.js"
             />
-          </div>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
           <DialogFooter>
             <Button
@@ -361,6 +469,7 @@ export function EditEmployeeDialog({ open, onOpenChange, onSuccess, employee, us
             </Button>
           </DialogFooter>
         </form>
+        </Form>
       </DialogContent>
     </Dialog>
   );

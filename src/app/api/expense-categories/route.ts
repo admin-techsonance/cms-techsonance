@@ -1,86 +1,63 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { asc, eq, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import { expenseCategories } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { safeErrorMessage } from '@/lib/constants';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, ConflictError, NotFoundError } from '@/server/http/errors';
+import { apiSuccess } from '@/server/http/response';
+import { expenseCategorySchema } from '@/server/validation/system';
 
-export async function GET(request: NextRequest) {
-    try {
-        const allCategories = await db.select().from(expenseCategories).orderBy(expenseCategories.name);
-        return NextResponse.json(allCategories, { status: 200 });
-    } catch (error) {
-        console.error('GET expense categories error:', error);
-        return NextResponse.json({
-            error: safeErrorMessage(error)
-        }, { status: 500 });
+export const GET = withApiHandler(async (request) => {
+  const searchParams = new URL(request.url).searchParams;
+  const id = searchParams.get('id');
+
+  if (id) {
+    const categoryId = Number(id);
+    if (!Number.isInteger(categoryId) || categoryId <= 0) {
+      throw new BadRequestError('Valid expense category id is required');
     }
-}
 
-export async function POST(request: NextRequest) {
-    try {
-        const body = await request.json();
-        const { name, description } = body;
+    const [category] = await db.select().from(expenseCategories).where(eq(expenseCategories.id, categoryId)).limit(1);
+    if (!category) throw new NotFoundError('Expense category not found');
+    return apiSuccess(category, 'Expense category fetched successfully');
+  }
 
-        if (!name || !name.trim()) {
-            return NextResponse.json({
-                error: "Category name is required",
-                code: "MISSING_NAME"
-            }, { status: 400 });
-        }
+  const limit = Math.min(Math.max(Number(searchParams.get('limit') ?? '100'), 1), 200);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const [rows, countRows] = await Promise.all([
+    db.select().from(expenseCategories).orderBy(asc(expenseCategories.name)).limit(limit).offset(offset),
+    db.select({ count: sql<number>`count(*)` }).from(expenseCategories),
+  ]);
 
-        const newCategory = await db.insert(expenseCategories)
-            .values({
-                name: name.trim(),
-                description: description?.trim() || null,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-            })
-            .returning();
+  return apiSuccess(rows, 'Expense categories fetched successfully', {
+    meta: { page: Math.floor(offset / limit) + 1, limit, total: Number(countRows[0]?.count ?? 0) },
+  });
+}, { requireAuth: true, roles: ['Employee'] });
 
-        return NextResponse.json(newCategory[0], { status: 201 });
-    } catch (error) {
-        console.error('POST expense categories error:', error);
-        // Handle unique constraint violation
-        if ((error as any).message?.includes('UNIQUE constraint failed')) {
-            return NextResponse.json({
-                error: "Category already exists",
-                code: "DUPLICATE_CATEGORY"
-            }, { status: 400 });
-        }
-        return NextResponse.json({
-            error: safeErrorMessage(error)
-        }, { status: 500 });
-    }
-}
+export const POST = withApiHandler(async (request) => {
+  const payload = expenseCategorySchema.parse(await request.json());
+  const [existing] = await db.select().from(expenseCategories).where(eq(expenseCategories.name, payload.name)).limit(1);
+  if (existing) throw new ConflictError('Expense category already exists');
 
-export async function DELETE(request: NextRequest) {
-    try {
-        const { searchParams } = new URL(request.url);
-        const id = searchParams.get('id');
+  const now = new Date().toISOString();
+  const [created] = await db.insert(expenseCategories).values({
+    name: payload.name,
+    description: payload.description ?? null,
+    createdAt: now,
+    updatedAt: now,
+  }).returning();
 
-        if (!id || isNaN(parseInt(id))) {
-            return NextResponse.json({
-                error: "Valid ID is required",
-                code: "INVALID_ID"
-            }, { status: 400 });
-        }
+  return apiSuccess(created, 'Expense category created successfully', { status: 201 });
+}, { requireAuth: true, roles: ['Admin'] });
 
-        const deleted = await db.delete(expenseCategories)
-            .where(eq(expenseCategories.id, parseInt(id)))
-            .returning();
+export const DELETE = withApiHandler(async (request) => {
+  const categoryId = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(categoryId) || categoryId <= 0) {
+    throw new BadRequestError('Valid expense category id is required');
+  }
 
-        if (deleted.length === 0) {
-            return NextResponse.json({
-                error: "Category not found",
-                code: "CATEGORY_NOT_FOUND"
-            }, { status: 404 });
-        }
+  const [existing] = await db.select().from(expenseCategories).where(eq(expenseCategories.id, categoryId)).limit(1);
+  if (!existing) throw new NotFoundError('Expense category not found');
 
-        return NextResponse.json(deleted[0], { status: 200 });
-    } catch (error) {
-        console.error('DELETE expense categories error:', error);
-        return NextResponse.json({
-            error: safeErrorMessage(error)
-        }, { status: 500 });
-    }
-}
+  const [deleted] = await db.delete(expenseCategories).where(eq(expenseCategories.id, categoryId)).returning();
+  return apiSuccess(deleted, 'Expense category deleted successfully');
+}, { requireAuth: true, roles: ['Admin'] });

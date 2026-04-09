@@ -1,4 +1,4 @@
-import { sqliteTable, integer, text, real } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, integer, text, real, index } from 'drizzle-orm/sqlite-core';
 
 // Authentication & Users
 export const users = sqliteTable('users', {
@@ -15,7 +15,12 @@ export const users = sqliteTable('users', {
   lastLogin: text('last_login'),
   isActive: integer('is_active', { mode: 'boolean' }).default(true),
   twoFactorEnabled: integer('two_factor_enabled', { mode: 'boolean' }).default(false),
-});
+  failedLoginAttempts: integer('failed_login_attempts').notNull().default(0),
+  lockedUntil: text('locked_until'),
+}, (table) => ({
+  usersRoleIdx: index('users_role_idx').on(table.role),
+  usersActiveIdx: index('users_active_idx').on(table.isActive),
+}));
 
 export const sessions = sqliteTable('sessions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -23,7 +28,72 @@ export const sessions = sqliteTable('sessions', {
   token: text('token').notNull().unique(),
   expiresAt: text('expires_at').notNull(),
   createdAt: text('created_at').notNull(),
-});
+}, (table) => ({
+  sessionsUserIdIdx: index('sessions_user_id_idx').on(table.userId),
+  sessionsExpiresAtIdx: index('sessions_expires_at_idx').on(table.expiresAt),
+}));
+
+export const authRefreshSessions = sqliteTable('auth_refresh_sessions', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id).notNull(),
+  refreshTokenHash: text('refresh_token_hash').notNull().unique(),
+  isPersistent: integer('is_persistent', { mode: 'boolean' }).notNull().default(true),
+  userAgent: text('user_agent'),
+  ipAddress: text('ip_address'),
+  expiresAt: text('expires_at').notNull(),
+  rotatedAt: text('rotated_at'),
+  revokedAt: text('revoked_at'),
+  createdAt: text('created_at').notNull(),
+  lastUsedAt: text('last_used_at'),
+}, (table) => ({
+  authRefreshSessionsUserIdIdx: index('auth_refresh_sessions_user_id_idx').on(table.userId),
+  authRefreshSessionsExpiresAtIdx: index('auth_refresh_sessions_expires_at_idx').on(table.expiresAt),
+}));
+
+export const tokenBlacklist = sqliteTable('token_blacklist', {
+  id: text('id').primaryKey(),
+  tokenId: text('token_id').notNull().unique(),
+  userId: integer('user_id').references(() => users.id),
+  reason: text('reason').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  createdAt: text('created_at').notNull(),
+}, (table) => ({
+  tokenBlacklistUserIdIdx: index('token_blacklist_user_id_idx').on(table.userId),
+  tokenBlacklistExpiresAtIdx: index('token_blacklist_expires_at_idx').on(table.expiresAt),
+}));
+
+export const passwordResetOtps = sqliteTable('password_reset_otps', {
+  id: text('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id).notNull(),
+  email: text('email').notNull(),
+  otpHash: text('otp_hash').notNull(),
+  expiresAt: text('expires_at').notNull(),
+  verifiedAt: text('verified_at'),
+  consumedAt: text('consumed_at'),
+  attempts: integer('attempts').notNull().default(0),
+  createdAt: text('created_at').notNull(),
+}, (table) => ({
+  passwordResetOtpsUserIdIdx: index('password_reset_otps_user_id_idx').on(table.userId),
+  passwordResetOtpsEmailIdx: index('password_reset_otps_email_idx').on(table.email),
+  passwordResetOtpsExpiresAtIdx: index('password_reset_otps_expires_at_idx').on(table.expiresAt),
+}));
+
+export const auditLogs = sqliteTable('audit_logs', {
+  id: text('id').primaryKey(),
+  actorUserId: integer('actor_user_id').references(() => users.id),
+  action: text('action').notNull(),
+  resourceType: text('resource_type').notNull(),
+  resourceId: text('resource_id'),
+  method: text('method').notNull(),
+  path: text('path').notNull(),
+  correlationId: text('correlation_id'),
+  details: text('details', { mode: 'json' }),
+  createdAt: text('created_at').notNull(),
+}, (table) => ({
+  auditLogsActorUserIdIdx: index('audit_logs_actor_user_id_idx').on(table.actorUserId),
+  auditLogsResourceIdx: index('audit_logs_resource_idx').on(table.resourceType, table.resourceId),
+  auditLogsCreatedAtIdx: index('audit_logs_created_at_idx').on(table.createdAt),
+}));
 
 export const activityLogs = sqliteTable('activity_logs', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -219,6 +289,24 @@ export const payroll = sqliteTable('payroll', {
   paidAt: text('paid_at'),
   notes: text('notes'),
 });
+
+export const payrollJobs = sqliteTable('payroll_jobs', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  jobKey: text('job_key').notNull().unique(),
+  month: text('month').notNull(),
+  year: integer('year').notNull(),
+  employeeScope: text('employee_scope', { mode: 'json' }).notNull(),
+  status: text('status').notNull().default('pending'),
+  requestedBy: integer('requested_by').references(() => users.id).notNull(),
+  requestedAt: text('requested_at').notNull(),
+  startedAt: text('started_at'),
+  completedAt: text('completed_at'),
+  result: text('result', { mode: 'json' }),
+  error: text('error'),
+}, (table) => ({
+  payrollJobsStatusIdx: index('payroll_jobs_status_idx').on(table.status),
+  payrollJobsMonthIdx: index('payroll_jobs_month_idx').on(table.month, table.year),
+}));
 
 // Finance & Billing
 export const invoices = sqliteTable('invoices', {

@@ -81,6 +81,7 @@ export default function PayrollPage() {
     const [attendanceSummary, setAttendanceSummary] = useState<AttendanceSummary[]>([]);
     const [selectedEmployees, setSelectedEmployees] = useState<number[]>([]);
     const [generatedPayrolls, setGeneratedPayrolls] = useState<Payroll[]>([]);
+    const [activePayrollJobId, setActivePayrollJobId] = useState<number | null>(null);
     const [isGenerating, setIsGenerating] = useState(false);
     const [isFetching, setIsFetching] = useState(false);
     const [totalWorkingDays, setTotalWorkingDays] = useState(0);
@@ -94,6 +95,38 @@ export default function PayrollPage() {
         fetchPayrolls();
         fetchBusinessSettings();
     }, [selectedMonth, selectedYear]);
+
+    useEffect(() => {
+        if (!activePayrollJobId) return;
+
+        const token = localStorage.getItem('session_token');
+        const intervalId = window.setInterval(async () => {
+            try {
+                const response = await fetch(`/api/payroll/jobs?id=${activePayrollJobId}`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+
+                if (!response.ok) return;
+                const job = await response.json();
+
+                if (job.status === 'completed') {
+                    toast.success('Payroll generation completed successfully');
+                    setActivePayrollJobId(null);
+                    setIsGenerating(false);
+                    setSelectedEmployees([]);
+                    fetchPayrolls();
+                } else if (job.status === 'failed') {
+                    toast.error(job.error || 'Payroll generation failed');
+                    setActivePayrollJobId(null);
+                    setIsGenerating(false);
+                }
+            } catch {
+                // keep polling quietly
+            }
+        }, 2000);
+
+        return () => window.clearInterval(intervalId);
+    }, [activePayrollJobId]);
 
     const fetchEmployees = async () => {
         try {
@@ -290,9 +323,14 @@ export default function PayrollPage() {
             const data = await response.json();
 
             if (response.ok) {
-                toast.success(data.message);
-                fetchPayrolls();
-                setSelectedEmployees([]);
+                toast.success(data.message || 'Payroll generation queued successfully');
+                if (typeof data.jobId === 'number') {
+                    setActivePayrollJobId(data.jobId);
+                } else {
+                    fetchPayrolls();
+                    setSelectedEmployees([]);
+                    setIsGenerating(false);
+                }
             } else {
                 toast.error(data.error || 'Failed to generate payroll');
             }
@@ -300,7 +338,9 @@ export default function PayrollPage() {
             console.error('Error generating payroll:', error);
             toast.error('An error occurred while generating payroll');
         } finally {
-            setIsGenerating(false);
+            if (!activePayrollJobId) {
+                setIsGenerating(false);
+            }
         }
     };
 

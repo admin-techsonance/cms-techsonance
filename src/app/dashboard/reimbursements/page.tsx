@@ -1,9 +1,12 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -22,6 +25,12 @@ import {
     DialogTitle,
     DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+    reimbursementRequestFormSchema,
+    reimbursementReviewFormSchema,
+    type ReimbursementRequestFormValues,
+    type ReimbursementReviewFormValues,
+} from '@/lib/forms/schemas';
 import { hasPermission, hasFullAccess, UserRole } from '@/lib/permissions';
 
 interface User {
@@ -82,12 +91,21 @@ export default function ReimbursementsPage() {
 
     // Form state
     const [showDialog, setShowDialog] = useState(false);
-    const [reimbursementForm, setReimbursementForm] = useState({
-        categoryId: '',
-        amount: '',
-        expenseDate: '',
-        description: '',
-        receiptUrl: '',
+    const reimbursementForm = useForm<ReimbursementRequestFormValues>({
+        resolver: zodResolver(reimbursementRequestFormSchema),
+        defaultValues: {
+            categoryId: '',
+            amount: '',
+            expenseDate: '',
+            description: '',
+            receiptUrl: '',
+        },
+    });
+    const reviewForm = useForm<ReimbursementReviewFormValues>({
+        resolver: zodResolver(reimbursementReviewFormSchema),
+        defaultValues: {
+            adminComments: '',
+        },
     });
 
     // Filters
@@ -99,7 +117,6 @@ export default function ReimbursementsPage() {
 
     // Admin view
     const [selectedReimbursement, setSelectedReimbursement] = useState<Reimbursement | null>(null);
-    const [adminComments, setAdminComments] = useState('');
     const [currentPage, setCurrentPage] = useState(0);
     const pageSize = 10;
 
@@ -154,14 +171,15 @@ export default function ReimbursementsPage() {
 
                 if (empResponse.ok) {
                     const empData = await empResponse.json();
-                    const userEmployee = empData.find((e: Employee) => e.userId === data.user.id);
+                    const employeesData = Array.isArray(empData) ? empData : empData.data ?? [];
+                    const userEmployee = employeesData.find((e: Employee) => e.userId === data.user.id);
                     setEmployee(userEmployee || null);
                 }
             } else {
                 router.push('/login');
             }
-        } catch (error) {
-            console.error('Error fetching current user:', error);
+        } catch {
+            toast.error('Failed to load user profile');
             router.push('/login');
         } finally {
             setLoading(false);
@@ -177,10 +195,10 @@ export default function ReimbursementsPage() {
 
             if (response.ok) {
                 const data = await response.json();
-                setCategories(data);
+                setCategories(Array.isArray(data) ? data : data.data ?? []);
             }
-        } catch (error) {
-            console.error('Error fetching categories:', error);
+        } catch {
+            toast.error('Failed to load categories');
         }
     };
 
@@ -201,10 +219,9 @@ export default function ReimbursementsPage() {
 
             if (response.ok) {
                 const data = await response.json();
-                setReimbursements(data);
+                setReimbursements(Array.isArray(data) ? data : data.data ?? []);
             }
-        } catch (error) {
-            console.error('Error fetching reimbursements:', error);
+        } catch {
             toast.error('Failed to load reimbursements');
         }
     };
@@ -218,10 +235,10 @@ export default function ReimbursementsPage() {
 
             if (response.ok) {
                 const data = await response.json();
-                setEmployees(data);
+                setEmployees(Array.isArray(data) ? data : data.data ?? []);
             }
-        } catch (error) {
-            console.error('Error fetching employees:', error);
+        } catch {
+            toast.error('Failed to load employees');
         }
     };
 
@@ -234,10 +251,10 @@ export default function ReimbursementsPage() {
 
             if (response.ok) {
                 const data = await response.json();
-                setUsers(data);
+                setUsers(Array.isArray(data) ? data : data.data ?? []);
             }
-        } catch (error) {
-            console.error('Error fetching users:', error);
+        } catch {
+            toast.error('Failed to load users');
         }
     };
 
@@ -274,37 +291,19 @@ export default function ReimbursementsPage() {
 
             if (response.ok) {
                 const data = await response.json();
-                setReimbursementForm({ ...reimbursementForm, receiptUrl: data.url });
+                reimbursementForm.setValue('receiptUrl', data.url, { shouldValidate: true });
                 toast.success('Receipt uploaded successfully');
             } else {
                 toast.error('Failed to upload receipt');
             }
-        } catch (error) {
-            console.error('Error uploading file:', error);
+        } catch {
             toast.error('Error uploading receipt');
         } finally {
             setUploading(false);
         }
     };
 
-    const handleSubmitReimbursement = async (isDraft: boolean = false) => {
-        if (!reimbursementForm.categoryId) {
-            toast.error('Please select a category');
-            return;
-        }
-        if (!reimbursementForm.amount) {
-            toast.error('Please enter an amount');
-            return;
-        }
-        if (!reimbursementForm.expenseDate) {
-            toast.error('Please select an expense date');
-            return;
-        }
-        if (!reimbursementForm.description) {
-            toast.error('Please provide a description');
-            return;
-        }
-
+    const handleSubmitReimbursement = async (values: ReimbursementRequestFormValues, isDraft: boolean = false) => {
         setSubmitting(true);
         try {
             const token = localStorage.getItem('session_token');
@@ -316,11 +315,11 @@ export default function ReimbursementsPage() {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    categoryId: reimbursementForm.categoryId,
-                    amount: Math.round(parseFloat(reimbursementForm.amount) * 100), // Convert to paise
-                    expenseDate: reimbursementForm.expenseDate,
-                    description: reimbursementForm.description,
-                    receiptUrl: reimbursementForm.receiptUrl || null,
+                    categoryId: values.categoryId,
+                    amount: Math.round(parseFloat(values.amount) * 100),
+                    expenseDate: values.expenseDate,
+                    description: values.description.trim(),
+                    receiptUrl: values.receiptUrl || null,
                     status: isDraft ? 'draft' : 'submitted',
                 }),
             });
@@ -328,7 +327,7 @@ export default function ReimbursementsPage() {
             if (response.ok) {
                 toast.success(isDraft ? 'Saved as draft' : 'Reimbursement submitted successfully!');
                 setShowDialog(false);
-                setReimbursementForm({
+                reimbursementForm.reset({
                     categoryId: '',
                     amount: '',
                     expenseDate: '',
@@ -340,8 +339,7 @@ export default function ReimbursementsPage() {
                 const error = await response.json();
                 toast.error(error.error || 'Failed to submit reimbursement');
             }
-        } catch (error) {
-            console.error('Error submitting reimbursement:', error);
+        } catch {
             toast.error('An error occurred while submitting');
         } finally {
             setSubmitting(false);
@@ -360,21 +358,20 @@ export default function ReimbursementsPage() {
                 },
                 body: JSON.stringify({
                     status: newStatus,
-                    adminComments: adminComments || null,
+                    adminComments: reviewForm.getValues('adminComments') || null,
                 }),
             });
 
             if (response.ok) {
                 toast.success(`Reimbursement ${newStatus}`);
                 setSelectedReimbursement(null);
-                setAdminComments('');
+                reviewForm.reset({ adminComments: '' });
                 fetchReimbursements();
             } else {
                 const error = await response.json();
                 toast.error(error.error || 'Failed to update reimbursement');
             }
-        } catch (error) {
-            console.error('Error updating reimbursement:', error);
+        } catch {
             toast.error('An error occurred');
         }
     };
@@ -525,17 +522,24 @@ export default function ReimbursementsPage() {
                                             </DialogDescription>
                                         </DialogHeader>
 
+                                        <Form {...reimbursementForm}>
                                         <div className="space-y-4">
                                             <div className="grid grid-cols-2 gap-4">
-                                                <div className="space-y-2">
+                                                <FormField
+                                                    control={reimbursementForm.control}
+                                                    name="categoryId"
+                                                    render={({ field }) => (
+                                                <FormItem className="space-y-2">
                                                     <Label>Category *</Label>
                                                     <Select
-                                                        value={reimbursementForm.categoryId}
-                                                        onValueChange={(value) => setReimbursementForm({ ...reimbursementForm, categoryId: value })}
+                                                        value={field.value}
+                                                        onValueChange={field.onChange}
                                                     >
+                                                        <FormControl>
                                                         <SelectTrigger>
                                                             <SelectValue placeholder="Select category" />
                                                         </SelectTrigger>
+                                                        </FormControl>
                                                         <SelectContent>
                                                             {categories.map((cat) => (
                                                                 <SelectItem key={cat.id} value={cat.id.toString()}>
@@ -544,39 +548,66 @@ export default function ReimbursementsPage() {
                                                             ))}
                                                         </SelectContent>
                                                     </Select>
-                                                </div>
+                                                    <FormMessage className="text-xs" />
+                                                </FormItem>
+                                                    )}
+                                                />
 
-                                                <div className="space-y-2">
+                                                <FormField
+                                                    control={reimbursementForm.control}
+                                                    name="amount"
+                                                    render={({ field }) => (
+                                                <FormItem className="space-y-2">
                                                     <Label>Amount (₹) *</Label>
+                                                    <FormControl>
                                                     <Input
                                                         type="number"
                                                         step="0.01"
-                                                        value={reimbursementForm.amount}
-                                                        onChange={(e) => setReimbursementForm({ ...reimbursementForm, amount: e.target.value })}
+                                                        {...field}
                                                         placeholder="0.00"
                                                     />
-                                                </div>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <Label>Expense Date *</Label>
-                                                <Input
-                                                    type="date"
-                                                    value={reimbursementForm.expenseDate}
-                                                    onChange={(e) => setReimbursementForm({ ...reimbursementForm, expenseDate: e.target.value })}
-                                                    max={new Date().toISOString().split('T')[0]}
+                                                    </FormControl>
+                                                    <FormMessage className="text-xs" />
+                                                </FormItem>
+                                                    )}
                                                 />
                                             </div>
 
-                                            <div className="space-y-2">
+                                            <FormField
+                                                control={reimbursementForm.control}
+                                                name="expenseDate"
+                                                render={({ field }) => (
+                                            <FormItem className="space-y-2">
+                                                <Label>Expense Date *</Label>
+                                                <FormControl>
+                                                <Input
+                                                    type="date"
+                                                    {...field}
+                                                    max={new Date().toISOString().split('T')[0]}
+                                                />
+                                                </FormControl>
+                                                <FormMessage className="text-xs" />
+                                            </FormItem>
+                                                )}
+                                            />
+
+                                            <FormField
+                                                control={reimbursementForm.control}
+                                                name="description"
+                                                render={({ field }) => (
+                                            <FormItem className="space-y-2">
                                                 <Label>Description *</Label>
+                                                <FormControl>
                                                 <Textarea
-                                                    value={reimbursementForm.description}
-                                                    onChange={(e) => setReimbursementForm({ ...reimbursementForm, description: e.target.value })}
+                                                    {...field}
                                                     placeholder="Provide details about the expense..."
                                                     rows={3}
                                                 />
-                                            </div>
+                                                </FormControl>
+                                                <FormMessage className="text-xs" />
+                                            </FormItem>
+                                                )}
+                                            />
 
                                             <div className="space-y-2">
                                                 <Label>Receipt (PDF/JPG/PNG, max 5MB)</Label>
@@ -601,7 +632,7 @@ export default function ReimbursementsPage() {
                                                         )}
                                                         Upload Receipt
                                                     </Button>
-                                                    {reimbursementForm.receiptUrl && (
+                                                    {reimbursementForm.watch('receiptUrl') && (
                                                         <span className="text-sm text-muted-foreground flex items-center">
                                                             <FileText className="mr-2 h-4 w-4" />
                                                             Receipt uploaded
@@ -614,16 +645,17 @@ export default function ReimbursementsPage() {
                                         <DialogFooter>
                                             <Button
                                                 variant="outline"
-                                                onClick={() => handleSubmitReimbursement(true)}
+                                                onClick={() => void reimbursementForm.handleSubmit((values) => handleSubmitReimbursement(values, true), () => toast.error('Please fix the reimbursement form before saving'))()}
                                                 disabled={submitting}
                                             >
                                                 Save as Draft
                                             </Button>
-                                            <Button onClick={() => handleSubmitReimbursement(false)} disabled={submitting}>
+                                            <Button onClick={() => void reimbursementForm.handleSubmit((values) => handleSubmitReimbursement(values, false), () => toast.error('Please fix the reimbursement form before submitting'))()} disabled={submitting}>
                                                 {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                                 Submit Request
                                             </Button>
                                         </DialogFooter>
+                                        </Form>
                                     </DialogContent>
                                 </Dialog>
                             )}
@@ -751,7 +783,7 @@ export default function ReimbursementsPage() {
                                                                 size="sm"
                                                                 onClick={() => {
                                                                     setSelectedReimbursement(reimbursement);
-                                                                    setAdminComments('');
+                                                                    reviewForm.reset({ adminComments: '' });
                                                                 }}
                                                             >
                                                                 <Check className="h-4 w-4 text-green-600" />
@@ -761,7 +793,7 @@ export default function ReimbursementsPage() {
                                                                 size="sm"
                                                                 onClick={() => {
                                                                     setSelectedReimbursement(reimbursement);
-                                                                    setAdminComments('');
+                                                                    reviewForm.reset({ adminComments: '' });
                                                                 }}
                                                             >
                                                                 <X className="h-4 w-4 text-red-600" />
@@ -861,15 +893,25 @@ export default function ReimbursementsPage() {
                             )}
 
                             {isAdmin && selectedReimbursement.status === 'submitted' && (
-                                <div className="space-y-2">
+                                <Form {...reviewForm}>
+                                <FormField
+                                    control={reviewForm.control}
+                                    name="adminComments"
+                                    render={({ field }) => (
+                                <FormItem className="space-y-2">
                                     <Label>Comments (Optional)</Label>
+                                    <FormControl>
                                     <Textarea
-                                        value={adminComments}
-                                        onChange={(e) => setAdminComments(e.target.value)}
+                                        {...field}
                                         placeholder="Add comments or reason for rejection..."
                                         rows={3}
                                     />
-                                </div>
+                                    </FormControl>
+                                    <FormMessage className="text-xs" />
+                                </FormItem>
+                                    )}
+                                />
+                                </Form>
                             )}
                         </div>
                     )}

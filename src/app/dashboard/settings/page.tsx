@@ -1,15 +1,19 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2, Save, Building2, Palette, Users, Plug, Plus, Key, User as UserIcon, Calendar, Mail, Shield, Briefcase, Phone, Banknote, Award, Globe, Fingerprint, Activity } from 'lucide-react';
 import { DetailedPageSkeleton } from '@/components/ui/dashboard-skeleton';
 import { toast } from 'sonner';
+import { passwordChangeFormSchema, type PasswordChangeFormValues } from '@/lib/forms/schemas';
 import { UserRole, hasFullAccess, getRoleName } from '@/lib/permissions';
 
 interface CompanySettings {
@@ -83,10 +87,13 @@ export default function SettingsPage() {
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [passwordForm, setPasswordForm] = useState({
-    currentPassword: '',
-    newPassword: '',
-    confirmPassword: '',
+  const passwordForm = useForm<PasswordChangeFormValues>({
+    resolver: zodResolver(passwordChangeFormSchema),
+    defaultValues: {
+      currentPassword: '',
+      newPassword: '',
+      confirmPassword: '',
+    },
   });
   const [changingPassword, setChangingPassword] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -102,8 +109,8 @@ export default function SettingsPage() {
       if (userRes && hasFullAccess(userRes.role)) {
         await fetchSettings();
       }
-    } catch (error) {
-      console.error('Error fetching initial data:', error);
+    } catch {
+      toast.error('Failed to load settings');
     } finally {
       setLoading(false);
     }
@@ -122,8 +129,8 @@ export default function SettingsPage() {
         setCurrentUser(data.user);
         return data.user as User;
       }
-    } catch (error) {
-      console.error('Error fetching current user:', error);
+    } catch {
+      toast.error('Failed to load user profile');
     }
     return null;
   };
@@ -142,8 +149,8 @@ export default function SettingsPage() {
       if (businessRes.ok) {
         setBusinessSettings(await businessRes.json());
       }
-    } catch (error) {
-      console.error('Error fetching settings:', error);
+    } catch {
+      toast.error('Failed to load company settings');
     }
   };
 
@@ -162,8 +169,7 @@ export default function SettingsPage() {
         const error = await response.json();
         toast.error(error.error || 'Failed to save settings');
       }
-    } catch (error) {
-      console.error('Error saving settings:', error);
+    } catch {
       toast.error('An error occurred');
     } finally {
       setSaving(false);
@@ -184,41 +190,24 @@ export default function SettingsPage() {
       } else {
         toast.error('Failed to save business settings');
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      toast.error('An error occurred while saving business settings');
     } finally {
       setSaving(false);
     }
   };
 
-  const handlePasswordChange = async () => {
-    if (!passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
-      toast.error('Please fill in all password fields');
-      return;
-    }
-
-    if (passwordForm.newPassword.length < 6) {
-      toast.error('New password must be at least 6 characters long');
-      return;
-    }
-
-    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      toast.error('New passwords do not match');
-      return;
-    }
-
+  const handlePasswordChange = async (values: PasswordChangeFormValues) => {
     setChangingPassword(true);
     try {
-      const token = localStorage.getItem('session_token');
       const response = await fetch('/api/auth/change-password', {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          currentPassword: passwordForm.currentPassword,
-          newPassword: passwordForm.newPassword,
+          currentPassword: values.currentPassword,
+          newPassword: values.newPassword,
         }),
       });
 
@@ -226,16 +215,11 @@ export default function SettingsPage() {
 
       if (response.ok) {
         toast.success('Password changed successfully!');
-        setPasswordForm({
-          currentPassword: '',
-          newPassword: '',
-          confirmPassword: '',
-        });
+        passwordForm.reset();
       } else {
         toast.error(data.error || 'Failed to change password');
       }
-    } catch (error) {
-      console.error('Error changing password:', error);
+    } catch {
       toast.error('An error occurred while changing password');
     } finally {
       setChangingPassword(false);
@@ -717,45 +701,71 @@ export default function SettingsPage() {
               <CardDescription>Update your account password securely</CardDescription>
             </CardHeader>
             <CardContent>
+              <Form {...passwordForm}>
               <div className="space-y-4 max-w-md">
-                <div className="space-y-2">
+                <FormField
+                  control={passwordForm.control}
+                  name="currentPassword"
+                  render={({ field }) => (
+                <FormItem className="space-y-2">
                   <Label htmlFor="currentPassword">Current Password *</Label>
+                  <FormControl>
                   <Input
                     id="currentPassword"
                     type="password"
-                    value={passwordForm.currentPassword}
-                    onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+                    {...field}
                     placeholder="Enter your current password"
                   />
-                </div>
-                <div className="space-y-2">
+                  </FormControl>
+                  <FormMessage className="text-xs" />
+                </FormItem>
+                  )}
+                />
+                <FormField
+                  control={passwordForm.control}
+                  name="newPassword"
+                  render={({ field }) => (
+                <FormItem className="space-y-2">
                   <Label htmlFor="newPassword">New Password *</Label>
+                  <FormControl>
                   <Input
                     id="newPassword"
                     type="password"
-                    value={passwordForm.newPassword}
-                    onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                    {...field}
                     placeholder="Enter new password (min 6 characters)"
                   />
+                  </FormControl>
                   <p className="text-sm text-muted-foreground">
                     Password must be at least 6 characters long
                   </p>
-                </div>
-                <div className="space-y-2">
+                  <FormMessage className="text-xs" />
+                </FormItem>
+                  )}
+                />
+                <FormField
+                  control={passwordForm.control}
+                  name="confirmPassword"
+                  render={({ field }) => (
+                <FormItem className="space-y-2">
                   <Label htmlFor="confirmPassword">Confirm New Password *</Label>
+                  <FormControl>
                   <Input
                     id="confirmPassword"
                     type="password"
-                    value={passwordForm.confirmPassword}
-                    onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+                    {...field}
                     placeholder="Re-enter new password"
                   />
-                </div>
-                <Button onClick={handlePasswordChange} disabled={changingPassword}>
+                  </FormControl>
+                  <FormMessage className="text-xs" />
+                </FormItem>
+                  )}
+                />
+                <Button onClick={() => void passwordForm.handleSubmit(handlePasswordChange, () => toast.error('Please fix the password form before submitting'))()} disabled={changingPassword}>
                   {changingPassword ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Key className="mr-2 h-4 w-4" />}
                   Change Password
                 </Button>
               </div>
+              </Form>
             </CardContent>
           </Card>
         </TabsContent>

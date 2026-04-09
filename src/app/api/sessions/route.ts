@@ -1,330 +1,117 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import { sessions, users } from '@/db/schema';
-import { eq, and, desc } from 'drizzle-orm';
-import { safeErrorMessage } from '@/lib/constants';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, ConflictError, ForbiddenError, NotFoundError } from '@/server/http/errors';
+import { apiSuccess } from '@/server/http/response';
+import { createSessionSchema, updateSessionSchema } from '@/server/validation/system';
 
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-    const userId = searchParams.get('userId');
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
+export const GET = withApiHandler(async (request, context) => {
+  const searchParams = new URL(request.url).searchParams;
+  const id = searchParams.get('id');
+  const userIdParam = searchParams.get('userId');
+  const user = context.auth!.user;
+  const isAdminLike = user.role === 'Admin' || user.role === 'SuperAdmin';
 
-    // Get single session by ID
-    if (id) {
-      if (!id || isNaN(parseInt(id))) {
-        return NextResponse.json({ 
-          error: "Valid ID is required",
-          code: "INVALID_ID" 
-        }, { status: 400 });
-      }
-
-      const session = await db.select()
-        .from(sessions)
-        .where(eq(sessions.id, parseInt(id)))
-        .limit(1);
-
-      if (session.length === 0) {
-        return NextResponse.json({ 
-          error: 'Session not found',
-          code: "SESSION_NOT_FOUND" 
-        }, { status: 404 });
-      }
-
-      return NextResponse.json(session[0], { status: 200 });
-    }
-
-    // List sessions with optional userId filter
-    let query = db.select()
-      .from(sessions)
-      .orderBy(desc(sessions.createdAt));
-
-    if (userId) {
-      if (isNaN(parseInt(userId))) {
-        return NextResponse.json({ 
-          error: "Valid userId is required for filtering",
-          code: "INVALID_USER_ID" 
-        }, { status: 400 });
-      }
-      query = query.where(eq(sessions.userId, parseInt(userId)));
-    }
-
-    const results = await query.limit(limit).offset(offset);
-
-    return NextResponse.json(results, { status: 200 });
-  } catch (error) {
-    console.error('GET error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  if (id) {
+    const sessionId = Number(id);
+    if (!Number.isInteger(sessionId) || sessionId <= 0) throw new BadRequestError('Valid session id is required');
+    const [session] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+    if (!session) throw new NotFoundError('Session not found');
+    if (!isAdminLike && session.userId !== user.id) throw new ForbiddenError('You do not have permission to view this session');
+    return apiSuccess(session, 'Session fetched successfully');
   }
-}
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { userId, token, expiresAt } = body;
-
-    // Validate required fields
-    if (!userId) {
-      return NextResponse.json({ 
-        error: "userId is required",
-        code: "MISSING_USER_ID" 
-      }, { status: 400 });
-    }
-
-    if (!token) {
-      return NextResponse.json({ 
-        error: "token is required",
-        code: "MISSING_TOKEN" 
-      }, { status: 400 });
-    }
-
-    if (!expiresAt) {
-      return NextResponse.json({ 
-        error: "expiresAt is required",
-        code: "MISSING_EXPIRES_AT" 
-      }, { status: 400 });
-    }
-
-    // Validate userId is a valid integer
-    if (isNaN(parseInt(userId.toString()))) {
-      return NextResponse.json({ 
-        error: "userId must be a valid integer",
-        code: "INVALID_USER_ID" 
-      }, { status: 400 });
-    }
-
-    // Validate userId exists in users table
-    const userExists = await db.select()
-      .from(users)
-      .where(eq(users.id, parseInt(userId.toString())))
-      .limit(1);
-
-    if (userExists.length === 0) {
-      return NextResponse.json({ 
-        error: "User with specified userId does not exist",
-        code: "USER_NOT_FOUND" 
-      }, { status: 400 });
-    }
-
-    // Validate token is unique
-    const tokenExists = await db.select()
-      .from(sessions)
-      .where(eq(sessions.token, token.toString().trim()))
-      .limit(1);
-
-    if (tokenExists.length > 0) {
-      return NextResponse.json({ 
-        error: "Token already exists. Token must be unique.",
-        code: "TOKEN_NOT_UNIQUE" 
-      }, { status: 400 });
-    }
-
-    // Validate expiresAt is a valid ISO date string
-    const expiresAtDate = new Date(expiresAt);
-    if (isNaN(expiresAtDate.getTime())) {
-      return NextResponse.json({ 
-        error: "expiresAt must be a valid ISO 8601 date string",
-        code: "INVALID_EXPIRES_AT_FORMAT" 
-      }, { status: 400 });
-    }
-
-    // Validate expiresAt is a future date
-    const now = new Date();
-    if (expiresAtDate <= now) {
-      return NextResponse.json({ 
-        error: "expiresAt must be a future date",
-        code: "EXPIRES_AT_MUST_BE_FUTURE" 
-      }, { status: 400 });
-    }
-
-    // Create new session
-    const newSession = await db.insert(sessions)
-      .values({
-        userId: parseInt(userId.toString()),
-        token: token.toString().trim(),
-        expiresAt: expiresAtDate.toISOString(),
-        createdAt: new Date().toISOString(),
-      })
-      .returning();
-
-    return NextResponse.json(newSession[0], { status: 201 });
-  } catch (error) {
-    console.error('POST error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  const limit = Math.min(Math.max(Number(searchParams.get('limit') ?? '10'), 1), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const conditions = [];
+  if (userIdParam) {
+    const requestedUserId = Number(userIdParam);
+    if (!Number.isInteger(requestedUserId) || requestedUserId <= 0) throw new BadRequestError('Valid user id is required');
+    if (!isAdminLike && requestedUserId !== user.id) throw new ForbiddenError('You can only list your own sessions');
+    conditions.push(eq(sessions.userId, requestedUserId));
+  } else if (!isAdminLike) {
+    conditions.push(eq(sessions.userId, user.id));
   }
-}
 
-export async function PUT(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
-
-    // Check if session exists
-    const existingSession = await db.select()
-      .from(sessions)
-      .where(eq(sessions.id, parseInt(id)))
-      .limit(1);
-
-    if (existingSession.length === 0) {
-      return NextResponse.json({ 
-        error: 'Session not found',
-        code: "SESSION_NOT_FOUND" 
-      }, { status: 404 });
-    }
-
-    const body = await request.json();
-    const { userId, token, expiresAt } = body;
-
-    // Build update object with only provided fields
-    const updates: any = {};
-
-    // Validate and add userId if provided
-    if (userId !== undefined) {
-      if (isNaN(parseInt(userId.toString()))) {
-        return NextResponse.json({ 
-          error: "userId must be a valid integer",
-          code: "INVALID_USER_ID" 
-        }, { status: 400 });
-      }
-
-      // Validate userId exists in users table
-      const userExists = await db.select()
-        .from(users)
-        .where(eq(users.id, parseInt(userId.toString())))
-        .limit(1);
-
-      if (userExists.length === 0) {
-        return NextResponse.json({ 
-          error: "User with specified userId does not exist",
-          code: "USER_NOT_FOUND" 
-        }, { status: 400 });
-      }
-
-      updates.userId = parseInt(userId.toString());
-    }
-
-    // Validate and add token if provided
-    if (token !== undefined) {
-      const trimmedToken = token.toString().trim();
-
-      // Check token uniqueness (excluding current session)
-      const tokenExists = await db.select()
-        .from(sessions)
-        .where(
-          and(
-            eq(sessions.token, trimmedToken),
-            // Exclude current session from uniqueness check
-          )
-        )
-        .limit(2); // Get up to 2 to check if any other exists
-
-      const otherSessionWithToken = tokenExists.filter(s => s.id !== parseInt(id));
-      if (otherSessionWithToken.length > 0) {
-        return NextResponse.json({ 
-          error: "Token already exists. Token must be unique.",
-          code: "TOKEN_NOT_UNIQUE" 
-        }, { status: 400 });
-      }
-
-      updates.token = trimmedToken;
-    }
-
-    // Validate and add expiresAt if provided
-    if (expiresAt !== undefined) {
-      const expiresAtDate = new Date(expiresAt);
-      if (isNaN(expiresAtDate.getTime())) {
-        return NextResponse.json({ 
-          error: "expiresAt must be a valid ISO 8601 date string",
-          code: "INVALID_EXPIRES_AT_FORMAT" 
-        }, { status: 400 });
-      }
-
-      // Validate expiresAt is a future date
-      const now = new Date();
-      if (expiresAtDate <= now) {
-        return NextResponse.json({ 
-          error: "expiresAt must be a future date",
-          code: "EXPIRES_AT_MUST_BE_FUTURE" 
-        }, { status: 400 });
-      }
-
-      updates.expiresAt = expiresAtDate.toISOString();
-    }
-
-    // If no updates provided
-    if (Object.keys(updates).length === 0) {
-      return NextResponse.json({ 
-        error: "No valid fields provided for update",
-        code: "NO_UPDATE_FIELDS" 
-      }, { status: 400 });
-    }
-
-    // Update session
-    const updatedSession = await db.update(sessions)
-      .set(updates)
-      .where(eq(sessions.id, parseInt(id)))
-      .returning();
-
-    return NextResponse.json(updatedSession[0], { status: 200 });
-  } catch (error) {
-    console.error('PUT error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+  let query = db.select().from(sessions);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(sessions);
+  if (whereClause) {
+    query = query.where(whereClause) as typeof query;
+    countQuery = countQuery.where(whereClause) as typeof countQuery;
   }
-}
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+  const [rows, countRows] = await Promise.all([
+    query.orderBy(desc(sessions.createdAt)).limit(limit).offset(offset),
+    countQuery,
+  ]);
 
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
+  return apiSuccess(rows, 'Sessions fetched successfully', {
+    meta: { page: Math.floor(offset / limit) + 1, limit, total: Number(countRows[0]?.count ?? 0) },
+  });
+}, { requireAuth: true, roles: ['Employee'] });
 
-    // Check if session exists before deleting
-    const existingSession = await db.select()
-      .from(sessions)
-      .where(eq(sessions.id, parseInt(id)))
-      .limit(1);
+export const POST = withApiHandler(async (request) => {
+  const payload = createSessionSchema.parse(await request.json());
+  if (new Date(payload.expiresAt) <= new Date()) throw new BadRequestError('expiresAt must be a future datetime');
 
-    if (existingSession.length === 0) {
-      return NextResponse.json({ 
-        error: 'Session not found',
-        code: "SESSION_NOT_FOUND" 
-      }, { status: 404 });
-    }
+  const [[userExists], [tokenExists]] = await Promise.all([
+    db.select().from(users).where(eq(users.id, payload.userId)).limit(1),
+    db.select().from(sessions).where(eq(sessions.token, payload.token)).limit(1),
+  ]);
+  if (!userExists) throw new NotFoundError('User not found');
+  if (tokenExists) throw new ConflictError('Session token already exists');
 
-    // Delete session
-    const deleted = await db.delete(sessions)
-      .where(eq(sessions.id, parseInt(id)))
-      .returning();
+  const [created] = await db.insert(sessions).values({
+    userId: payload.userId,
+    token: payload.token,
+    expiresAt: new Date(payload.expiresAt).toISOString(),
+    createdAt: new Date().toISOString(),
+  }).returning();
 
-    return NextResponse.json({ 
-      message: 'Session deleted successfully',
-      session: deleted[0]
-    }, { status: 200 });
-  } catch (error) {
-    console.error('DELETE error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  return apiSuccess(created, 'Session created successfully', { status: 201 });
+}, { requireAuth: true, roles: ['Admin'] });
+
+export const PUT = withApiHandler(async (request) => {
+  const sessionId = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(sessionId) || sessionId <= 0) throw new BadRequestError('Valid session id is required');
+  const payload = updateSessionSchema.parse(await request.json());
+  if (Object.keys(payload).length === 0) throw new BadRequestError('At least one field is required to update a session');
+
+  const [existing] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+  if (!existing) throw new NotFoundError('Session not found');
+  if (payload.expiresAt && new Date(payload.expiresAt) <= new Date()) throw new BadRequestError('expiresAt must be a future datetime');
+
+  if (payload.userId !== undefined) {
+    const [userExists] = await db.select().from(users).where(eq(users.id, payload.userId)).limit(1);
+    if (!userExists) throw new NotFoundError('User not found');
   }
-}
+  if (payload.token !== undefined) {
+    const [tokenExists] = await db.select().from(sessions).where(eq(sessions.token, payload.token)).limit(1);
+    if (tokenExists && tokenExists.id !== sessionId) throw new ConflictError('Session token already exists');
+  }
+
+  const [updated] = await db.update(sessions).set({
+    ...(payload.userId !== undefined ? { userId: payload.userId } : {}),
+    ...(payload.token !== undefined ? { token: payload.token } : {}),
+    ...(payload.expiresAt !== undefined ? { expiresAt: new Date(payload.expiresAt).toISOString() } : {}),
+  }).where(eq(sessions.id, sessionId)).returning();
+
+  return apiSuccess(updated, 'Session updated successfully');
+}, { requireAuth: true, roles: ['Admin'] });
+
+export const DELETE = withApiHandler(async (request, context) => {
+  const sessionId = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(sessionId) || sessionId <= 0) throw new BadRequestError('Valid session id is required');
+
+  const [existing] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+  if (!existing) throw new NotFoundError('Session not found');
+
+  const user = context.auth!.user;
+  const isAdminLike = user.role === 'Admin' || user.role === 'SuperAdmin';
+  if (!isAdminLike && existing.userId !== user.id) throw new ForbiddenError('You do not have permission to delete this session');
+
+  const [deleted] = await db.delete(sessions).where(eq(sessions.id, sessionId)).returning();
+  return apiSuccess(deleted, 'Session deleted successfully');
+}, { requireAuth: true, roles: ['Employee'] });

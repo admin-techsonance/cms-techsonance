@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Plus, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface Task {
   id: number;
@@ -91,6 +92,11 @@ export function KanbanBoard({ sprintId, projectId, onTaskClick, onCreateTask }: 
 
   const handleDrop = async (status: string) => {
     if (!draggedTask) return;
+    const previousTasks = tasks;
+    const nextTasks = tasks.map((task) =>
+      task.id === draggedTask.id ? { ...task, status: status as Task['status'] } : task
+    );
+    setTasks(nextTasks);
 
     try {
       const token = localStorage.getItem('session_token');
@@ -107,10 +113,15 @@ export function KanbanBoard({ sprintId, projectId, onTaskClick, onCreateTask }: 
       });
 
       if (response.ok) {
-        fetchTasks();
+        setTasks(nextTasks);
+      } else {
+        setTasks(previousTasks);
+        const error = await response.json();
+        toast.error(error.error || 'Failed to update task');
       }
     } catch (error) {
-      console.error('Error updating task:', error);
+      setTasks(previousTasks);
+      toast.error('Failed to update task');
     } finally {
       setDraggedTask(null);
     }

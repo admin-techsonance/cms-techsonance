@@ -33,6 +33,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { dailyReportSubmissionSchema } from '@/lib/forms/schemas';
 import { hasFullAccess, type UserRole } from '@/lib/permissions';
 
 interface Project {
@@ -224,8 +225,8 @@ export default function DailyUpdatePage() {
         isExtraWork: false,
       }]);
       setAvailableStatus('present');
-    } catch (error) {
-      console.error('Error fetching existing report:', error);
+    } catch {
+      toast.error('Failed to load existing daily report');
     }
   };
 
@@ -239,8 +240,8 @@ export default function DailyUpdatePage() {
         const data = await response.json();
         setCurrentUser(data.user);
       }
-    } catch (error) {
-      console.error('Error fetching current user:', error);
+    } catch {
+      toast.error('Failed to load user profile');
     }
   };
 
@@ -284,8 +285,8 @@ export default function DailyUpdatePage() {
           }
         }
       }
-    } catch (error) {
-      console.error('Error fetching projects:', error);
+    } catch {
+      toast.error('Failed to load projects');
     } finally {
       setLoadingProjects(false);
     }
@@ -330,8 +331,8 @@ export default function DailyUpdatePage() {
           }
         }
       }
-    } catch (error) {
-      console.error('Error fetching projects list:', error);
+    } catch {
+      toast.error('Failed to load project list');
     }
   };
 
@@ -375,8 +376,8 @@ export default function DailyUpdatePage() {
           }
         }
       }
-    } catch (error) {
-      console.error('Error fetching projects list:', error);
+    } catch {
+      toast.error('Failed to load tab projects');
     } finally {
       setLoadingTabProjects(false);
     }
@@ -414,8 +415,8 @@ export default function DailyUpdatePage() {
           setEmployees(employeesData);
         }
       }
-    } catch (error) {
-      console.error('Error fetching employees:', error);
+    } catch {
+      toast.error('Failed to load employees');
     }
   };
 
@@ -438,8 +439,8 @@ export default function DailyUpdatePage() {
         const data = await response.json();
         setAllDailyReports(data);
       }
-    } catch (error) {
-      console.error('Error fetching all daily reports:', error);
+    } catch {
+      toast.error('Failed to load daily reports');
     } finally {
       setLoading(false);
     }
@@ -456,8 +457,8 @@ export default function DailyUpdatePage() {
         const data = await response.json();
         setReportProjects(data);
       }
-    } catch (error) {
-      console.error('Error fetching report projects:', error);
+    } catch {
+      toast.error('Failed to load report details');
     }
   };
 
@@ -483,8 +484,7 @@ export default function DailyUpdatePage() {
         const error = await response.json();
         toast.error(error.error || 'Failed to delete report');
       }
-    } catch (error) {
-      console.error('Error deleting report:', error);
+    } catch {
       toast.error('An error occurred while deleting the report');
     } finally {
       setDeletingReport(null);
@@ -518,15 +518,14 @@ export default function DailyUpdatePage() {
 
     try {
       const token = localStorage.getItem('session_token');
+      const validation = dailyReportSubmissionSchema.safeParse({
+        date,
+        availableStatus,
+        projectReports,
+      });
 
-      // Validate
-      if (!date) {
-        toast.error('Please select a date');
-        return;
-      }
-
-      if (projectReports.some(pr => !pr.projectId || !pr.description || pr.trackerTime <= 0)) {
-        toast.error('Please fill all project report fields');
+      if (!validation.success) {
+        toast.error(validation.error.issues[0]?.message || 'Please fill all project report fields');
         return;
       }
 
@@ -592,8 +591,7 @@ export default function DailyUpdatePage() {
         fetchAllDailyReports();
       }
       fetchMyHistory(); // Refresh history for everyone
-    } catch (error) {
-      console.error('Error submitting daily report:', error);
+    } catch {
       toast.error('An error occurred while submitting the report');
     } finally {
       setLoading(false);
@@ -628,8 +626,8 @@ export default function DailyUpdatePage() {
         // Simple heuristic for total: if we got less than pageSize, we're on last page
         setExtraWorkTotal(extraWorkPage * pageSize + data.length + (data.length === pageSize ? 1 : 0));
       }
-    } catch (error) {
-      console.error('Error fetching extra work:', error);
+    } catch {
+      toast.error('Failed to load extra work reports');
     } finally {
       setLoadingExtraWork(false);
     }
@@ -662,8 +660,8 @@ export default function DailyUpdatePage() {
         setCoveredWorkReports(data);
         setCoveredWorkTotal(coveredWorkPage * pageSize + data.length + (data.length === pageSize ? 1 : 0));
       }
-    } catch (error) {
-      console.error('Error fetching covered work:', error);
+    } catch {
+      toast.error('Failed to load covered work reports');
     } finally {
       setLoadingCoveredWork(false);
     }
@@ -712,8 +710,7 @@ export default function DailyUpdatePage() {
         setMyHistoryReports(data);
         setHistoryTotal(historyPage * pageSize + data.length + (data.length === pageSize ? 1 : 0));
       }
-    } catch (error) {
-      console.error('Error fetching history:', error);
+    } catch {
       toast.error('Failed to load history');
     } finally {
       setLoadingHistory(false);

@@ -29,6 +29,27 @@
       "when": 1763007450045,
       "tag": "0003_futuristic_deathstrike",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1775716453666,
+      "tag": "0004_slimy_baron_strucker",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1775728016726,
+      "tag": "0005_easy_boomer",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1775731800000,
+      "tag": "0006_even_frightful",
+      "breakpoints": true
     }
   ]
 }

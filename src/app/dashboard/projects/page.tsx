@@ -37,6 +37,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
+import { useDebouncedValue } from '@/lib/hooks/use-debounced-value';
 
 interface Project {
   id: number;
@@ -89,6 +90,7 @@ export default function ProjectsPage() {
   // Sorting
   const [sortBy, setSortBy] = useState<string>('default');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const debouncedSearch = useDebouncedValue(search, 300);
 
   // Reset page when search changes
   useEffect(() => {
@@ -207,8 +209,8 @@ export default function ProjectsPage() {
   };
 
   const filteredProjects = projects.filter((project) =>
-    project.name.toLowerCase().includes(search.toLowerCase()) ||
-    (project.description?.toLowerCase() || '').includes(search.toLowerCase())
+    project.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+    (project.description?.toLowerCase() || '').includes(debouncedSearch.toLowerCase())
   );
 
   // Calculate total budget

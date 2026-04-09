@@ -1,410 +1,179 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { and, asc, eq, gte, lte, or, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import { attendance, attendanceRecords, employees, users } from '@/db/schema';
-import { eq, and, gte, lte, desc, asc } from 'drizzle-orm';
-import { getCurrentUser } from '@/lib/auth';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, ForbiddenError, NotFoundError, ConflictError } from '@/server/http/errors';
+import { createAttendanceSchema, attendanceStatusSchema } from '@/server/validation/attendance-admin';
 
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+export const GET = withApiHandler(async (request, context) => {
+  const user = context.auth!.user;
+  const searchParams = new URL(request.url).searchParams;
+  const limit = Math.min(Number(searchParams.get('limit') ?? '10'), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const startDate = searchParams.get('start_date');
+  const endDate = searchParams.get('end_date');
+  const employeeIdParam = searchParams.get('employee_id');
+  const readerId = searchParams.get('reader_id');
+  const status = searchParams.get('status');
+  const source = searchParams.get('source');
 
-    const searchParams = request.nextUrl.searchParams;
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
-    const startDate = searchParams.get('start_date');
-    const endDate = searchParams.get('end_date');
-    const employeeId = searchParams.get('employee_id');
-    const readerId = searchParams.get('reader_id');
-    const status = searchParams.get('status');
-    const source = searchParams.get('source'); // 'nfc', 'legacy', or null for both
-
-    // Validate common params
-    if (startDate) {
-      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-      if (!dateRegex.test(startDate)) {
-        return NextResponse.json({ 
-          error: 'Invalid start_date format. Expected YYYY-MM-DD',
-          code: 'INVALID_DATE_FORMAT'
-        }, { status: 400 });
-      }
-    }
-
-    if (endDate) {
-      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-      if (!dateRegex.test(endDate)) {
-        return NextResponse.json({ 
-          error: 'Invalid end_date format. Expected YYYY-MM-DD',
-          code: 'INVALID_DATE_FORMAT'
-        }, { status: 400 });
-      }
-    }
-
-    if (status) {
-      const validStatuses = ['present', 'absent', 'late', 'half_day'];
-      if (!validStatuses.includes(status)) {
-        return NextResponse.json({ 
-          error: 'Invalid status. Must be one of: present, absent, late, half_day',
-          code: 'INVALID_STATUS'
-        }, { status: 400 });
-      }
-    }
-
-    let parsedEmployeeId: number | null = null;
-    if (employeeId) {
-      parsedEmployeeId = parseInt(employeeId);
-      if (isNaN(parsedEmployeeId)) {
-        return NextResponse.json({ 
-          error: 'Invalid employee_id',
-          code: 'INVALID_EMPLOYEE_ID'
-        }, { status: 400 });
-      }
-    }
-
-    // ── Query 1: New attendanceRecords table (NFC + manual entries) ──
-    let nfcResults: any[] = [];
-    if (source !== 'legacy') {
-      const nfcConditions = [];
-      if (startDate) nfcConditions.push(gte(attendanceRecords.date, startDate));
-      if (endDate) nfcConditions.push(lte(attendanceRecords.date, endDate));
-      if (parsedEmployeeId !== null) nfcConditions.push(eq(attendanceRecords.employeeId, parsedEmployeeId));
-      if (readerId) nfcConditions.push(eq(attendanceRecords.readerId, readerId));
-      if (status) nfcConditions.push(eq(attendanceRecords.status, status));
-
-      let nfcQuery = db
-        .select({
-          id: attendanceRecords.id,
-          employeeId: attendanceRecords.employeeId,
-          date: attendanceRecords.date,
-          timeIn: attendanceRecords.timeIn,
-          timeOut: attendanceRecords.timeOut,
-          locationLatitude: attendanceRecords.locationLatitude,
-          locationLongitude: attendanceRecords.locationLongitude,
-          duration: attendanceRecords.duration,
-          status: attendanceRecords.status,
-          checkInMethod: attendanceRecords.checkInMethod,
-          readerId: attendanceRecords.readerId,
-          location: attendanceRecords.location,
-          tagUid: attendanceRecords.tagUid,
-          idempotencyKey: attendanceRecords.idempotencyKey,
-          syncedAt: attendanceRecords.syncedAt,
-          metadata: attendanceRecords.metadata,
-          createdAt: attendanceRecords.createdAt,
-          employee: {
-            id: employees.id,
-            firstName: users.firstName,
-            lastName: users.lastName,
-            email: users.email,
-            department: employees.department,
-            photoUrl: users.avatarUrl,
-            status: employees.status
-          }
-        })
-        .from(attendanceRecords)
-        .leftJoin(employees, eq(attendanceRecords.employeeId, employees.id))
-        .leftJoin(users, eq(employees.userId, users.id))
-        .orderBy(asc(attendanceRecords.date), asc(attendanceRecords.timeIn))
-        .limit(limit + offset); // Fetch enough for merging
-
-      if (nfcConditions.length > 0) {
-        nfcQuery = nfcQuery.where(and(...nfcConditions)) as any;
-      }
-
-      // Map NFC results with prefixed IDs and flag
-      nfcResults = (await nfcQuery).map(r => ({ 
-        ...r, 
-        id: `nfc_${r.id}`, 
-        _source: 'nfc' 
-      }));
-    }
-
-    // ── Query 2: Old attendance table (legacy CMS entries) ──
-    let legacyResults: any[] = [];
-    if (source !== 'nfc' && !readerId) {
-      const legacyConditions = [];
-      if (startDate) legacyConditions.push(gte(attendance.date, startDate));
-      if (endDate) legacyConditions.push(lte(attendance.date, endDate));
-      if (parsedEmployeeId !== null) legacyConditions.push(eq(attendance.employeeId, parsedEmployeeId));
-      if (status) legacyConditions.push(eq(attendance.status, status));
-
-      let legacyQuery = db
-        .select({
-          id: attendance.id,
-          employeeId: attendance.employeeId,
-          date: attendance.date,
-          checkIn: attendance.checkIn,
-          checkOut: attendance.checkOut,
-          status: attendance.status,
-          notes: attendance.notes,
-          empId: employees.id,
-          firstName: users.firstName,
-          lastName: users.lastName,
-          email: users.email,
-          department: employees.department,
-          photoUrl: users.avatarUrl,
-          empStatus: employees.status,
-        })
-        .from(attendance)
-        .leftJoin(employees, eq(attendance.employeeId, employees.id))
-        .leftJoin(users, eq(employees.userId, users.id))
-        .orderBy(asc(attendance.date))
-        .limit(limit + offset);
-
-      if (legacyConditions.length > 0) {
-        legacyQuery = legacyQuery.where(and(...legacyConditions)) as any;
-      }
-
-      const rawLegacy = await legacyQuery;
-
-      // Normalize legacy records and prefix IDs
-      legacyResults = rawLegacy.map(r => ({
-        id: `legacy_${r.id}`,
-        employeeId: r.employeeId,
-        date: r.date,
-        timeIn: r.checkIn,
-        timeOut: r.checkOut,
-        locationLatitude: null,
-        locationLongitude: null,
-        duration: (r.checkIn && r.checkOut)
-          ? Math.floor((new Date(r.checkOut).getTime() - new Date(r.checkIn).getTime()) / 60000)
-          : null,
-        status: r.status,
-        checkInMethod: 'legacy',
-        readerId: null,
-        location: null,
-        tagUid: null,
-        idempotencyKey: null,
-        syncedAt: null,
-        metadata: r.notes ? JSON.stringify({ notes: r.notes }) : null,
-        createdAt: r.checkIn || r.date,
-        employee: {
-          id: r.empId,
-          firstName: r.firstName,
-          lastName: r.lastName,
-          email: r.email,
-          department: r.department,
-          photoUrl: r.photoUrl,
-          status: r.status,
-        },
-        _source: 'legacy',
-      }));
-    }
-
-    // ── De-duplicate: Prefer NFC/RFID over Legacy ──
-    // We remove legacy records if there is an RFID record for the same employee and date
-    const rfidKeys = new Set(nfcResults.map(r => `${r.employeeId}_${r.date}`));
-    const filteredLegacy = legacyResults.filter(r => !rfidKeys.has(`${r.employeeId}_${r.date}`));
-
-    // ── Merge, sort by date descending, and paginate ──
-    const merged = [...nfcResults, ...filteredLegacy]
-      .sort((a, b) => {
-        const dateCompare = (a.date || '').localeCompare(b.date || '');
-        if (dateCompare !== 0) return dateCompare;
-        return (a.timeIn || '').localeCompare(b.timeIn || '');
-      })
-      .slice(offset, offset + limit);
-
-    return NextResponse.json(merged, { status: 200 });
-  } catch (error: any) {
-    console.error('GET attendance error:', error);
-    return NextResponse.json({ 
-      error: 'Internal server error: ' + error.message 
-    }, { status: 500 });
+  let employeeId: number | null = employeeIdParam ? Number(employeeIdParam) : null;
+  const isAdminLike = user.role === 'Admin' || user.role === 'SuperAdmin' || user.role === 'Manager';
+  if (!isAdminLike) {
+    const [selfEmployee] = await db.select().from(employees).where(eq(employees.userId, user.id)).limit(1);
+    if (!selfEmployee) return NextResponse.json([]);
+    employeeId = selfEmployee.id;
   }
-}
 
-export async function POST(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  const modernConditions = [];
+  if (startDate) modernConditions.push(gte(attendanceRecords.date, startDate));
+  if (endDate) modernConditions.push(lte(attendanceRecords.date, endDate));
+  if (employeeId) modernConditions.push(eq(attendanceRecords.employeeId, employeeId));
+  if (readerId) modernConditions.push(eq(attendanceRecords.readerId, readerId));
+  if (status) modernConditions.push(eq(attendanceRecords.status, attendanceStatusSchema.parse(status)));
+
+  const legacyConditions = [];
+  if (startDate) legacyConditions.push(gte(attendance.date, startDate));
+  if (endDate) legacyConditions.push(lte(attendance.date, endDate));
+  if (employeeId) legacyConditions.push(eq(attendance.employeeId, employeeId));
+  if (status) legacyConditions.push(eq(attendance.status, attendanceStatusSchema.parse(status)));
+
+  const nfcResults = source === 'legacy' ? [] : await db.select({
+    id: attendanceRecords.id,
+    employeeId: attendanceRecords.employeeId,
+    date: attendanceRecords.date,
+    timeIn: attendanceRecords.timeIn,
+    timeOut: attendanceRecords.timeOut,
+    locationLatitude: attendanceRecords.locationLatitude,
+    locationLongitude: attendanceRecords.locationLongitude,
+    duration: attendanceRecords.duration,
+    status: attendanceRecords.status,
+    checkInMethod: attendanceRecords.checkInMethod,
+    readerId: attendanceRecords.readerId,
+    location: attendanceRecords.location,
+    tagUid: attendanceRecords.tagUid,
+    idempotencyKey: attendanceRecords.idempotencyKey,
+    syncedAt: attendanceRecords.syncedAt,
+    metadata: attendanceRecords.metadata,
+    createdAt: attendanceRecords.createdAt,
+    employee: {
+      id: employees.id,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      email: users.email,
+      department: employees.department,
+      photoUrl: users.avatarUrl,
+      status: employees.status,
+    },
+  }).from(attendanceRecords)
+    .leftJoin(employees, eq(attendanceRecords.employeeId, employees.id))
+    .leftJoin(users, eq(employees.userId, users.id))
+    .where(modernConditions.length ? and(...modernConditions) : undefined)
+    .orderBy(asc(attendanceRecords.date), asc(attendanceRecords.timeIn))
+    .limit(limit + offset);
+
+  const legacyResults = source === 'nfc' || readerId ? [] : await db.select({
+    id: attendance.id,
+    employeeId: attendance.employeeId,
+    date: attendance.date,
+    checkIn: attendance.checkIn,
+    checkOut: attendance.checkOut,
+    status: attendance.status,
+    notes: attendance.notes,
+    empId: employees.id,
+    firstName: users.firstName,
+    lastName: users.lastName,
+    email: users.email,
+    department: employees.department,
+    photoUrl: users.avatarUrl,
+  }).from(attendance)
+    .leftJoin(employees, eq(attendance.employeeId, employees.id))
+    .leftJoin(users, eq(employees.userId, users.id))
+    .where(legacyConditions.length ? and(...legacyConditions) : undefined)
+    .orderBy(asc(attendance.date))
+    .limit(limit + offset);
+
+  const normalizedModern = nfcResults.map((row) => ({ ...row, id: `nfc_${row.id}`, _source: 'nfc' }));
+  const normalizedLegacy = legacyResults.map((row) => ({
+    id: `legacy_${row.id}`,
+    employeeId: row.employeeId,
+    date: row.date,
+    timeIn: row.checkIn,
+    timeOut: row.checkOut,
+    locationLatitude: null,
+    locationLongitude: null,
+    duration: row.checkIn && row.checkOut ? Math.floor((new Date(row.checkOut).getTime() - new Date(row.checkIn).getTime()) / 60000) : null,
+    status: row.status,
+    checkInMethod: 'legacy',
+    readerId: null,
+    location: null,
+    tagUid: null,
+    idempotencyKey: null,
+    syncedAt: null,
+    metadata: row.notes ? JSON.stringify({ notes: row.notes }) : null,
+    createdAt: row.checkIn || row.date,
+    employee: {
+      id: row.empId,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      email: row.email,
+      department: row.department,
+      photoUrl: row.photoUrl,
+      status: row.status,
+    },
+    _source: 'legacy',
+  }));
+
+  const nfcKeys = new Set(normalizedModern.map((row) => `${row.employeeId}_${row.date}`));
+  const merged = [...normalizedModern, ...normalizedLegacy.filter((row) => !nfcKeys.has(`${row.employeeId}_${row.date}`))]
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.timeIn || '').localeCompare(a.timeIn || ''))
+    .slice(offset, offset + limit);
+
+  return NextResponse.json({
+    success: true,
+    data: merged,
+    message: 'Attendance fetched successfully',
+    errors: null,
+    meta: { page: Math.floor(offset / limit) + 1, limit, total: merged.length },
+  });
+}, { requireAuth: true, roles: ['Employee'] });
+
+export const POST = withApiHandler(async (request, context) => {
+  const payload = createAttendanceSchema.parse(await request.json());
+  const user = context.auth!.user;
+  const isAdminLike = user.role === 'Admin' || user.role === 'SuperAdmin' || user.role === 'Manager';
+  if (!isAdminLike) {
+    const [selfEmployee] = await db.select().from(employees).where(eq(employees.userId, user.id)).limit(1);
+    if (!selfEmployee || selfEmployee.id !== payload.employeeId) {
+      throw new ForbiddenError('Insufficient permissions. You can only log your own attendance.');
     }
-
-    const body = await request.json();
-    let { employeeId, date, timeIn, timeOut, duration, location, readerId, notes, status } = body;
-
-    if (!employeeId) {
-      return NextResponse.json({ 
-        error: 'employeeId is required',
-        code: 'MISSING_EMPLOYEE_ID'
-      }, { status: 400 });
-    }
-
-    // Parse employeeId to number
-    const parsedEmployeeId = parseInt(employeeId);
-    if (isNaN(parsedEmployeeId)) {
-      return NextResponse.json({ 
-        error: 'Invalid employeeId. Must be a number.',
-        code: 'INVALID_EMPLOYEE_ID'
-      }, { status: 400 });
-    }
-
-    // Permissions check - including project_manager for consolidated view
-    const isAdmin = ['admin', 'cms_administrator', 'hr_manager', 'project_manager', 'management'].includes(user.role);
-    
-    if (!isAdmin) {
-      // If not admin, check if the employeeId belongs to the current user
-      const userEmployee = await db.select()
-        .from(employees)
-        .where(eq(employees.userId, user.id))
-        .limit(1);
-        
-      if (userEmployee.length === 0 || userEmployee[0].id !== parsedEmployeeId) {
-        return NextResponse.json({ 
-          error: 'Insufficient permissions. You can only log your own attendance.',
-          code: 'FORBIDDEN'
-        }, { status: 403 });
-      }
-    }
-
-    if ('userId' in body || 'user_id' in body) {
-      return NextResponse.json({ 
-        error: "User ID cannot be provided in request body",
-        code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
-
-    if (!date) {
-      return NextResponse.json({ 
-        error: 'date is required',
-        code: 'MISSING_DATE'
-      }, { status: 400 });
-    }
-
-    if (!timeIn) {
-      return NextResponse.json({ 
-        error: 'timeIn is required',
-        code: 'MISSING_TIME_IN'
-      }, { status: 400 });
-    }
-
-    if (!status) {
-      return NextResponse.json({ 
-        error: 'status is required',
-        code: 'MISSING_STATUS'
-      }, { status: 400 });
-    }
-
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(date)) {
-      return NextResponse.json({ 
-        error: 'Invalid date format. Expected YYYY-MM-DD',
-        code: 'INVALID_DATE_FORMAT'
-      }, { status: 400 });
-    }
-
-    try {
-      new Date(timeIn).toISOString();
-    } catch (e) {
-      return NextResponse.json({ 
-        error: 'Invalid timeIn format. Expected ISO timestamp',
-        code: 'INVALID_TIME_IN'
-      }, { status: 400 });
-    }
-
-    if (timeOut) {
-      try {
-        new Date(timeOut).toISOString();
-      } catch (e) {
-        return NextResponse.json({ 
-          error: 'Invalid timeOut format. Expected ISO timestamp',
-          code: 'INVALID_TIME_OUT'
-        }, { status: 400 });
-      }
-    }
-
-    const validStatuses = ['present', 'absent', 'late', 'half_day'];
-    if (!validStatuses.includes(status)) {
-      return NextResponse.json({ 
-        error: 'Invalid status. Must be one of: present, absent, late, half_day',
-        code: 'INVALID_STATUS'
-      }, { status: 400 });
-    }
-
-    if (duration !== undefined && duration !== null) {
-      if (typeof duration !== 'number' || duration < 0) {
-        return NextResponse.json({ 
-          error: 'Duration must be a non-negative integer',
-          code: 'INVALID_DURATION'
-        }, { status: 400 });
-      }
-    }
-
-    const employeeExists = await db
-      .select()
-      .from(employees)
-      .where(eq(employees.id, parsedEmployeeId))
-      .limit(1);
-
-    if (employeeExists.length === 0) {
-      return NextResponse.json({ 
-        error: 'Employee not found',
-        code: 'EMPLOYEE_NOT_FOUND'
-      }, { status: 400 });
-    }
-
-    // Check for existing attendance in BOTH modern and legacy tables
-    const existingModern = await db
-      .select({ id: attendanceRecords.id })
-      .from(attendanceRecords)
-      .where(
-        and(
-          eq(attendanceRecords.employeeId, parsedEmployeeId),
-          eq(attendanceRecords.date, date)
-        )
-      )
-      .limit(1);
-
-    const existingLegacy = await db
-      .select({ id: attendance.id })
-      .from(attendance)
-      .where(
-        and(
-          eq(attendance.employeeId, parsedEmployeeId),
-          eq(attendance.date, date)
-        )
-      )
-      .limit(1);
-
-    if (existingModern.length > 0 || existingLegacy.length > 0) {
-      return NextResponse.json({ 
-        error: 'Attendance record already exists for this employee on this date. You cannot log a second record for the same day.',
-        code: 'DUPLICATE_ENTRY'
-      }, { status: 400 });
-    }
-
-    let calculatedDuration = duration;
-    if (!calculatedDuration && timeOut) {
-      const timeInMs = new Date(timeIn).getTime();
-      const timeOutMs = new Date(timeOut).getTime();
-      calculatedDuration = Math.floor((timeOutMs - timeInMs) / 1000 / 60);
-    }
-
-    const metadata = notes ? JSON.stringify({ notes, createdBy: user.id }) : JSON.stringify({ createdBy: user.id });
-
-    const newAttendance = await db.insert(attendanceRecords)
-      .values({
-        employeeId: parsedEmployeeId,
-        date,
-        timeIn,
-        timeOut: timeOut || null,
-        duration: calculatedDuration || null,
-        status,
-        checkInMethod: 'manual',
-        location: location || null,
-        readerId: readerId || null,
-        metadata,
-        createdAt: new Date().toISOString()
-      })
-      .returning();
-
-    return NextResponse.json(newAttendance[0], { status: 201 });
-  } catch (error: any) {
-    console.error('POST attendance error:', error);
-    return NextResponse.json({ 
-      error: 'Internal server error: ' + error.message 
-    }, { status: 500 });
   }
-}
+
+  const [employee] = await db.select().from(employees).where(eq(employees.id, payload.employeeId)).limit(1);
+  if (!employee) throw new NotFoundError('Employee not found');
+
+  const [existingModern] = await db.select({ id: attendanceRecords.id }).from(attendanceRecords).where(and(eq(attendanceRecords.employeeId, payload.employeeId), eq(attendanceRecords.date, payload.date))).limit(1);
+  const [existingLegacy] = await db.select({ id: attendance.id }).from(attendance).where(and(eq(attendance.employeeId, payload.employeeId), eq(attendance.date, payload.date))).limit(1);
+  if (existingModern || existingLegacy) {
+    throw new ConflictError('Attendance record already exists for this employee on this date.');
+  }
+
+  const duration = payload.duration ?? (payload.timeOut ? Math.floor((new Date(payload.timeOut).getTime() - new Date(payload.timeIn).getTime()) / 60000) : null);
+  const [created] = await db.insert(attendanceRecords).values({
+    employeeId: payload.employeeId,
+    date: payload.date,
+    timeIn: payload.timeIn,
+    timeOut: payload.timeOut ?? null,
+    duration,
+    status: payload.status,
+    checkInMethod: 'manual',
+    location: payload.location ?? null,
+    readerId: payload.readerId ?? null,
+    metadata: JSON.stringify(payload.notes ? { notes: payload.notes, createdBy: user.id } : { createdBy: user.id }),
+    createdAt: new Date().toISOString(),
+  }).returning();
+
+  return NextResponse.json(created, { status: 201 });
+}, { requireAuth: true, roles: ['Employee'] });
+

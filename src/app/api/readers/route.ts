@@ -1,166 +1,62 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { and, asc, eq, like, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import { readerDevices } from '@/db/schema';
-import { eq, like, and, or, asc } from 'drizzle-orm';
-import { getCurrentUser } from '@/lib/auth';
+import { withApiHandler } from '@/server/http/handler';
+import { ConflictError } from '@/server/http/errors';
+import { apiSuccess } from '@/server/http/response';
+import { createReaderSchema, readerStatusSchema, readerTypeSchema } from '@/server/validation/devices';
 
-const VALID_TYPES = ['usb', 'ethernet', 'mobile'];
-const VALID_STATUSES = ['online', 'offline', 'maintenance'];
+export const GET = withApiHandler(async (request) => {
+  const searchParams = new URL(request.url).searchParams;
+  const limit = Math.min(Math.max(Number(searchParams.get('limit') ?? '10'), 1), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const status = searchParams.get('status');
+  const type = searchParams.get('type');
+  const location = searchParams.get('location');
+  const conditions = [];
 
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+  if (status) conditions.push(eq(readerDevices.status, readerStatusSchema.parse(status)));
+  if (type) conditions.push(eq(readerDevices.type, readerTypeSchema.parse(type)));
+  if (location) conditions.push(like(readerDevices.location, `%${location}%`));
 
-    // Role check: Admin, CMS Admin, or HR
-    if (user.role !== 'admin' && user.role !== 'cms_administrator' && user.role !== 'hr_manager') {
-      return NextResponse.json({ 
-        error: 'Insufficient permissions. Admin or HR role required.',
-        code: 'INSUFFICIENT_PERMISSIONS' 
-      }, { status: 403 });
-    }
-
-    const searchParams = request.nextUrl.searchParams;
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
-    const statusFilter = searchParams.get('status');
-    const typeFilter = searchParams.get('type');
-    const locationFilter = searchParams.get('location');
-
-    const conditions = [];
-
-    if (statusFilter) {
-      if (!VALID_STATUSES.includes(statusFilter)) {
-        return NextResponse.json({ 
-          error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`,
-          code: 'INVALID_STATUS' 
-        }, { status: 400 });
-      }
-      conditions.push(eq(readerDevices.status, statusFilter));
-    }
-
-    if (typeFilter) {
-      if (!VALID_TYPES.includes(typeFilter)) {
-        return NextResponse.json({ 
-          error: `Invalid type. Must be one of: ${VALID_TYPES.join(', ')}`,
-          code: 'INVALID_TYPE' 
-        }, { status: 400 });
-      }
-      conditions.push(eq(readerDevices.type, typeFilter));
-    }
-
-    if (locationFilter) {
-      conditions.push(like(readerDevices.location, `%${locationFilter}%`));
-    }
-
-    const results = await db.select()
-      .from(readerDevices)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(asc(readerDevices.name))
-      .limit(limit)
-      .offset(offset);
-
-    return NextResponse.json(results, { status: 200 });
-  } catch (error) {
-    console.error('GET error:', error);
-    return NextResponse.json({ 
-      error: 'Internal server error: ' + (error instanceof Error ? error.message : 'Unknown error')
-    }, { status: 500 });
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+  let query = db.select().from(readerDevices);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(readerDevices);
+  if (whereClause) {
+    query = query.where(whereClause) as typeof query;
+    countQuery = countQuery.where(whereClause) as typeof countQuery;
   }
-}
 
-export async function POST(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+  const [rows, countRows] = await Promise.all([
+    query.orderBy(asc(readerDevices.name)).limit(limit).offset(offset),
+    countQuery,
+  ]);
 
-    // Role check: Admin or CMS Admin
-    if (user.role !== 'admin' && user.role !== 'cms_administrator') {
-      return NextResponse.json({ 
-        error: 'Insufficient permissions. Admin role required.',
-        code: 'INSUFFICIENT_PERMISSIONS' 
-      }, { status: 403 });
-    }
+  return apiSuccess(rows, 'Reader devices fetched successfully', {
+    meta: { page: Math.floor(offset / limit) + 1, limit, total: Number(countRows[0]?.count ?? 0) },
+  });
+}, { requireAuth: true, roles: ['Admin'] });
 
-    const body = await request.json();
-    const { readerId, name, location, type, ipAddress, config } = body;
-
-    if (!readerId || typeof readerId !== 'string' || readerId.trim() === '') {
-      return NextResponse.json({ 
-        error: 'readerId is required and must be a non-empty string',
-        code: 'MISSING_READER_ID' 
-      }, { status: 400 });
-    }
-
-    if (!name || typeof name !== 'string' || name.trim() === '') {
-      return NextResponse.json({ 
-        error: 'name is required and must be a non-empty string',
-        code: 'MISSING_NAME' 
-      }, { status: 400 });
-    }
-
-    if (!location || typeof location !== 'string' || location.trim() === '') {
-      return NextResponse.json({ 
-        error: 'location is required and must be a non-empty string',
-        code: 'MISSING_LOCATION' 
-      }, { status: 400 });
-    }
-
-    if (!type || !VALID_TYPES.includes(type)) {
-      return NextResponse.json({ 
-        error: `type is required and must be one of: ${VALID_TYPES.join(', ')}`,
-        code: 'INVALID_TYPE' 
-      }, { status: 400 });
-    }
-
-    if (config && typeof config === 'string') {
-      try {
-        JSON.parse(config);
-      } catch {
-        return NextResponse.json({ 
-          error: 'config must be a valid JSON string',
-          code: 'INVALID_CONFIG_JSON' 
-        }, { status: 400 });
-      }
-    }
-
-    const existingReader = await db.select()
-      .from(readerDevices)
-      .where(eq(readerDevices.readerId, readerId.trim()))
-      .limit(1);
-
-    if (existingReader.length > 0) {
-      return NextResponse.json({ 
-        error: 'A reader device with this readerId already exists',
-        code: 'READER_ID_EXISTS' 
-      }, { status: 400 });
-    }
-
-    const now = new Date().toISOString();
-    const newReader = await db.insert(readerDevices)
-      .values({
-        readerId: readerId.trim(),
-        name: name.trim(),
-        location: location.trim(),
-        type,
-        status: 'offline',
-        ipAddress: ipAddress?.trim() || null,
-        config: config || null,
-        lastHeartbeat: null,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
-
-    return NextResponse.json(newReader[0], { status: 201 });
-  } catch (error) {
-    console.error('POST error:', error);
-    return NextResponse.json({ 
-      error: 'Internal server error: ' + (error instanceof Error ? error.message : 'Unknown error')
-    }, { status: 500 });
+export const POST = withApiHandler(async (request) => {
+  const payload = createReaderSchema.parse(await request.json());
+  const [existing] = await db.select().from(readerDevices).where(eq(readerDevices.readerId, payload.readerId)).limit(1);
+  if (existing) {
+    throw new ConflictError('A reader device with this readerId already exists');
   }
-}
+
+  const now = new Date().toISOString();
+  const [created] = await db.insert(readerDevices).values({
+    readerId: payload.readerId,
+    name: payload.name,
+    location: payload.location,
+    type: payload.type,
+    status: 'offline',
+    ipAddress: payload.ipAddress ?? null,
+    config: payload.config == null ? null : typeof payload.config === 'string' ? payload.config : JSON.stringify(payload.config),
+    lastHeartbeat: null,
+    createdAt: now,
+    updatedAt: now,
+  }).returning();
+
+  return apiSuccess(created, 'Reader device created successfully', { status: 201 });
+}, { requireAuth: true, roles: ['Admin'] });

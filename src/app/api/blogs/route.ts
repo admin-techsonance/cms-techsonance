@@ -1,523 +1,157 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { and, asc, desc, eq, like, or, sql } from 'drizzle-orm';
 import { db } from '@/db';
-import { blogs, users } from '@/db/schema';
-import { eq, like, and, or, desc, asc, sql } from 'drizzle-orm';
-import { getCurrentUser } from '@/lib/auth';
-import { safeErrorMessage } from '@/lib/constants';
+import { blogs } from '@/db/schema';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, ConflictError, NotFoundError } from '@/server/http/errors';
+import { createBlogSchema, updateBlogSchema } from '@/server/validation/content';
 
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+export const GET = withApiHandler(async (request, context) => {
+  const searchParams = new URL(request.url).searchParams;
+  const id = searchParams.get('id');
+  const slug = searchParams.get('slug');
+  const isAdminLike = context.auth?.user.role === 'Admin' || context.auth?.user.role === 'SuperAdmin';
+
+  if (id || slug) {
+    const conditions = [id ? eq(blogs.id, Number(id)) : eq(blogs.slug, String(slug))];
+    if (!isAdminLike) conditions.push(eq(blogs.authorId, context.auth!.user.id));
+
+    const [blog] = await db.select().from(blogs).where(and(...conditions)).limit(1);
+    if (!blog) throw new NotFoundError('Blog not found');
+
+    if (slug) {
+      await db.update(blogs).set({ views: (blog.views || 0) + 1 }).where(eq(blogs.id, blog.id));
+      blog.views = (blog.views || 0) + 1;
     }
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-    const slug = searchParams.get('slug');
-
-    // Single record by ID or slug
-    if (id || slug) {
-      let whereCondition;
-      
-      if (id) {
-        const blogId = parseInt(id);
-        if (isNaN(blogId)) {
-          return NextResponse.json({ 
-            error: 'Valid ID is required',
-            code: 'INVALID_ID' 
-          }, { status: 400 });
-        }
-        whereCondition = and(
-          eq(blogs.id, blogId),
-          eq(blogs.authorId, user.id)
-        );
-      } else if (slug) {
-        whereCondition = and(
-          eq(blogs.slug, slug),
-          eq(blogs.authorId, user.id)
-        );
-      }
-
-      const blog = await db.select()
-        .from(blogs)
-        .where(whereCondition)
-        .limit(1);
-
-      if (blog.length === 0) {
-        return NextResponse.json({ error: 'Blog not found' }, { status: 404 });
-      }
-
-      // Increment views when retrieving by slug
-      if (slug) {
-        await db.update(blogs)
-          .set({ views: (blog[0].views || 0) + 1 })
-          .where(and(
-            eq(blogs.slug, slug),
-            eq(blogs.authorId, user.id)
-          ));
-        
-        blog[0].views = (blog[0].views || 0) + 1;
-      }
-
-      return NextResponse.json(blog[0], { status: 200 });
-    }
-
-    // List with pagination, search, and filters
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
-    const search = searchParams.get('search');
-    const authorId = searchParams.get('authorId');
-    const category = searchParams.get('category');
-    const status = searchParams.get('status');
-    const tag = searchParams.get('tag');
-    const sort = searchParams.get('sort') ?? 'publishedAt';
-    const order = searchParams.get('order') ?? 'desc';
-
-    let conditions = [eq(blogs.authorId, user.id)];
-
-    // Search across title, excerpt, and content
-    if (search) {
-      conditions.push(
-        or(
-          like(blogs.title, `%${search}%`),
-          like(blogs.excerpt, `%${search}%`),
-          like(blogs.content, `%${search}%`)
-        )
-      );
-    }
-
-    // Filter by authorId
-    if (authorId) {
-      const authorIdInt = parseInt(authorId);
-      if (!isNaN(authorIdInt)) {
-        conditions.push(eq(blogs.authorId, authorIdInt));
-      }
-    }
-
-    // Filter by category
-    if (category) {
-      conditions.push(eq(blogs.category, category));
-    }
-
-    // Filter by status
-    if (status) {
-      conditions.push(eq(blogs.status, status));
-    }
-
-    let query = db.select().from(blogs);
-
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-
-    // Apply sorting
-    if (sort === 'publishedAt') {
-      query = query.orderBy(order === 'asc' ? asc(blogs.publishedAt) : desc(blogs.publishedAt));
-    } else if (sort === 'views') {
-      query = query.orderBy(order === 'asc' ? asc(blogs.views) : desc(blogs.views));
-    } else if (sort === 'createdAt') {
-      query = query.orderBy(order === 'asc' ? asc(blogs.createdAt) : desc(blogs.createdAt));
-    }
-
-    let results = await query.limit(limit).offset(offset);
-
-    // Filter by tag if specified (JSON array search)
-    if (tag && results.length > 0) {
-      results = results.filter(blog => {
-        if (!blog.tags) return false;
-        try {
-          const tags = typeof blog.tags === 'string' ? JSON.parse(blog.tags) : blog.tags;
-          return Array.isArray(tags) && tags.includes(tag);
-        } catch {
-          return false;
-        }
-      });
-    }
-
-    return NextResponse.json(results, { status: 200 });
-  } catch (error) {
-    console.error('GET error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+    return NextResponse.json(blog);
   }
-}
 
-export async function POST(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+  const limit = Math.min(Number(searchParams.get('limit') ?? '10'), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const sort = searchParams.get('sort') ?? 'publishedAt';
+  const order = searchParams.get('order') === 'asc' ? asc : desc;
+  const search = searchParams.get('search');
+  const authorId = searchParams.get('authorId');
+  const category = searchParams.get('category');
+  const status = searchParams.get('status');
+  const tag = searchParams.get('tag');
+  const conditions = [];
 
-    const body = await request.json();
+  if (!isAdminLike) conditions.push(eq(blogs.authorId, context.auth!.user.id));
+  if (search) conditions.push(or(like(blogs.title, `%${search}%`), like(blogs.excerpt, `%${search}%`), like(blogs.content, `%${search}%`)));
+  if (authorId) conditions.push(eq(blogs.authorId, Number(authorId)));
+  if (category) conditions.push(eq(blogs.category, category));
+  if (status) conditions.push(eq(blogs.status, status));
 
-    // Security check: reject if userId/authorId provided in body
-    if ('userId' in body || 'user_id' in body || 'authorId' in body || 'author_id' in body) {
-      return NextResponse.json({ 
-        error: "User ID cannot be provided in request body",
-        code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+  let query = db.select().from(blogs);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(blogs);
+  if (whereClause) {
+    query = query.where(whereClause) as typeof query;
+    countQuery = countQuery.where(whereClause) as typeof countQuery;
+  }
 
-    const { title, slug, content, category, excerpt, featuredImage, tags, status } = body;
+  let results = await query.orderBy(
+    sort === 'views' ? order(blogs.views) :
+    sort === 'createdAt' ? order(blogs.createdAt) :
+    order(blogs.publishedAt)
+  ).limit(limit).offset(offset);
 
-    // Validate required fields
-    if (!title || !title.trim()) {
-      return NextResponse.json({ 
-        error: "Title is required",
-        code: "MISSING_TITLE" 
-      }, { status: 400 });
-    }
-
-    if (!slug || !slug.trim()) {
-      return NextResponse.json({ 
-        error: "Slug is required",
-        code: "MISSING_SLUG" 
-      }, { status: 400 });
-    }
-
-    if (!content || !content.trim()) {
-      return NextResponse.json({ 
-        error: "Content is required",
-        code: "MISSING_CONTENT" 
-      }, { status: 400 });
-    }
-
-    if (!category || !category.trim()) {
-      return NextResponse.json({ 
-        error: "Category is required",
-        code: "MISSING_CATEGORY" 
-      }, { status: 400 });
-    }
-
-    // Validate slug is URL-friendly
-    const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-    if (!slugRegex.test(slug.trim())) {
-      return NextResponse.json({ 
-        error: "Slug must be URL-friendly (lowercase letters, numbers, and hyphens only)",
-        code: "INVALID_SLUG_FORMAT" 
-      }, { status: 400 });
-    }
-
-    // Check slug uniqueness
-    const existingSlug = await db.select()
-      .from(blogs)
-      .where(eq(blogs.slug, slug.trim()))
-      .limit(1);
-
-    if (existingSlug.length > 0) {
-      return NextResponse.json({ 
-        error: "Slug already exists",
-        code: "DUPLICATE_SLUG" 
-      }, { status: 400 });
-    }
-
-    // Validate status enum
-    const validStatuses = ['draft', 'published'];
-    const blogStatus = status || 'draft';
-    if (!validStatuses.includes(blogStatus)) {
-      return NextResponse.json({ 
-        error: "Status must be either 'draft' or 'published'",
-        code: "INVALID_STATUS" 
-      }, { status: 400 });
-    }
-
-    // Validate and parse tags as JSON array
-    let parsedTags = null;
-    if (tags) {
+  if (tag) {
+    results = results.filter((blog) => {
       try {
-        parsedTags = typeof tags === 'string' ? JSON.parse(tags) : tags;
-        if (!Array.isArray(parsedTags)) {
-          return NextResponse.json({ 
-            error: "Tags must be a JSON array",
-            code: "INVALID_TAGS_FORMAT" 
-          }, { status: 400 });
-        }
+        const tags = typeof blog.tags === 'string' ? JSON.parse(blog.tags) : blog.tags;
+        return Array.isArray(tags) && tags.includes(tag);
       } catch {
-        return NextResponse.json({ 
-          error: "Tags must be valid JSON array",
-          code: "INVALID_TAGS_JSON" 
-        }, { status: 400 });
+        return false;
       }
-    }
-
-    // Verify user exists (authorId validation)
-    const userExists = await db.select()
-      .from(users)
-      .where(eq(users.id, user.id))
-      .limit(1);
-
-    if (userExists.length === 0) {
-      return NextResponse.json({ 
-        error: "Invalid author ID",
-        code: "INVALID_AUTHOR_ID" 
-      }, { status: 400 });
-    }
-
-    const now = new Date().toISOString();
-
-    // Prepare insert data
-    const insertData: any = {
-      title: title.trim(),
-      slug: slug.trim(),
-      content: content.trim(),
-      category: category.trim(),
-      authorId: user.id,
-      status: blogStatus,
-      views: 0,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    if (excerpt) insertData.excerpt = excerpt.trim();
-    if (featuredImage) insertData.featuredImage = featuredImage.trim();
-    if (parsedTags) insertData.tags = JSON.stringify(parsedTags);
-    if (blogStatus === 'published') insertData.publishedAt = now;
-
-    const newBlog = await db.insert(blogs)
-      .values(insertData)
-      .returning();
-
-    return NextResponse.json(newBlog[0], { status: 201 });
-  } catch (error) {
-    console.error('POST error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+    });
   }
-}
 
-export async function PUT(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+  const countRows = await countQuery;
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+  return NextResponse.json({
+    success: true,
+    data: results,
+    message: 'Blogs fetched successfully',
+    errors: null,
+    meta: {
+      page: Math.floor(offset / limit) + 1,
+      limit,
+      total: Number(countRows[0]?.count ?? 0),
+    },
+  });
+}, { requireAuth: true, roles: ['Employee'] });
 
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
+export const POST = withApiHandler(async (request, context) => {
+  const payload = createBlogSchema.parse(await request.json());
+  const [slugOwner] = await db.select().from(blogs).where(eq(blogs.slug, payload.slug.trim())).limit(1);
+  if (slugOwner) throw new ConflictError('Slug already exists');
 
-    const blogId = parseInt(id);
-    const body = await request.json();
+  const now = new Date().toISOString();
+  const [created] = await db.insert(blogs).values({
+    title: payload.title.trim(),
+    slug: payload.slug.trim(),
+    content: payload.content.trim(),
+    category: payload.category.trim(),
+    excerpt: payload.excerpt?.trim() || null,
+    featuredImage: payload.featuredImage?.trim() || null,
+    tags: payload.tags ? JSON.stringify(payload.tags) : null,
+    status: payload.status ?? 'draft',
+    authorId: context.auth!.user.id,
+    views: 0,
+    createdAt: now,
+    updatedAt: now,
+    publishedAt: (payload.status ?? 'draft') === 'published' ? now : null,
+  }).returning();
 
-    // Security check: reject if userId/authorId provided in body
-    if ('userId' in body || 'user_id' in body || 'authorId' in body || 'author_id' in body) {
-      return NextResponse.json({ 
-        error: "User ID cannot be provided in request body",
-        code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
+  return NextResponse.json(created, { status: 201 });
+}, { requireAuth: true, roles: ['Employee'] });
 
-    // Check if blog exists and belongs to user
-    const existingBlog = await db.select()
-      .from(blogs)
-      .where(and(
-        eq(blogs.id, blogId),
-        eq(blogs.authorId, user.id)
-      ))
-      .limit(1);
+export const PUT = withApiHandler(async (request, context) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid blog id is required');
 
-    if (existingBlog.length === 0) {
-      return NextResponse.json({ error: 'Blog not found' }, { status: 404 });
-    }
+  const payload = updateBlogSchema.parse(await request.json());
+  const isAdminLike = context.auth?.user.role === 'Admin' || context.auth?.user.role === 'SuperAdmin';
+  const conditions = [eq(blogs.id, id)];
+  if (!isAdminLike) conditions.push(eq(blogs.authorId, context.auth!.user.id));
 
-    const { title, slug, content, category, excerpt, featuredImage, tags, status } = body;
+  const [existingBlog] = await db.select().from(blogs).where(and(...conditions)).limit(1);
+  if (!existingBlog) throw new NotFoundError('Blog not found');
 
-    const updates: any = {
-      updatedAt: new Date().toISOString()
-    };
-
-    // Validate and update title
-    if (title !== undefined) {
-      if (!title.trim()) {
-        return NextResponse.json({ 
-          error: "Title cannot be empty",
-          code: "EMPTY_TITLE" 
-        }, { status: 400 });
-      }
-      updates.title = title.trim();
-    }
-
-    // Validate and update slug
-    if (slug !== undefined) {
-      if (!slug.trim()) {
-        return NextResponse.json({ 
-          error: "Slug cannot be empty",
-          code: "EMPTY_SLUG" 
-        }, { status: 400 });
-      }
-
-      const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-      if (!slugRegex.test(slug.trim())) {
-        return NextResponse.json({ 
-          error: "Slug must be URL-friendly (lowercase letters, numbers, and hyphens only)",
-          code: "INVALID_SLUG_FORMAT" 
-        }, { status: 400 });
-      }
-
-      // Check slug uniqueness (excluding current blog)
-      const existingSlug = await db.select()
-        .from(blogs)
-        .where(and(
-          eq(blogs.slug, slug.trim()),
-          sql`${blogs.id} != ${blogId}`
-        ))
-        .limit(1);
-
-      if (existingSlug.length > 0) {
-        return NextResponse.json({ 
-          error: "Slug already exists",
-          code: "DUPLICATE_SLUG" 
-        }, { status: 400 });
-      }
-
-      updates.slug = slug.trim();
-    }
-
-    // Validate and update content
-    if (content !== undefined) {
-      if (!content.trim()) {
-        return NextResponse.json({ 
-          error: "Content cannot be empty",
-          code: "EMPTY_CONTENT" 
-        }, { status: 400 });
-      }
-      updates.content = content.trim();
-    }
-
-    // Validate and update category
-    if (category !== undefined) {
-      if (!category.trim()) {
-        return NextResponse.json({ 
-          error: "Category cannot be empty",
-          code: "EMPTY_CATEGORY" 
-        }, { status: 400 });
-      }
-      updates.category = category.trim();
-    }
-
-    // Update optional fields
-    if (excerpt !== undefined) updates.excerpt = excerpt.trim();
-    if (featuredImage !== undefined) updates.featuredImage = featuredImage.trim();
-
-    // Validate and update tags
-    if (tags !== undefined) {
-      try {
-        const parsedTags = typeof tags === 'string' ? JSON.parse(tags) : tags;
-        if (!Array.isArray(parsedTags)) {
-          return NextResponse.json({ 
-            error: "Tags must be a JSON array",
-            code: "INVALID_TAGS_FORMAT" 
-          }, { status: 400 });
-        }
-        updates.tags = JSON.stringify(parsedTags);
-      } catch {
-        return NextResponse.json({ 
-          error: "Tags must be valid JSON array",
-          code: "INVALID_TAGS_JSON" 
-        }, { status: 400 });
-      }
-    }
-
-    // Validate and update status
-    if (status !== undefined) {
-      const validStatuses = ['draft', 'published'];
-      if (!validStatuses.includes(status)) {
-        return NextResponse.json({ 
-          error: "Status must be either 'draft' or 'published'",
-          code: "INVALID_STATUS" 
-        }, { status: 400 });
-      }
-
-      updates.status = status;
-
-      // Set publishedAt when status changes to published
-      if (status === 'published' && existingBlog[0].status !== 'published') {
-        updates.publishedAt = new Date().toISOString();
-      }
-    }
-
-    const updatedBlog = await db.update(blogs)
-      .set(updates)
-      .where(and(
-        eq(blogs.id, blogId),
-        eq(blogs.authorId, user.id)
-      ))
-      .returning();
-
-    if (updatedBlog.length === 0) {
-      return NextResponse.json({ error: 'Blog not found' }, { status: 404 });
-    }
-
-    return NextResponse.json(updatedBlog[0], { status: 200 });
-  } catch (error) {
-    console.error('PUT error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  if (payload.slug && payload.slug !== existingBlog.slug) {
+    const [slugOwner] = await db.select().from(blogs).where(eq(blogs.slug, payload.slug)).limit(1);
+    if (slugOwner && slugOwner.id !== id) throw new ConflictError('Slug already exists');
   }
-}
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+  const nextStatus = payload.status ?? existingBlog.status;
+  const [updated] = await db.update(blogs).set({
+    ...(payload.title !== undefined ? { title: payload.title.trim() } : {}),
+    ...(payload.slug !== undefined ? { slug: payload.slug.trim() } : {}),
+    ...(payload.content !== undefined ? { content: payload.content.trim() } : {}),
+    ...(payload.category !== undefined ? { category: payload.category.trim() } : {}),
+    ...(payload.excerpt !== undefined ? { excerpt: payload.excerpt?.trim() || null } : {}),
+    ...(payload.featuredImage !== undefined ? { featuredImage: payload.featuredImage?.trim() || null } : {}),
+    ...(payload.tags !== undefined ? { tags: payload.tags ? JSON.stringify(payload.tags) : null } : {}),
+    ...(payload.status !== undefined ? { status: payload.status } : {}),
+    ...(nextStatus === 'published' && !existingBlog.publishedAt ? { publishedAt: new Date().toISOString() } : {}),
+    updatedAt: new Date().toISOString(),
+  }).where(eq(blogs.id, id)).returning();
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+  return NextResponse.json(updated);
+}, { requireAuth: true, roles: ['Employee'] });
 
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
+export const DELETE = withApiHandler(async (request, context) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid blog id is required');
 
-    const blogId = parseInt(id);
+  const isAdminLike = context.auth?.user.role === 'Admin' || context.auth?.user.role === 'SuperAdmin';
+  const conditions = [eq(blogs.id, id)];
+  if (!isAdminLike) conditions.push(eq(blogs.authorId, context.auth!.user.id));
 
-    // Check if blog exists and belongs to user
-    const existingBlog = await db.select()
-      .from(blogs)
-      .where(and(
-        eq(blogs.id, blogId),
-        eq(blogs.authorId, user.id)
-      ))
-      .limit(1);
-
-    if (existingBlog.length === 0) {
-      return NextResponse.json({ error: 'Blog not found' }, { status: 404 });
-    }
-
-    const deleted = await db.delete(blogs)
-      .where(and(
-        eq(blogs.id, blogId),
-        eq(blogs.authorId, user.id)
-      ))
-      .returning();
-
-    if (deleted.length === 0) {
-      return NextResponse.json({ error: 'Blog not found' }, { status: 404 });
-    }
-
-    return NextResponse.json({ 
-      message: 'Blog deleted successfully',
-      blog: deleted[0]
-    }, { status: 200 });
-  } catch (error) {
-    console.error('DELETE error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
-  }
-}
+  const [deleted] = await db.delete(blogs).where(and(...conditions)).returning();
+  if (!deleted) throw new NotFoundError('Blog not found');
+  return NextResponse.json({ message: 'Blog deleted successfully', blog: deleted });
+}, { requireAuth: true, roles: ['Employee'] });

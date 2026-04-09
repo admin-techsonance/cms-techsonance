@@ -1,144 +1,85 @@
-
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { desc, eq, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import { purchases, vendors } from '@/db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, NotFoundError } from '@/server/http/errors';
+import { createPurchaseSchema, updatePurchaseSchema } from '@/server/validation/procurement';
 
-export async function GET(request: NextRequest) {
-    try {
-        const searchParams = request.nextUrl.searchParams;
-        const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : undefined;
-        const id = searchParams.get('id') ? parseInt(searchParams.get('id')!) : undefined;
-        const vendorId = searchParams.get('vendorId') ? parseInt(searchParams.get('vendorId')!) : undefined;
-
-        if (id) {
-            const result = await db.select({
-                purchase: purchases,
-                vendor: vendors
-            })
-                .from(purchases)
-                .leftJoin(vendors, eq(purchases.vendorId, vendors.id))
-                .where(eq(purchases.id, id));
-
-            if (result.length === 0) return NextResponse.json({ error: 'Purchase not found' }, { status: 404 });
-
-            const { purchase, vendor } = result[0];
-            return NextResponse.json({
-                ...purchase,
-                vendorName: vendor ? vendor.name : 'Unknown Vendor',
-                vendor: vendor
-            });
-        }
-
-        let query = db.select({
-            purchase: purchases,
-            vendor: vendors
-        })
-            .from(purchases)
-            .leftJoin(vendors, eq(purchases.vendorId, vendors.id))
-            .orderBy(desc(purchases.date));
-
-        // Note: Chaining where conditionally in Drizzle requires splitting or using helper
-        // For simplicity, if vendorId is present we filter
-        if (vendorId) {
-            // @ts-ignore
-            query = query.where(eq(purchases.vendorId, vendorId));
-        }
-
-        if (limit) {
-            // @ts-ignore
-            query = query.limit(limit);
-        }
-
-        const result = await query;
-        const formattedResult = result.map(({ purchase, vendor }) => ({
-            ...purchase,
-            vendorName: vendor ? vendor.name : 'Unknown Vendor',
-            vendor: vendor // optionally include full object
-        }));
-
-        return NextResponse.json(formattedResult);
-    } catch (error) {
-        console.error('Error fetching purchases:', error);
-        return NextResponse.json({ error: 'Failed to fetch purchases' }, { status: 500 });
-    }
+async function assertVendorExists(vendorId: number) {
+  const [vendor] = await db.select().from(vendors).where(eq(vendors.id, vendorId)).limit(1);
+  if (!vendor) throw new NotFoundError('Vendor not found');
 }
 
-export async function POST(request: NextRequest) {
-    try {
-        const body = await request.json();
-        const { vendorId, date, amount, description, status, billUrl, dueDate } = body;
+export const GET = withApiHandler(async (request) => {
+  const searchParams = new URL(request.url).searchParams;
+  const limit = searchParams.get('limit') ? Math.min(Number(searchParams.get('limit')), 100) : 50;
+  const offset = searchParams.get('offset') ? Math.max(Number(searchParams.get('offset')), 0) : 0;
+  const id = searchParams.get('id') ? Number(searchParams.get('id')) : undefined;
+  const vendorId = searchParams.get('vendorId') ? Number(searchParams.get('vendorId')) : undefined;
+  if (id) {
+    const result = await db.select({ purchase: purchases, vendor: vendors }).from(purchases).leftJoin(vendors, eq(purchases.vendorId, vendors.id)).where(eq(purchases.id, id));
+    if (result.length === 0) throw new NotFoundError('Purchase not found');
+    const { purchase, vendor } = result[0];
+    return NextResponse.json({ ...purchase, vendorName: vendor?.name ?? 'Unknown Vendor', vendor });
+  }
+  let query = db.select({ purchase: purchases, vendor: vendors }).from(purchases).leftJoin(vendors, eq(purchases.vendorId, vendors.id));
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(purchases);
+  if (vendorId) {
+    query = query.where(eq(purchases.vendorId, vendorId)) as typeof query;
+    countQuery = countQuery.where(eq(purchases.vendorId, vendorId)) as typeof countQuery;
+  }
+  const [rows, countRows] = await Promise.all([query.orderBy(desc(purchases.date)).limit(limit).offset(offset), countQuery]);
+  return NextResponse.json({
+    success: true,
+    data: rows.map(({ purchase, vendor }) => ({ ...purchase, vendorName: vendor?.name ?? 'Unknown Vendor', vendor })),
+    message: 'Purchases fetched successfully',
+    errors: null,
+    meta: { page: Math.floor(offset / limit) + 1, limit, total: Number(countRows[0]?.count ?? 0) },
+  });
+}, { requireAuth: true, roles: ['Employee'] });
 
-        if (!vendorId || !date || !amount) {
-            return NextResponse.json({ error: 'Vendor, Date and Amount are required' }, { status: 400 });
-        }
+export const POST = withApiHandler(async (request) => {
+  const payload = createPurchaseSchema.parse(await request.json());
+  await assertVendorExists(payload.vendorId);
+  const [created] = await db.insert(purchases).values({
+    vendorId: payload.vendorId,
+    date: payload.date,
+    amount: payload.amount,
+    description: payload.description ?? null,
+    status: payload.status ?? 'pending',
+    billUrl: payload.billUrl ?? null,
+    dueDate: payload.dueDate ?? null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }).returning();
+  return NextResponse.json(created, { status: 201 });
+}, { requireAuth: true, roles: ['Manager'] });
 
-        const result = await db.insert(purchases).values({
-            vendorId: parseInt(vendorId),
-            date,
-            amount: parseInt(amount),
-            description,
-            status: status || 'pending',
-            billUrl,
-            dueDate,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-        }).returning();
+export const PUT = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid purchase id is required');
+  const payload = updatePurchaseSchema.parse(await request.json());
+  if (payload.vendorId !== undefined) await assertVendorExists(payload.vendorId);
+  const [updated] = await db.update(purchases).set({
+    ...(payload.vendorId !== undefined ? { vendorId: payload.vendorId } : {}),
+    ...(payload.date !== undefined ? { date: payload.date } : {}),
+    ...(payload.amount !== undefined ? { amount: payload.amount } : {}),
+    ...(payload.description !== undefined ? { description: payload.description ?? null } : {}),
+    ...(payload.status !== undefined ? { status: payload.status } : {}),
+    ...(payload.billUrl !== undefined ? { billUrl: payload.billUrl ?? null } : {}),
+    ...(payload.dueDate !== undefined ? { dueDate: payload.dueDate ?? null } : {}),
+    updatedAt: new Date().toISOString(),
+  }).where(eq(purchases.id, id)).returning();
+  if (!updated) throw new NotFoundError('Purchase not found');
+  return NextResponse.json(updated);
+}, { requireAuth: true, roles: ['Manager'] });
 
-        return NextResponse.json(result[0], { status: 201 });
-    } catch (error) {
-        console.error('Error creating purchase:', error);
-        return NextResponse.json({ error: 'Failed to create purchase' }, { status: 500 });
-    }
-}
+export const DELETE = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid purchase id is required');
+  const [deleted] = await db.delete(purchases).where(eq(purchases.id, id)).returning();
+  if (!deleted) throw new NotFoundError('Purchase not found');
+  return NextResponse.json({ success: true, purchase: deleted });
+}, { requireAuth: true, roles: ['Manager'] });
 
-export async function PUT(request: NextRequest) {
-    try {
-        const searchParams = request.nextUrl.searchParams;
-        const id = searchParams.get('id');
-
-        if (!id) return NextResponse.json({ error: 'ID required' }, { status: 400 });
-
-        const body = await request.json();
-        const { vendorId, date, amount, description, status, billUrl, dueDate } = body;
-
-        const result = await db.update(purchases)
-            .set({
-                vendorId: vendorId ? parseInt(vendorId) : undefined,
-                date,
-                amount: amount ? parseInt(amount) : undefined,
-                description,
-                status,
-                billUrl,
-                dueDate,
-                updatedAt: new Date().toISOString()
-            })
-            .where(eq(purchases.id, parseInt(id)))
-            .returning();
-
-        if (result.length === 0) {
-            return NextResponse.json({ error: 'Purchase not found' }, { status: 404 });
-        }
-
-        return NextResponse.json(result[0]);
-    } catch (error) {
-        console.error('Error updating purchase:', error);
-        return NextResponse.json({ error: 'Failed to update purchase' }, { status: 500 });
-    }
-}
-
-export async function DELETE(request: NextRequest) {
-    try {
-        const searchParams = request.nextUrl.searchParams;
-        const id = searchParams.get('id');
-
-        if (!id) return NextResponse.json({ error: 'ID required' }, { status: 400 });
-
-        await db.delete(purchases).where(eq(purchases.id, parseInt(id)));
-
-        return NextResponse.json({ success: true });
-    } catch (error) {
-        console.error('Error deleting purchase:', error);
-        return NextResponse.json({ error: 'Failed to delete purchase' }, { status: 500 });
-    }
-}

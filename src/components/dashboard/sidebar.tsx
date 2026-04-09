@@ -29,6 +29,25 @@ interface DashboardSidebarProps {
   user: User;
 }
 
+function normalizeRole(role: string) {
+  const value = role.trim();
+  const canonical = value.toLowerCase();
+
+  switch (canonical) {
+    case 'superadmin':
+    case 'admin':
+      return 'admin';
+    case 'manager':
+      return 'project_manager';
+    case 'employee':
+      return 'developer';
+    case 'viewer':
+      return 'client';
+    default:
+      return canonical;
+  }
+}
+
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'project_manager', 'developer', 'client'] },
   { name: 'Clients', href: '/dashboard/clients', icon: Users, roles: ['admin'] },
@@ -50,9 +69,10 @@ const navigation = [
 
 export function DashboardSidebar({ user }: DashboardSidebarProps) {
   const pathname = usePathname();
+  const normalizedRole = normalizeRole(user.role);
 
   const filteredNavigation = navigation.filter(item =>
-    item.roles.includes(user.role)
+    item.roles.includes(normalizedRole)
   );
 
   return (
@@ -101,7 +121,7 @@ export function DashboardSidebar({ user }: DashboardSidebarProps) {
               {user.firstName} {user.lastName}
             </p>
             <p className="text-xs text-muted-foreground truncate capitalize">
-              {user.role.replace('_', ' ')}
+              {normalizedRole.replaceAll('_', ' ')}
             </p>
           </div>
         </Link>

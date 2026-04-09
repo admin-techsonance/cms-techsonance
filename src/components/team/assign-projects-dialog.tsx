@@ -1,10 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { assignProjectFormSchema, projectMemberRoleOptions, type AssignProjectFormValues } from '@/lib/forms/schemas';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -25,16 +29,23 @@ export function AssignProjectsDialog({ open, onOpenChange, onSuccess, userId, us
   const [loading, setLoading] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProject, setSelectedProject] = useState('');
-  const [selectedRole, setSelectedRole] = useState('developer');
+  const form = useForm<AssignProjectFormValues>({
+    resolver: zodResolver(assignProjectFormSchema),
+    defaultValues: {
+      projectId: '',
+      role: 'developer',
+    },
+  });
 
   useEffect(() => {
     if (open) {
       fetchProjects();
-      setSelectedProject('');
-      setSelectedRole('developer');
+      form.reset({
+        projectId: '',
+        role: 'developer',
+      });
     }
-  }, [open]);
+  }, [open, form]);
 
   const fetchProjects = async () => {
     setLoadingData(true);
@@ -48,37 +59,28 @@ export function AssignProjectsDialog({ open, onOpenChange, onSuccess, userId, us
 
       if (response.ok) {
         const data = await response.json();
-        setProjects(data);
+        setProjects(Array.isArray(data) ? data : data.data ?? []);
       }
-    } catch (error) {
-      console.error('Error fetching projects:', error);
+    } catch {
+      toast.error('Failed to load projects');
     } finally {
       setLoadingData(false);
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!selectedProject) {
-      toast.error('Please select a project');
-      return;
-    }
-
+  const handleSubmit = async (values: AssignProjectFormValues) => {
     setLoading(true);
 
     try {
-      const token = localStorage.getItem('session_token');
       const response = await fetch('/api/project-members', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          projectId: parseInt(selectedProject),
-          userId: userId,
-          role: selectedRole,
+          projectId: parseInt(values.projectId, 10),
+          userId,
+          role: values.role,
         }),
       });
 
@@ -96,10 +98,11 @@ export function AssignProjectsDialog({ open, onOpenChange, onSuccess, userId, us
       toast.success('Project assigned successfully');
       onOpenChange(false);
       onSuccess();
-      setSelectedProject('');
-      setSelectedRole('developer');
+      form.reset({
+        projectId: '',
+        role: 'developer',
+      });
     } catch (error) {
-      console.error('Error assigning project:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to assign project');
     } finally {
       setLoading(false);
@@ -116,17 +119,24 @@ export function AssignProjectsDialog({ open, onOpenChange, onSuccess, userId, us
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
+        <Form {...form}>
+        <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+          <FormField
+            control={form.control}
+            name="projectId"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="project">Project *</Label>
             <Select
-              value={selectedProject}
-              onValueChange={setSelectedProject}
+              value={field.value}
+              onValueChange={field.onChange}
               disabled={loading || loadingData}
             >
+              <FormControl>
               <SelectTrigger>
                 <SelectValue placeholder="Select project" />
               </SelectTrigger>
+              </FormControl>
               <SelectContent>
                 {projects.map((project) => (
                   <SelectItem key={project.id} value={project.id.toString()}>
@@ -135,26 +145,39 @@ export function AssignProjectsDialog({ open, onOpenChange, onSuccess, userId, us
                 ))}
               </SelectContent>
             </Select>
-          </div>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="role"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="role">Project Role *</Label>
             <Select
-              value={selectedRole}
-              onValueChange={setSelectedRole}
+              value={field.value}
+              onValueChange={field.onChange}
               disabled={loading}
             >
+              <FormControl>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
+              </FormControl>
               <SelectContent>
-                <SelectItem value="lead">Lead</SelectItem>
-                <SelectItem value="developer">Developer</SelectItem>
-                <SelectItem value="designer">Designer</SelectItem>
-                <SelectItem value="tester">Tester</SelectItem>
+                {projectMemberRoleOptions.map((role) => (
+                  <SelectItem key={role} value={role}>
+                    {role.charAt(0).toUpperCase() + role.slice(1)}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
-          </div>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
           <DialogFooter>
             <Button
@@ -177,6 +200,7 @@ export function AssignProjectsDialog({ open, onOpenChange, onSuccess, userId, us
             </Button>
           </DialogFooter>
         </form>
+        </Form>
       </DialogContent>
     </Dialog>
   );

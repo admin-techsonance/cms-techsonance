@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
 import {
   Dialog,
   DialogContent,
@@ -35,7 +36,10 @@ import { format, parseISO, isWithinInterval, addMonths, startOfMonth, subDays } 
 import { calculateAccruedBalances, calculateActualLeaveDays, PUBLIC_HOLIDAYS_2026 } from '@/lib/leave-utils';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
+import { leaveRequestFormSchema, leavePeriodOptions, leaveTypeOptions, type LeaveRequestFormValues } from '@/lib/forms/schemas';
 import { useRouter } from 'next/navigation';
+import { useForm } from 'react-hook-form';
+import { toast } from 'sonner';
 
 interface LeaveRequestDialogProps {
   open: boolean;
@@ -59,13 +63,17 @@ export function LeaveRequestDialog({ open, onOpenChange, employeeData, userRole,
   const router = useRouter();
   const [activeTab, setActiveTab] = useState('request');
   const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState({
-    period: 'full_day',
-    type: 'annual',
-    from: '',
-    to: '',
-    reason: '',
+  const form = useForm<LeaveRequestFormValues>({
+    resolver: zodResolver(leaveRequestFormSchema),
+    defaultValues: {
+      period: 'full_day',
+      type: 'annual',
+      from: '',
+      to: '',
+      reason: '',
+    },
   });
+  const leaveValues = form.watch();
 
   const balances = useMemo(() => {
     if (!employeeData?.dateOfJoining) return null;
@@ -73,11 +81,11 @@ export function LeaveRequestDialog({ open, onOpenChange, employeeData, userRole,
   }, [employeeData?.dateOfJoining, userRole]);
 
   const actualDays = useMemo(() => {
-    return calculateActualLeaveDays(form.from, form.to);
-  }, [form.from, form.to]);
+    return calculateActualLeaveDays(leaveValues.from, leaveValues.to);
+  }, [leaveValues.from, leaveValues.to]);
 
   const handleClear = () => {
-    setForm({
+    form.reset({
       period: 'full_day',
       type: 'annual',
       from: '',
@@ -86,27 +94,21 @@ export function LeaveRequestDialog({ open, onOpenChange, employeeData, userRole,
     });
   };
 
-  const handleSubmit = async () => {
-    if (!form.from || !form.to || !form.reason || form.reason.length < 10) {
-      return;
-    }
-
+  const handleSubmit = async (values: LeaveRequestFormValues) => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('session_token');
       const response = await fetch('/api/leave-requests', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           employeeId: employeeData.id,
-          leaveType: form.type,
-          startDate: form.from,
-          endDate: form.to,
-          reason: form.reason,
-          leavePeriod: form.period,
+          leaveType: values.type,
+          startDate: values.from,
+          endDate: values.to,
+          reason: values.reason,
+          leavePeriod: values.period,
           actualDays: actualDays,
         }),
       });
@@ -115,9 +117,13 @@ export function LeaveRequestDialog({ open, onOpenChange, employeeData, userRole,
         onSuccess();
         onOpenChange(false);
         handleClear();
+        toast.success('Leave request submitted successfully');
+      } else {
+        const error = await response.json();
+        toast.error(error.error || 'Failed to submit leave request');
       }
-    } catch (error) {
-      console.error('Error submitting leave:', error);
+    } catch {
+      toast.error('Failed to submit leave request');
     } finally {
       setLoading(false);
     }
@@ -174,31 +180,35 @@ export function LeaveRequestDialog({ open, onOpenChange, employeeData, userRole,
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <Label className="text-slate-600 font-semibold text-xs">Leave Period</Label>
-                      <Select value={form.period} onValueChange={(v) => setForm({...form, period: v})}>
+                      <Select value={leaveValues.period} onValueChange={(v) => void form.setValue('period', v as LeaveRequestFormValues['period'], { shouldValidate: true })}>
                         <SelectTrigger className="bg-white border-slate-200">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="full_day">Full Day</SelectItem>
-                          <SelectItem value="half_day">Half Day</SelectItem>
-                          <SelectItem value="hourly">Hourly</SelectItem>
+                          {leavePeriodOptions.map((period) => (
+                            <SelectItem key={period} value={period}>
+                              {period === 'full_day' ? 'Full Day' : period === 'half_day' ? 'Half Day' : 'Hourly'}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
+                      {form.formState.errors.period && <p className="text-xs text-destructive">{form.formState.errors.period.message}</p>}
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-slate-600 font-semibold text-xs">Leave Type</Label>
-                      <Select value={form.type} onValueChange={(v) => setForm({...form, type: v})}>
+                      <Select value={leaveValues.type} onValueChange={(v) => void form.setValue('type', v as LeaveRequestFormValues['type'], { shouldValidate: true })}>
                         <SelectTrigger className="bg-white border-slate-200">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {LEAVE_TYPES.map(type => (
+                          {LEAVE_TYPES.filter((type) => leaveTypeOptions.includes(type.id as (typeof leaveTypeOptions)[number])).map(type => (
                             <SelectItem key={type.id} value={type.id}>
                               {type.label} ({balances?.[type.id as keyof typeof balances] ?? '0.00'})
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
+                      {form.formState.errors.type && <p className="text-xs text-destructive">{form.formState.errors.type.message}</p>}
                     </div>
                   </div>
 
@@ -208,18 +218,20 @@ export function LeaveRequestDialog({ open, onOpenChange, employeeData, userRole,
                       <Input 
                         type="date" 
                         className="bg-white border-slate-200"
-                        value={form.from}
-                        onChange={(e) => setForm({...form, from: e.target.value})}
+                        value={leaveValues.from}
+                        onChange={(e) => void form.setValue('from', e.target.value, { shouldValidate: true })}
                       />
+                      {form.formState.errors.from && <p className="text-xs text-destructive">{form.formState.errors.from.message}</p>}
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-slate-600 font-semibold text-xs">...up to and including</Label>
                       <Input 
                         type="date" 
                         className="bg-white border-slate-200"
-                        value={form.to}
-                        onChange={(e) => setForm({...form, to: e.target.value})}
+                        value={leaveValues.to}
+                        onChange={(e) => void form.setValue('to', e.target.value, { shouldValidate: true })}
                       />
+                      {form.formState.errors.to && <p className="text-xs text-destructive">{form.formState.errors.to.message}</p>}
                     </div>
                   </div>
 
@@ -248,9 +260,10 @@ export function LeaveRequestDialog({ open, onOpenChange, employeeData, userRole,
                     <Textarea 
                       placeholder="Add leave request Comments here"
                       className="min-h-[100px] bg-white border-slate-200 text-sm"
-                      value={form.reason}
-                      onChange={(e) => setForm({...form, reason: e.target.value})}
+                      value={leaveValues.reason}
+                      onChange={(e) => void form.setValue('reason', e.target.value, { shouldValidate: true })}
                     />
+                    {form.formState.errors.reason && <p className="text-xs text-destructive">{form.formState.errors.reason.message}</p>}
                   </div>
                 </div>
 
@@ -313,7 +326,7 @@ export function LeaveRequestDialog({ open, onOpenChange, employeeData, userRole,
                     <div className="bg-emerald-600 p-4 rounded-xl shadow-lg shadow-emerald-200/50 text-center text-white">
                       <p className="text-[10px] font-bold uppercase tracking-wider opacity-80">Final Balance</p>
                       <p className="text-2xl font-black mt-1">
-                        {((balances?.[form.type as keyof typeof balances] || 0) - actualDays).toFixed(2)}
+                        {((balances?.[leaveValues.type as keyof typeof balances] || 0) - actualDays).toFixed(2)}
                       </p>
                       <p className="text-[9px] mt-1 opacity-70">Estimated days remaining</p>
                     </div>
@@ -419,7 +432,7 @@ export function LeaveRequestDialog({ open, onOpenChange, employeeData, userRole,
           <div className="flex gap-2 w-full sm:w-auto">
             <Button 
               className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 font-bold uppercase tracking-wider text-xs gap-2 py-5"
-              onClick={handleSubmit}
+              onClick={() => void form.handleSubmit(handleSubmit, () => toast.error('Please fix the leave request details'))()}
               disabled={loading}
             >
               <RefreshCcw className={cn("h-4 w-4", loading && "animate-spin")} />

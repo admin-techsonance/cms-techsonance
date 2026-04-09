@@ -1,10 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Plus, Loader2, DollarSign, TrendingUp, CreditCard, Eye, Download, Send, FileText, Users, ShoppingCart, Receipt, CheckCircle, Clock, AlertCircle, Trash2, Pencil, Printer } from 'lucide-react';
 import { InlineTableSkeleton } from '@/components/ui/dashboard-skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -25,6 +28,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  financeCategorySchema,
+  financeExpenseSchema,
+  financeInvoiceSchema,
+  financePurchaseSchema,
+  financeVendorSchema,
+  type FinanceCategoryFormValues,
+  type FinanceInvoiceFormValues,
+  type FinancePurchaseFormValues,
+  type FinanceVendorFormValues,
+} from '@/lib/forms/schemas';
+import { toast } from 'sonner';
 
 interface Invoice {
   id: number;
@@ -119,25 +134,34 @@ export default function FinancePage() {
 
   // Form States
   const [isAddVendorOpen, setIsAddVendorOpen] = useState(false);
-  const [newVendor, setNewVendor] = useState({ name: '', contactPerson: '', email: '', phone: '' });
+  const vendorForm = useForm<FinanceVendorFormValues>({
+    resolver: zodResolver(financeVendorSchema),
+    defaultValues: { name: '', contactPerson: '', email: '', phone: '' },
+  });
 
   const [isAddPurchaseOpen, setIsAddPurchaseOpen] = useState(false);
-  const [newPurchase, setNewPurchase] = useState({ vendorId: '', date: '', amount: '', description: '' });
+  const purchaseForm = useForm<FinancePurchaseFormValues>({
+    resolver: zodResolver(financePurchaseSchema),
+    defaultValues: { vendorId: '', date: '', amount: '', description: '' },
+  });
 
   const [newExpense, setNewExpense] = useState({ category: '', description: '', amount: '', date: new Date().toISOString().split('T')[0] });
 
   // Invoice State
   const [isInvoiceDialogOpen, setIsInvoiceDialogOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
-  const [newInvoice, setNewInvoice] = useState({
-    clientId: '',
-    invoiceNumber: '',
-    amount: '',
-    tax: '0',
-    dueDate: '',
-    termsAndConditions: '',
-    notes: '',
-    paymentTerms: ''
+  const invoiceForm = useForm<FinanceInvoiceFormValues>({
+    resolver: zodResolver(financeInvoiceSchema),
+    defaultValues: {
+      clientId: '',
+      invoiceNumber: '',
+      amount: '',
+      tax: '0',
+      dueDate: '',
+      termsAndConditions: '',
+      notes: '',
+      paymentTerms: '',
+    },
   });
 
   // Edit States
@@ -149,7 +173,10 @@ export default function FinancePage() {
 
   // Category State
   const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
-  const [newCategory, setNewCategory] = useState({ name: '', description: '' });
+  const categoryForm = useForm<FinanceCategoryFormValues>({
+    resolver: zodResolver(financeCategorySchema),
+    defaultValues: { name: '', description: '' },
+  });
   const [categoryError, setCategoryError] = useState('');
   const [editingCategory, setEditingCategory] = useState<ExpenseCategory | null>(null);
   const [isEditCategoryOpen, setIsEditCategoryOpen] = useState(false);
@@ -227,58 +254,71 @@ export default function FinancePage() {
       if (settingsRes.ok) {
         const settings = await settingsRes.json();
         setBusinessSettings(settings);
-        // Pre-fill invoice settings if empty
-        if (!newInvoice.termsAndConditions) {
-          setNewInvoice(prev => ({
-            ...prev,
+        const currentInvoiceValues = invoiceForm.getValues();
+        if (!currentInvoiceValues.termsAndConditions && !editingInvoice) {
+          invoiceForm.reset({
+            ...currentInvoiceValues,
             termsAndConditions: settings.termsAndConditions || '',
             notes: settings.notes || '',
-            paymentTerms: settings.paymentTerms || ''
-          }));
+            paymentTerms: settings.paymentTerms || '',
+          });
         }
       }
-    } catch (error) {
-      console.error('Error fetching finance data:', error);
+    } catch {
+      toast.error('Failed to load finance data');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddVendor = async () => {
+  const handleAddVendor = async (values: FinanceVendorFormValues) => {
     try {
       const res = await fetch('/api/vendors', {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify(newVendor)
+        body: JSON.stringify(values)
       });
       if (res.ok) {
         setIsAddVendorOpen(false);
-        setNewVendor({ name: '', contactPerson: '', email: '', phone: '' });
+        vendorForm.reset({ name: '', contactPerson: '', email: '', phone: '' });
         fetchFinanceData();
+        toast.success('Vendor added successfully');
+      } else {
+        const error = await res.json();
+        toast.error(error.error || 'Failed to add vendor');
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      toast.error('An error occurred while adding vendor');
     }
   };
 
-  const handleAddPurchase = async () => {
+  const handleAddPurchase = async (values: FinancePurchaseFormValues) => {
     try {
       const res = await fetch('/api/purchases', {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify(newPurchase)
+        body: JSON.stringify(values)
       });
       if (res.ok) {
         setIsAddPurchaseOpen(false);
-        setNewPurchase({ vendorId: '', date: '', amount: '', description: '' });
+        purchaseForm.reset({ vendorId: '', date: '', amount: '', description: '' });
         fetchFinanceData();
+        toast.success('Purchase added successfully');
+      } else {
+        const error = await res.json();
+        toast.error(error.error || 'Failed to add purchase');
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      toast.error('An error occurred while adding purchase');
     }
   };
 
   const handleAddExpense = async () => {
+    const validation = financeExpenseSchema.safeParse(newExpense);
+    if (!validation.success) {
+      toast.error(validation.error.issues[0]?.message || 'Please fix the expense form');
+      return;
+    }
     try {
       let uploadedUrl = null;
       if (receiptFile) {
@@ -294,12 +334,10 @@ export default function FinancePage() {
             const data = await uploadRes.json();
             uploadedUrl = data.url;
           } else {
-            console.error('File upload failed');
-            alert('Failed to upload receipt, but continuing with expense creation.');
+            toast.error('Failed to upload receipt, but continuing with expense creation.');
           }
-        } catch (uploadError) {
-          console.error('Upload error:', uploadError);
-          alert('Error uploading receipt.');
+        } catch {
+          toast.error('Error uploading receipt.');
         }
       }
 
@@ -312,28 +350,32 @@ export default function FinancePage() {
         setNewExpense({ category: '', description: '', amount: '', date: new Date().toISOString().split('T')[0] });
         setReceiptFile(null);
         fetchFinanceData();
+        toast.success('Expense added successfully');
+      } else {
+        const error = await res.json();
+        toast.error(error.error || 'Failed to add expense');
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      toast.error('An error occurred while adding expense');
     }
   };
 
-  const handleCreateInvoice = async () => {
+  const handleCreateInvoice = async (values: FinanceInvoiceFormValues) => {
     try {
-      const totalAmount = parseInt(newInvoice.amount) + parseInt(newInvoice.tax);
+      const totalAmount = parseInt(values.amount, 10) + parseInt(values.tax, 10);
       const url = editingInvoice ? `/api/invoices?id=${editingInvoice.id}` : '/api/invoices';
       const method = editingInvoice ? 'PUT' : 'POST';
 
       const res = await fetch(url, {
         method,
         headers: getAuthHeaders(),
-        body: JSON.stringify({ ...newInvoice, totalAmount })
+        body: JSON.stringify({ ...values, totalAmount })
       });
 
       if (res.ok) {
         setIsInvoiceDialogOpen(false);
         setEditingInvoice(null);
-        setNewInvoice({
+        invoiceForm.reset({
           clientId: '',
           invoiceNumber: '',
           amount: '',
@@ -344,26 +386,25 @@ export default function FinancePage() {
           paymentTerms: businessSettings.paymentTerms || ''
         });
         fetchFinanceData();
+        toast.success(editingInvoice ? 'Invoice updated successfully' : 'Invoice created successfully');
+      } else {
+        const error = await res.json();
+        toast.error(error.error || 'Failed to save invoice');
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      toast.error('An error occurred while saving invoice');
     }
   };
 
   const handleEditInvoice = (invoice: Invoice) => {
     setEditingInvoice(invoice);
-    // Find client details if needed, or simply populate form
-    // Note: Invoice amount in db is totalAmount (with tax).
-    // Simplified: we assume 'amount' is totalAmount for now or need to calculate base.
-    // Assuming edit is not fully supported for fields not in DB like 'base amount vs tax' split 
-    // unless we persist tax separately. For now, we will just use totalAmount as amount.
-    setNewInvoice({
+    invoiceForm.reset({
       clientId: invoice.clientId.toString(),
       invoiceNumber: invoice.invoiceNumber,
       amount: invoice.totalAmount.toString(),
-      tax: '0', // Tax split logic might be lost if not stored
+      tax: '0',
       dueDate: invoice.dueDate,
-      termsAndConditions: businessSettings.termsAndConditions || '', // Use current or stored? Ideal: stored in invoice
+      termsAndConditions: businessSettings.termsAndConditions || '',
       notes: businessSettings.notes || '',
       paymentTerms: businessSettings.paymentTerms || ''
     });
@@ -383,8 +424,8 @@ export default function FinancePage() {
         setEditingVendor(null);
         fetchFinanceData();
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      toast.error('An error occurred while updating vendor');
     }
   };
 
@@ -401,29 +442,37 @@ export default function FinancePage() {
         setEditingPurchase(null);
         fetchFinanceData();
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      toast.error('An error occurred while updating purchase');
     }
   };
 
   const handleAddCategory = async () => {
     setCategoryError('');
+    const values = categoryForm.getValues();
+    const validation = financeCategorySchema.safeParse(values);
+    if (!validation.success) {
+      const message = validation.error.issues[0]?.message || 'Please fix the category form';
+      setCategoryError(message);
+      categoryForm.setError('name', { message });
+      return;
+    }
     try {
       const res = await fetch('/api/expense-categories', {
         method: 'POST',
         headers: getAuthHeaders(),
-        body: JSON.stringify(newCategory)
+        body: JSON.stringify(values)
       });
       if (res.ok) {
         setIsAddCategoryOpen(false);
-        setNewCategory({ name: '', description: '' });
+        categoryForm.reset({ name: '', description: '' });
         fetchFinanceData();
+        toast.success('Category added successfully');
       } else {
         const errorData = await res.json();
         setCategoryError(errorData.error || 'Failed to add category');
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
       setCategoryError('An unexpected error occurred');
     }
   };
@@ -441,35 +490,55 @@ export default function FinancePage() {
         setEditingCategory(null);
         fetchFinanceData();
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      toast.error('An error occurred while updating category');
     }
   };
 
   const handleDeleteCategory = async (id: number) => {
     if (!confirm('Are you sure you want to delete this category?')) return;
-    await fetch(`/api/expense-categories?id=${id}`, { method: 'DELETE', headers: getAuthHeaders() });
-    fetchFinanceData();
+    const response = await fetch(`/api/expense-categories?id=${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+    if (response.ok) {
+      toast.success('Category deleted successfully');
+      fetchFinanceData();
+      return;
+    }
+    toast.error('Failed to delete category');
   };
 
 
 
   const handleDeleteVendor = async (id: number) => {
     if (!confirm('Are you sure you want to delete this vendor?')) return;
-    await fetch(`/api/vendors?id=${id}`, { method: 'DELETE', headers: getAuthHeaders() });
-    fetchFinanceData();
+    const response = await fetch(`/api/vendors?id=${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+    if (response.ok) {
+      toast.success('Vendor deleted successfully');
+      fetchFinanceData();
+      return;
+    }
+    toast.error('Failed to delete vendor');
   };
 
   const handleDeletePurchase = async (id: number) => {
     if (!confirm('Are you sure you want to delete this purchase?')) return;
-    await fetch(`/api/purchases?id=${id}`, { method: 'DELETE', headers: getAuthHeaders() });
-    fetchFinanceData();
+    const response = await fetch(`/api/purchases?id=${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+    if (response.ok) {
+      toast.success('Purchase deleted successfully');
+      fetchFinanceData();
+      return;
+    }
+    toast.error('Failed to delete purchase');
   };
 
   const handleDeleteExpense = async (id: number) => {
     if (!confirm('Are you sure?')) return;
-    await fetch(`/api/expenses?id=${id}`, { method: 'DELETE', headers: getAuthHeaders() });
-    fetchFinanceData();
+    const response = await fetch(`/api/expenses?id=${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+    if (response.ok) {
+      toast.success('Expense deleted successfully');
+      fetchFinanceData();
+      return;
+    }
+    toast.error('Failed to delete expense');
   }
 
   const handleUpdateExpenseStatus = async (id: number, status: 'approved' | 'rejected') => {
@@ -482,8 +551,8 @@ export default function FinancePage() {
       if (res.ok) {
         fetchFinanceData();
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      toast.error('An error occurred while updating expense status');
     }
   };
 
@@ -497,8 +566,8 @@ export default function FinancePage() {
       if (res.ok) {
         fetchFinanceData();
       }
-    } catch (error) {
-      console.error(error);
+    } catch {
+      toast.error('An error occurred while updating invoice status');
     }
   };
 
@@ -686,8 +755,13 @@ export default function FinancePage() {
 
   const handleDeleteInvoice = async (id: number) => {
     if (!confirm('Are you sure?')) return;
-    await fetch(`/api/invoices?id=${id}`, { method: 'DELETE', headers: getAuthHeaders() });
-    fetchFinanceData();
+    const response = await fetch(`/api/invoices?id=${id}`, { method: 'DELETE', headers: getAuthHeaders() });
+    if (response.ok) {
+      toast.success('Invoice deleted successfully');
+      fetchFinanceData();
+      return;
+    }
+    toast.error('Failed to delete invoice');
   }
 
   const totalRevenue = invoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
@@ -842,7 +916,7 @@ export default function FinancePage() {
                   <CardTitle>Vendor List</CardTitle>
                   <Dialog open={isAddVendorOpen} onOpenChange={setIsAddVendorOpen}>
                     <DialogTrigger asChild>
-                      <Button size="sm">
+                      <Button size="sm" onClick={() => vendorForm.reset({ name: '', contactPerson: '', email: '', phone: '' })}>
                         <Plus className="mr-2 h-4 w-4" />
                         Add Vendor
                       </Button>
@@ -852,27 +926,41 @@ export default function FinancePage() {
                         <DialogTitle>Add New Vendor</DialogTitle>
                         <DialogDescription>Enter vendor details below.</DialogDescription>
                       </DialogHeader>
+                      <Form {...vendorForm}>
                       <div className="grid gap-4 py-4">
-                        <div className="grid grid-cols-4 items-center gap-4">
+                        <FormField control={vendorForm.control} name="name" render={({ field }) => (
+                        <FormItem className="grid grid-cols-4 items-center gap-4">
                           <Label htmlFor="v-name" className="text-right">Name</Label>
-                          <Input id="v-name" value={newVendor.name} onChange={(e) => setNewVendor({ ...newVendor, name: e.target.value })} className="col-span-3" />
-                        </div>
-                        <div className="grid grid-cols-4 items-center gap-4">
+                          <FormControl><Input id="v-name" {...field} className="col-span-3" /></FormControl>
+                          <FormMessage className="col-span-4 text-right text-xs" />
+                        </FormItem>
+                        )} />
+                        <FormField control={vendorForm.control} name="contactPerson" render={({ field }) => (
+                        <FormItem className="grid grid-cols-4 items-center gap-4">
                           <Label htmlFor="v-contact" className="text-right">Contact</Label>
-                          <Input id="v-contact" value={newVendor.contactPerson} onChange={(e) => setNewVendor({ ...newVendor, contactPerson: e.target.value })} className="col-span-3" />
-                        </div>
-                        <div className="grid grid-cols-4 items-center gap-4">
+                          <FormControl><Input id="v-contact" {...field} className="col-span-3" /></FormControl>
+                          <FormMessage className="col-span-4 text-right text-xs" />
+                        </FormItem>
+                        )} />
+                        <FormField control={vendorForm.control} name="email" render={({ field }) => (
+                        <FormItem className="grid grid-cols-4 items-center gap-4">
                           <Label htmlFor="v-email" className="text-right">Email</Label>
-                          <Input id="v-email" value={newVendor.email} onChange={(e) => setNewVendor({ ...newVendor, email: e.target.value })} className="col-span-3" />
-                        </div>
-                        <div className="grid grid-cols-4 items-center gap-4">
+                          <FormControl><Input id="v-email" {...field} className="col-span-3" /></FormControl>
+                          <FormMessage className="col-span-4 text-right text-xs" />
+                        </FormItem>
+                        )} />
+                        <FormField control={vendorForm.control} name="phone" render={({ field }) => (
+                        <FormItem className="grid grid-cols-4 items-center gap-4">
                           <Label htmlFor="v-phone" className="text-right">Phone</Label>
-                          <Input id="v-phone" value={newVendor.phone} onChange={(e) => setNewVendor({ ...newVendor, phone: e.target.value })} className="col-span-3" />
-                        </div>
+                          <FormControl><Input id="v-phone" {...field} className="col-span-3" /></FormControl>
+                          <FormMessage className="col-span-4 text-right text-xs" />
+                        </FormItem>
+                        )} />
                       </div>
                       <DialogFooter>
-                        <Button onClick={handleAddVendor}>Save Vendor</Button>
+                        <Button onClick={() => void vendorForm.handleSubmit(handleAddVendor, () => toast.error('Please fix the vendor form'))()}>Save Vendor</Button>
                       </DialogFooter>
+                      </Form>
                     </DialogContent>
                   </Dialog>
                 </div>
@@ -941,7 +1029,7 @@ export default function FinancePage() {
                   <CardTitle>Recent Purchase Entries</CardTitle>
                   <Dialog open={isAddPurchaseOpen} onOpenChange={setIsAddPurchaseOpen}>
                     <DialogTrigger asChild>
-                      <Button size="sm">
+                      <Button size="sm" onClick={() => purchaseForm.reset({ vendorId: '', date: '', amount: '', description: '' })}>
                         <Plus className="mr-2 h-4 w-4" />
                         New Purchase
                       </Button>
@@ -950,36 +1038,52 @@ export default function FinancePage() {
                       <DialogHeader>
                         <DialogTitle>New Purchase</DialogTitle>
                       </DialogHeader>
+                      <Form {...purchaseForm}>
                       <div className="grid gap-4 py-4">
-                        <div className="grid grid-cols-4 items-center gap-4">
+                        <FormField control={purchaseForm.control} name="vendorId" render={({ field }) => (
+                        <FormItem className="grid grid-cols-4 items-center gap-4">
                           <Label className="text-right">Vendor</Label>
-                          <Select onValueChange={(v) => setNewPurchase({ ...newPurchase, vendorId: v })}>
+                          <Select value={field.value} onValueChange={field.onChange}>
+                            <FormControl>
                             <SelectTrigger className="col-span-3">
                               <SelectValue placeholder="Select Vendor" />
                             </SelectTrigger>
+                            </FormControl>
                             <SelectContent>
                               {vendors.map(v => (
                                 <SelectItem key={v.id} value={v.id.toString()}>{v.name}</SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
-                        </div>
-                        <div className="grid grid-cols-4 items-center gap-4">
+                          <FormMessage className="col-span-4 text-right text-xs" />
+                        </FormItem>
+                        )} />
+                        <FormField control={purchaseForm.control} name="amount" render={({ field }) => (
+                        <FormItem className="grid grid-cols-4 items-center gap-4">
                           <Label className="text-right">Amount</Label>
-                          <Input type="number" value={newPurchase.amount} onChange={(e) => setNewPurchase({ ...newPurchase, amount: e.target.value })} className="col-span-3" />
-                        </div>
-                        <div className="grid grid-cols-4 items-center gap-4">
+                          <FormControl><Input type="number" {...field} className="col-span-3" /></FormControl>
+                          <FormMessage className="col-span-4 text-right text-xs" />
+                        </FormItem>
+                        )} />
+                        <FormField control={purchaseForm.control} name="date" render={({ field }) => (
+                        <FormItem className="grid grid-cols-4 items-center gap-4">
                           <Label className="text-right">Date</Label>
-                          <Input type="date" value={newPurchase.date} onChange={(e) => setNewPurchase({ ...newPurchase, date: e.target.value })} className="col-span-3" />
-                        </div>
-                        <div className="grid grid-cols-4 items-center gap-4">
+                          <FormControl><Input type="date" {...field} className="col-span-3" /></FormControl>
+                          <FormMessage className="col-span-4 text-right text-xs" />
+                        </FormItem>
+                        )} />
+                        <FormField control={purchaseForm.control} name="description" render={({ field }) => (
+                        <FormItem className="grid grid-cols-4 items-center gap-4">
                           <Label className="text-right">Desc</Label>
-                          <Input value={newPurchase.description} onChange={(e) => setNewPurchase({ ...newPurchase, description: e.target.value })} className="col-span-3" />
-                        </div>
+                          <FormControl><Input {...field} className="col-span-3" /></FormControl>
+                          <FormMessage className="col-span-4 text-right text-xs" />
+                        </FormItem>
+                        )} />
                       </div>
                       <DialogFooter>
-                        <Button onClick={handleAddPurchase}>Save Purchase</Button>
+                        <Button onClick={() => void purchaseForm.handleSubmit(handleAddPurchase, () => toast.error('Please fix the purchase form'))()}>Save Purchase</Button>
                       </DialogFooter>
+                      </Form>
                     </DialogContent>
                   </Dialog>
                 </div>
@@ -1171,18 +1275,22 @@ export default function FinancePage() {
                       <DialogHeader>
                         <DialogTitle>Add Expense Category</DialogTitle>
                       </DialogHeader>
+                      <Form {...categoryForm}>
                       <div className="grid gap-4 py-4">
-                        <div className="grid grid-cols-4 items-center gap-4">
+                        <FormField control={categoryForm.control} name="name" render={({ field }) => (
+                        <FormItem className="grid grid-cols-4 items-center gap-4">
                           <Label className="text-right">Name</Label>
-                          <Input value={newCategory.name} onChange={(e) => {
-                            setNewCategory({ ...newCategory, name: e.target.value });
-                            setCategoryError('');
-                          }} className="col-span-3" />
-                        </div>
-                        <div className="grid grid-cols-4 items-center gap-4">
+                          <FormControl><Input {...field} onChange={(e) => { field.onChange(e); setCategoryError(''); }} className="col-span-3" /></FormControl>
+                          <FormMessage className="col-span-4 text-right text-xs" />
+                        </FormItem>
+                        )} />
+                        <FormField control={categoryForm.control} name="description" render={({ field }) => (
+                        <FormItem className="grid grid-cols-4 items-center gap-4">
                           <Label className="text-right">Desc</Label>
-                          <Input value={newCategory.description} onChange={(e) => setNewCategory({ ...newCategory, description: e.target.value })} className="col-span-3" />
-                        </div>
+                          <FormControl><Input {...field} className="col-span-3" /></FormControl>
+                          <FormMessage className="col-span-4 text-right text-xs" />
+                        </FormItem>
+                        )} />
                         {categoryError && (
                           <div className="grid grid-cols-4 items-center gap-4">
                             <div className="col-span-4 text-center text-sm text-red-500">
@@ -1194,6 +1302,7 @@ export default function FinancePage() {
                       <DialogFooter>
                         <Button onClick={handleAddCategory}>Save Category</Button>
                       </DialogFooter>
+                      </Form>
                     </DialogContent>
                   </Dialog>
                 </div>
@@ -1431,7 +1540,7 @@ export default function FinancePage() {
               <DialogTrigger asChild>
                 <Button onClick={() => {
                   setEditingInvoice(null);
-                  setNewInvoice({
+                  invoiceForm.reset({
                     clientId: '',
                     invoiceNumber: '',
                     amount: '',
@@ -1451,69 +1560,97 @@ export default function FinancePage() {
                   <DialogTitle>{editingInvoice ? 'Edit Invoice' : 'Create New Invoice'}</DialogTitle>
                   <DialogDescription>Enter invoice details below.</DialogDescription>
                 </DialogHeader>
+                <Form {...invoiceForm}>
                 <div className="space-y-4 py-4">
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
+                    <FormField control={invoiceForm.control} name="invoiceNumber" render={({ field }) => (
+                    <FormItem className="space-y-2">
                       <Label>Invoice #</Label>
-                      <Input placeholder="INV-001" value={newInvoice.invoiceNumber} onChange={(e) => setNewInvoice({ ...newInvoice, invoiceNumber: e.target.value })} />
-                    </div>
-                    <div className="space-y-2">
+                      <FormControl><Input placeholder="INV-001" {...field} /></FormControl>
+                      <FormMessage className="text-xs" />
+                    </FormItem>
+                    )} />
+                    <FormField control={invoiceForm.control} name="clientId" render={({ field }) => (
+                    <FormItem className="space-y-2">
                       <Label>Client</Label>
-                      <Select value={newInvoice.clientId} onValueChange={(v) => setNewInvoice({ ...newInvoice, clientId: v })}>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select Client" />
                         </SelectTrigger>
+                        </FormControl>
                         <SelectContent>
                           {clients.map(client => (
                             <SelectItem key={client.id} value={client.id.toString()}>{client.companyName}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                    </div>
+                      <FormMessage className="text-xs" />
+                    </FormItem>
+                    )} />
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
+                    <FormField control={invoiceForm.control} name="amount" render={({ field }) => (
+                    <FormItem className="space-y-2">
                       <Label>Amount (₹)</Label>
-                      <Input type="number" placeholder="0.00" value={newInvoice.amount} onChange={(e) => setNewInvoice({ ...newInvoice, amount: e.target.value })} />
-                    </div>
-                    <div className="space-y-2">
+                      <FormControl><Input type="number" placeholder="0.00" {...field} /></FormControl>
+                      <FormMessage className="text-xs" />
+                    </FormItem>
+                    )} />
+                    <FormField control={invoiceForm.control} name="tax" render={({ field }) => (
+                    <FormItem className="space-y-2">
                       <Label>Tax (₹)</Label>
-                      <Input type="number" placeholder="0" value={newInvoice.tax} onChange={(e) => setNewInvoice({ ...newInvoice, tax: e.target.value })} />
-                    </div>
+                      <FormControl><Input type="number" placeholder="0" {...field} /></FormControl>
+                      <FormMessage className="text-xs" />
+                    </FormItem>
+                    )} />
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
+                    <FormField control={invoiceForm.control} name="dueDate" render={({ field }) => (
+                    <FormItem className="space-y-2">
                       <Label>Due Date</Label>
-                      <Input type="date" value={newInvoice.dueDate} onChange={(e) => setNewInvoice({ ...newInvoice, dueDate: e.target.value })} />
-                    </div>
-                    <div className="space-y-2">
+                      <FormControl><Input type="date" {...field} /></FormControl>
+                      <FormMessage className="text-xs" />
+                    </FormItem>
+                    )} />
+                    <FormField control={invoiceForm.control} name="paymentTerms" render={({ field }) => (
+                    <FormItem className="space-y-2">
                       <Label>Payment Terms</Label>
-                      <Input value={newInvoice.paymentTerms} onChange={(e) => setNewInvoice({ ...newInvoice, paymentTerms: e.target.value })} />
-                    </div>
+                      <FormControl><Input {...field} /></FormControl>
+                      <FormMessage className="text-xs" />
+                    </FormItem>
+                    )} />
                   </div>
 
-                  <div className="space-y-2">
+                  <FormField control={invoiceForm.control} name="termsAndConditions" render={({ field }) => (
+                  <FormItem className="space-y-2">
                     <Label>Terms & Conditions</Label>
-                    <Input value={newInvoice.termsAndConditions} onChange={(e) => setNewInvoice({ ...newInvoice, termsAndConditions: e.target.value })} />
-                  </div>
+                    <FormControl><Input {...field} /></FormControl>
+                    <FormMessage className="text-xs" />
+                  </FormItem>
+                  )} />
 
-                  <div className="space-y-2">
+                  <FormField control={invoiceForm.control} name="notes" render={({ field }) => (
+                  <FormItem className="space-y-2">
                     <Label>Notes</Label>
-                    <Input value={newInvoice.notes} onChange={(e) => setNewInvoice({ ...newInvoice, notes: e.target.value })} />
-                  </div>
+                    <FormControl><Input {...field} /></FormControl>
+                    <FormMessage className="text-xs" />
+                  </FormItem>
+                  )} />
 
                   <div className="pt-4 border-t">
                     <div className="flex justify-between font-bold text-lg">
                       <span>Total:</span>
-                      <span>₹{(parseInt(newInvoice.amount || '0') + parseInt(newInvoice.tax || '0')).toFixed(2)}</span>
+                      <span>₹{(parseInt(invoiceForm.watch('amount') || '0', 10) + parseInt(invoiceForm.watch('tax') || '0', 10)).toFixed(2)}</span>
                     </div>
                   </div>
                 </div>
                 <DialogFooter>
-                  <Button onClick={handleCreateInvoice}>{editingInvoice ? 'Update Invoice' : 'Create Invoice'}</Button>
+                  <Button onClick={() => void invoiceForm.handleSubmit(handleCreateInvoice, () => toast.error('Please fix the invoice form'))()}>{editingInvoice ? 'Update Invoice' : 'Create Invoice'}</Button>
                 </DialogFooter>
+                </Form>
               </DialogContent>
             </Dialog>
           </div>

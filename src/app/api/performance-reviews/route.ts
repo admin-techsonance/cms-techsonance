@@ -1,321 +1,74 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '@/db';
-import { performanceReviews, employees, users } from '@/db/schema';
-import { eq, and, desc } from 'drizzle-orm';
-import { safeErrorMessage } from '@/lib/constants';
+import { employees, performanceReviews, users } from '@/db/schema';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, NotFoundError } from '@/server/http/errors';
+import { createPerformanceReviewSchema, updatePerformanceReviewSchema } from '@/server/validation/hr';
 
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    // Single performance review by ID
-    if (id) {
-      if (!id || isNaN(parseInt(id))) {
-        return NextResponse.json(
-          { error: 'Valid ID is required', code: 'INVALID_ID' },
-          { status: 400 }
-        );
-      }
-
-      const review = await db
-        .select()
-        .from(performanceReviews)
-        .where(eq(performanceReviews.id, parseInt(id)))
-        .limit(1);
-
-      if (review.length === 0) {
-        return NextResponse.json(
-          { error: 'Performance review not found', code: 'NOT_FOUND' },
-          { status: 404 }
-        );
-      }
-
-      return NextResponse.json(review[0], { status: 200 });
-    }
-
-    // List with pagination and filtering
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
-    const employeeId = searchParams.get('employeeId');
-    const reviewerId = searchParams.get('reviewerId');
-    const rating = searchParams.get('rating');
-    const reviewPeriod = searchParams.get('reviewPeriod');
-
-    let query = db.select().from(performanceReviews);
-
-    // Build filter conditions
-    const conditions = [];
-
-    if (employeeId) {
-      const empId = parseInt(employeeId);
-      if (!isNaN(empId)) {
-        conditions.push(eq(performanceReviews.employeeId, empId));
-      }
-    }
-
-    if (reviewerId) {
-      const revId = parseInt(reviewerId);
-      if (!isNaN(revId)) {
-        conditions.push(eq(performanceReviews.reviewerId, revId));
-      }
-    }
-
-    if (rating) {
-      const ratingNum = parseInt(rating);
-      if (!isNaN(ratingNum) && ratingNum >= 1 && ratingNum <= 5) {
-        conditions.push(eq(performanceReviews.rating, ratingNum));
-      }
-    }
-
-    if (reviewPeriod) {
-      conditions.push(eq(performanceReviews.reviewPeriod, reviewPeriod));
-    }
-
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-
-    const results = await query
-      .orderBy(desc(performanceReviews.createdAt))
-      .limit(limit)
-      .offset(offset);
-
-    return NextResponse.json(results, { status: 200 });
-  } catch (error) {
-    console.error('GET error:', error);
-    return NextResponse.json(
-      { error: safeErrorMessage(error) },
-      { status: 500 }
-    );
+export const GET = withApiHandler(async (request) => {
+  const searchParams = new URL(request.url).searchParams;
+  const id = searchParams.get('id');
+  if (id) {
+    const [review] = await db.select().from(performanceReviews).where(eq(performanceReviews.id, Number(id))).limit(1);
+    if (!review) throw new NotFoundError('Performance review not found');
+    return NextResponse.json(review);
   }
-}
+  const limit = Math.min(Number(searchParams.get('limit') ?? '10'), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const employeeId = searchParams.get('employeeId');
+  const reviewerId = searchParams.get('reviewerId');
+  const rating = searchParams.get('rating');
+  const reviewPeriod = searchParams.get('reviewPeriod');
+  const conditions = [];
+  if (employeeId) conditions.push(eq(performanceReviews.employeeId, Number(employeeId)));
+  if (reviewerId) conditions.push(eq(performanceReviews.reviewerId, Number(reviewerId)));
+  if (rating) conditions.push(eq(performanceReviews.rating, Number(rating)));
+  if (reviewPeriod) conditions.push(eq(performanceReviews.reviewPeriod, reviewPeriod));
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+  let query = db.select().from(performanceReviews);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(performanceReviews);
+  if (whereClause) { query = query.where(whereClause) as typeof query; countQuery = countQuery.where(whereClause) as typeof countQuery; }
+  const [rows, countRows] = await Promise.all([query.orderBy(desc(performanceReviews.createdAt)).limit(limit).offset(offset), countQuery]);
+  return NextResponse.json({ success: true, data: rows, message: 'Performance reviews fetched successfully', errors: null, meta: { page: Math.floor(offset / limit) + 1, limit, total: Number(countRows[0]?.count ?? 0) } });
+}, { requireAuth: true, roles: ['Manager'] });
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { employeeId, reviewerId, rating, reviewPeriod, comments } = body;
+export const POST = withApiHandler(async (request, context) => {
+  const payload = createPerformanceReviewSchema.parse(await request.json());
+  const [employee] = await db.select().from(employees).where(eq(employees.id, payload.employeeId)).limit(1);
+  if (!employee) throw new NotFoundError('Employee not found');
+  const reviewerId = payload.reviewerId ?? context.auth!.user.id;
+  const [reviewer] = await db.select().from(users).where(eq(users.id, reviewerId)).limit(1);
+  if (!reviewer) throw new NotFoundError('Reviewer not found');
+  const [created] = await db.insert(performanceReviews).values({
+    employeeId: payload.employeeId,
+    reviewerId,
+    rating: payload.rating,
+    reviewPeriod: payload.reviewPeriod,
+    comments: payload.comments ?? null,
+    createdAt: new Date().toISOString(),
+  }).returning();
+  return NextResponse.json(created, { status: 201 });
+}, { requireAuth: true, roles: ['Manager'] });
 
-    // Validate required fields
-    if (!employeeId) {
-      return NextResponse.json(
-        { error: 'Employee ID is required', code: 'MISSING_EMPLOYEE_ID' },
-        { status: 400 }
-      );
-    }
+export const PUT = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid performance review id is required');
+  const payload = updatePerformanceReviewSchema.parse(await request.json());
+  const [updated] = await db.update(performanceReviews).set({
+    ...(payload.rating !== undefined ? { rating: payload.rating } : {}),
+    ...(payload.reviewPeriod !== undefined ? { reviewPeriod: payload.reviewPeriod } : {}),
+    ...(payload.comments !== undefined ? { comments: payload.comments ?? null } : {}),
+  }).where(eq(performanceReviews.id, id)).returning();
+  if (!updated) throw new NotFoundError('Performance review not found');
+  return NextResponse.json(updated);
+}, { requireAuth: true, roles: ['Manager'] });
 
-    if (!reviewerId) {
-      return NextResponse.json(
-        { error: 'Reviewer ID is required', code: 'MISSING_REVIEWER_ID' },
-        { status: 400 }
-      );
-    }
+export const DELETE = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid performance review id is required');
+  const [deleted] = await db.delete(performanceReviews).where(eq(performanceReviews.id, id)).returning();
+  if (!deleted) throw new NotFoundError('Performance review not found');
+  return NextResponse.json({ message: 'Performance review deleted successfully', review: deleted });
+}, { requireAuth: true, roles: ['Manager'] });
 
-    if (!rating) {
-      return NextResponse.json(
-        { error: 'Rating is required', code: 'MISSING_RATING' },
-        { status: 400 }
-      );
-    }
-
-    if (!reviewPeriod || reviewPeriod.trim() === '') {
-      return NextResponse.json(
-        { error: 'Review period is required', code: 'MISSING_REVIEW_PERIOD' },
-        { status: 400 }
-      );
-    }
-
-    // Validate rating range
-    const ratingNum = parseInt(rating);
-    if (isNaN(ratingNum) || ratingNum < 1 || ratingNum > 5) {
-      return NextResponse.json(
-        { error: 'Rating must be between 1 and 5', code: 'INVALID_RATING' },
-        { status: 400 }
-      );
-    }
-
-    // Validate employeeId exists
-    const employee = await db
-      .select()
-      .from(employees)
-      .where(eq(employees.id, parseInt(employeeId)))
-      .limit(1);
-
-    if (employee.length === 0) {
-      return NextResponse.json(
-        { error: 'Employee not found', code: 'EMPLOYEE_NOT_FOUND' },
-        { status: 400 }
-      );
-    }
-
-    // Validate reviewerId exists
-    const reviewer = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, parseInt(reviewerId)))
-      .limit(1);
-
-    if (reviewer.length === 0) {
-      return NextResponse.json(
-        { error: 'Reviewer not found', code: 'REVIEWER_NOT_FOUND' },
-        { status: 400 }
-      );
-    }
-
-    // Create new performance review
-    const newReview = await db
-      .insert(performanceReviews)
-      .values({
-        employeeId: parseInt(employeeId),
-        reviewerId: parseInt(reviewerId),
-        rating: ratingNum,
-        reviewPeriod: reviewPeriod.trim(),
-        comments: comments?.trim() || null,
-        createdAt: new Date().toISOString(),
-      })
-      .returning();
-
-    return NextResponse.json(newReview[0], { status: 201 });
-  } catch (error) {
-    console.error('POST error:', error);
-    return NextResponse.json(
-      { error: safeErrorMessage(error) },
-      { status: 500 }
-    );
-  }
-}
-
-export async function PUT(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json(
-        { error: 'Valid ID is required', code: 'INVALID_ID' },
-        { status: 400 }
-      );
-    }
-
-    // Check if performance review exists
-    const existing = await db
-      .select()
-      .from(performanceReviews)
-      .where(eq(performanceReviews.id, parseInt(id)))
-      .limit(1);
-
-    if (existing.length === 0) {
-      return NextResponse.json(
-        { error: 'Performance review not found', code: 'NOT_FOUND' },
-        { status: 404 }
-      );
-    }
-
-    const body = await request.json();
-    const { rating, reviewPeriod, comments } = body;
-
-    const updates: any = {};
-
-    // Validate and add rating if provided
-    if (rating !== undefined) {
-      const ratingNum = parseInt(rating);
-      if (isNaN(ratingNum) || ratingNum < 1 || ratingNum > 5) {
-        return NextResponse.json(
-          { error: 'Rating must be between 1 and 5', code: 'INVALID_RATING' },
-          { status: 400 }
-        );
-      }
-      updates.rating = ratingNum;
-    }
-
-    // Validate and add reviewPeriod if provided
-    if (reviewPeriod !== undefined) {
-      if (reviewPeriod.trim() === '') {
-        return NextResponse.json(
-          {
-            error: 'Review period cannot be empty',
-            code: 'INVALID_REVIEW_PERIOD',
-          },
-          { status: 400 }
-        );
-      }
-      updates.reviewPeriod = reviewPeriod.trim();
-    }
-
-    // Add comments if provided
-    if (comments !== undefined) {
-      updates.comments = comments?.trim() || null;
-    }
-
-    // If no valid updates, return error
-    if (Object.keys(updates).length === 0) {
-      return NextResponse.json(
-        { error: 'No valid fields to update', code: 'NO_UPDATES' },
-        { status: 400 }
-      );
-    }
-
-    // Perform update
-    const updated = await db
-      .update(performanceReviews)
-      .set(updates)
-      .where(eq(performanceReviews.id, parseInt(id)))
-      .returning();
-
-    return NextResponse.json(updated[0], { status: 200 });
-  } catch (error) {
-    console.error('PUT error:', error);
-    return NextResponse.json(
-      { error: safeErrorMessage(error) },
-      { status: 500 }
-    );
-  }
-}
-
-export async function DELETE(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json(
-        { error: 'Valid ID is required', code: 'INVALID_ID' },
-        { status: 400 }
-      );
-    }
-
-    // Check if performance review exists
-    const existing = await db
-      .select()
-      .from(performanceReviews)
-      .where(eq(performanceReviews.id, parseInt(id)))
-      .limit(1);
-
-    if (existing.length === 0) {
-      return NextResponse.json(
-        { error: 'Performance review not found', code: 'NOT_FOUND' },
-        { status: 404 }
-      );
-    }
-
-    // Delete the performance review
-    const deleted = await db
-      .delete(performanceReviews)
-      .where(eq(performanceReviews.id, parseInt(id)))
-      .returning();
-
-    return NextResponse.json(
-      {
-        message: 'Performance review deleted successfully',
-        review: deleted[0],
-      },
-      { status: 200 }
-    );
-  } catch (error) {
-    console.error('DELETE error:', error);
-    return NextResponse.json(
-      { error: safeErrorMessage(error) },
-      { status: 500 }
-    );
-  }
-}

@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -10,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -21,6 +24,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import {
+  projectFormSchema,
+  projectPriorityOptions,
+  projectStatusOptions,
+  type ProjectFormValues,
+} from '@/lib/forms/schemas';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -36,14 +45,6 @@ interface Client {
   companyName: string;
 }
 
-interface FormErrors {
-  name?: string;
-  clientId?: string;
-  startDate?: string;
-  endDate?: string;
-  budget?: string;
-}
-
 export function ProjectFormDialog({
   open,
   onOpenChange,
@@ -52,17 +53,19 @@ export function ProjectFormDialog({
 }: ProjectFormDialogProps) {
   const [loading, setLoading] = useState(false);
   const [clients, setClients] = useState<Client[]>([]);
-  const [errors, setErrors] = useState<FormErrors>({});
-  const [formData, setFormData] = useState({
-    name: '',
-    description: '',
-    clientId: '',
-    status: 'planning',
-    priority: 'medium',
-    startDate: '',
-    endDate: '',
-    budget: '',
-    isActive: true,
+  const form = useForm<ProjectFormValues>({
+    resolver: zodResolver(projectFormSchema),
+    defaultValues: {
+      name: '',
+      description: '',
+      clientId: '',
+      status: 'planning',
+      priority: 'medium',
+      startDate: '',
+      endDate: '',
+      budget: '',
+      isActive: true,
+    },
   });
 
   useEffect(() => {
@@ -73,7 +76,7 @@ export function ProjectFormDialog({
 
   useEffect(() => {
     if (project) {
-      setFormData({
+      form.reset({
         name: project.name || '',
         description: project.description || '',
         clientId: project.clientId?.toString() || '',
@@ -85,7 +88,7 @@ export function ProjectFormDialog({
         isActive: project.isActive !== undefined ? project.isActive : true,
       });
     } else {
-      setFormData({
+      form.reset({
         name: '',
         description: '',
         clientId: '',
@@ -97,149 +100,61 @@ export function ProjectFormDialog({
         isActive: true,
       });
     }
-    setErrors({});
-  }, [project, open]);
+  }, [project, open, form]);
 
   const fetchClients = async () => {
     try {
-      const token = localStorage.getItem('session_token');
       const response = await fetch('/api/clients?limit=100', {
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json',
         }
       });
       if (response.ok) {
         const data = await response.json();
-        setClients(data);
+        setClients(Array.isArray(data) ? data : data.data ?? []);
       }
-    } catch (error) {
-      console.error('Error fetching clients:', error);
+    } catch {
       toast.error('Failed to load clients');
     }
   };
 
-  const validateForm = (): boolean => {
-    const newErrors: FormErrors = {};
-
-    // Validate name
-    if (!formData.name.trim()) {
-      newErrors.name = 'Project name is required';
-    } else if (formData.name.trim().length < 3) {
-      newErrors.name = 'Project name must be at least 3 characters';
-    } else if (formData.name.trim().length > 100) {
-      newErrors.name = 'Project name must not exceed 100 characters';
-    }
-
-    // Validate client
-    if (!formData.clientId) {
-      newErrors.clientId = 'Please select a client';
-    }
-
-    // Validate dates
-    if (formData.startDate && formData.endDate) {
-      const start = new Date(formData.startDate);
-      const end = new Date(formData.endDate);
-      
-      if (end < start) {
-        newErrors.endDate = 'End date must be after start date';
-      }
-    }
-
-    // Validate budget
-    if (formData.budget) {
-      const budgetNum = parseInt(formData.budget);
-      if (isNaN(budgetNum)) {
-        newErrors.budget = 'Budget must be a valid number';
-      } else if (budgetNum < 0) {
-        newErrors.budget = 'Budget must be a positive number';
-      } else if (budgetNum > 999999999) {
-        newErrors.budget = 'Budget is too large';
-      }
-    }
-
-    setErrors(newErrors);
-    
-    if (Object.keys(newErrors).length > 0) {
-      console.log('Validation errors:', newErrors);
-    }
-    
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    console.log('=== FORM SUBMISSION STARTED ===');
-    console.log('Form data:', formData);
-    console.log('Client ID:', formData.clientId);
-    console.log('Client ID type:', typeof formData.clientId);
-    console.log('Is client ID empty?', !formData.clientId);
-
-    if (!validateForm()) {
-      console.log('=== VALIDATION FAILED ===');
-      console.log('Errors:', errors);
-      toast.error('Please fix the form errors before submitting');
-      return;
-    }
-
-    console.log('=== VALIDATION PASSED ===');
+  const handleSubmit = async (values: ProjectFormValues) => {
     setLoading(true);
 
     try {
-      const token = localStorage.getItem('session_token');
-      
-      if (!token) {
-        console.error('No session token found');
-        toast.error('Authentication required. Please log in.');
-        setLoading(false);
-        return;
-      }
-
-      console.log('Session token found:', token.substring(0, 20) + '...');
-
       const url = project ? `/api/projects?id=${project.id}` : '/api/projects';
       const method = project ? 'PUT' : 'POST';
 
       const payload: any = {
-        name: formData.name.trim(),
-        description: formData.description.trim() || null,
-        clientId: parseInt(formData.clientId),
-        status: formData.status,
-        priority: formData.priority,
-        startDate: formData.startDate || null,
-        endDate: formData.endDate || null,
-        budget: formData.budget ? parseInt(formData.budget) : null,
-        isActive: formData.isActive,
+        name: values.name.trim(),
+        description: values.description?.trim() || null,
+        clientId: parseInt(values.clientId, 10),
+        status: values.status,
+        priority: values.priority,
+        startDate: values.startDate || null,
+        endDate: values.endDate || null,
+        budget: values.budget ? parseInt(values.budget, 10) : null,
+        isActive: values.isActive,
       };
-
-      console.log('Sending request to:', url);
-      console.log('Method:', method);
-      console.log('Payload:', payload);
 
       const response = await fetch(url, {
         method,
         headers: { 
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify(payload),
       });
 
-      console.log('Response status:', response.status);
-
       if (response.ok) {
-        const result = await response.json();
-        console.log('Success! Created/Updated project:', result);
+        await response.json();
         toast.success(project ? 'Project updated successfully!' : 'Project created successfully!');
         onSuccess();
         onOpenChange(false);
       } else {
         const error = await response.json();
-        console.error('API error response:', error);
         toast.error(error.error || 'Failed to save project');
       }
-    } catch (error) {
-      console.error('Error saving project:', error);
+    } catch {
       toast.error('An error occurred while saving the project');
     } finally {
       setLoading(false);
@@ -256,69 +171,80 @@ export function ProjectFormDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Show validation summary if there are errors */}
-          {Object.keys(errors).length > 0 && (
+        <Form {...form}>
+        <form onSubmit={form.handleSubmit(handleSubmit, () => toast.error('Please fix the form errors before submitting'))} className="space-y-4">
+          {Object.keys(form.formState.errors).length > 0 && (
             <div className="bg-destructive/10 border border-destructive rounded-lg p-4">
               <p className="text-sm font-semibold text-destructive mb-2">
                 Please fix the following errors:
               </p>
               <ul className="list-disc list-inside text-sm text-destructive space-y-1">
-                {errors.name && <li>{errors.name}</li>}
-                {errors.clientId && <li>{errors.clientId}</li>}
-                {errors.startDate && <li>{errors.startDate}</li>}
-                {errors.endDate && <li>{errors.endDate}</li>}
-                {errors.budget && <li>{errors.budget}</li>}
+                {form.formState.errors.name && <li>{form.formState.errors.name.message}</li>}
+                {form.formState.errors.clientId && <li>{form.formState.errors.clientId.message}</li>}
+                {form.formState.errors.startDate && <li>{form.formState.errors.startDate.message}</li>}
+                {form.formState.errors.endDate && <li>{form.formState.errors.endDate.message}</li>}
+                {form.formState.errors.budget && <li>{form.formState.errors.budget.message}</li>}
               </ul>
             </div>
           )}
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="name"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="name">
               Project Title <span className="text-destructive">*</span>
             </Label>
+            <FormControl>
             <Input
               id="name"
-              value={formData.name}
-              onChange={(e) => {
-                setFormData({ ...formData, name: e.target.value });
-                if (errors.name) setErrors({ ...errors, name: undefined });
-              }}
+              {...field}
               placeholder="E-commerce Platform"
-              className={errors.name ? 'border-destructive focus-visible:ring-destructive' : ''}
             />
-            {errors.name && (
-              <p className="text-sm text-destructive font-medium">{errors.name}</p>
+            </FormControl>
+            <FormMessage className="text-sm font-medium" />
+          </FormItem>
             )}
-          </div>
+          />
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="description"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="description">Description</Label>
+            <FormControl>
             <Textarea
               id="description"
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              {...field}
               placeholder="Project overview and goals..."
               rows={3}
             />
-          </div>
+            </FormControl>
+            <FormMessage className="text-sm font-medium" />
+          </FormItem>
+            )}
+          />
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="clientId"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="clientId">
                 Client <span className="text-destructive">*</span>
               </Label>
               <Select 
-                value={formData.clientId} 
-                onValueChange={(value) => {
-                  console.log('Client selected:', value);
-                  setFormData({ ...formData, clientId: value });
-                  if (errors.clientId) setErrors({ ...errors, clientId: undefined });
-                }}
+                value={field.value} 
+                onValueChange={field.onChange}
               >
-                <SelectTrigger className={errors.clientId ? 'border-destructive focus:ring-destructive' : ''}>
+                <FormControl>
+                <SelectTrigger>
                   <SelectValue placeholder="Select client" />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
                   {clients.length === 0 ? (
                     <div className="px-2 py-1.5 text-sm text-muted-foreground">
@@ -333,118 +259,147 @@ export function ProjectFormDialog({
                   )}
                 </SelectContent>
               </Select>
-              {errors.clientId && (
-                <p className="text-sm text-destructive font-bold">{errors.clientId}</p>
+              <FormMessage className="text-sm font-bold" />
+            </FormItem>
               )}
-            </div>
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="budget"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="budget">Budget (₹)</Label>
+              <FormControl>
               <Input
                 id="budget"
                 type="number"
                 min="0"
-                value={formData.budget}
-                onChange={(e) => {
-                  setFormData({ ...formData, budget: e.target.value });
-                  if (errors.budget) setErrors({ ...errors, budget: undefined });
-                }}
+                {...field}
                 placeholder="50000"
-                className={errors.budget ? 'border-destructive focus-visible:ring-destructive' : ''}
               />
-              {errors.budget && (
-                <p className="text-sm text-destructive font-medium">{errors.budget}</p>
+              </FormControl>
+              <FormMessage className="text-sm font-medium" />
+            </FormItem>
               )}
-            </div>
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="startDate"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="startDate">Start Date</Label>
+              <FormControl>
               <Input
                 id="startDate"
                 type="date"
-                value={formData.startDate}
-                onChange={(e) => {
-                  setFormData({ ...formData, startDate: e.target.value });
-                  if (errors.startDate) setErrors({ ...errors, startDate: undefined });
-                }}
-                className={errors.startDate ? 'border-destructive focus-visible:ring-destructive' : ''}
+                {...field}
               />
-              {errors.startDate && (
-                <p className="text-sm text-destructive font-medium">{errors.startDate}</p>
+              </FormControl>
+              <FormMessage className="text-sm font-medium" />
+            </FormItem>
               )}
-            </div>
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="endDate"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="endDate">End Date</Label>
+              <FormControl>
               <Input
                 id="endDate"
                 type="date"
-                value={formData.endDate}
-                onChange={(e) => {
-                  setFormData({ ...formData, endDate: e.target.value });
-                  if (errors.endDate) setErrors({ ...errors, endDate: undefined });
-                }}
-                className={errors.endDate ? 'border-destructive focus-visible:ring-destructive' : ''}
+                {...field}
               />
-              {errors.endDate && (
-                <p className="text-sm text-destructive font-medium">{errors.endDate}</p>
+              </FormControl>
+              <FormMessage className="text-sm font-medium" />
+            </FormItem>
               )}
-            </div>
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="priority"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="priority">
                 Priority <span className="text-destructive">*</span>
               </Label>
-              <Select value={formData.priority} onValueChange={(value) => setFormData({ ...formData, priority: value })}>
+              <Select value={field.value} onValueChange={field.onChange}>
+                <FormControl>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
-                  <SelectItem value="critical">Critical</SelectItem>
+                  {projectPriorityOptions.map((priority) => (
+                    <SelectItem key={priority} value={priority}>
+                      {priority.charAt(0).toUpperCase() + priority.slice(1)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-            </div>
+              <FormMessage className="text-sm font-medium" />
+            </FormItem>
+              )}
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="status"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="status">
                 Project Status <span className="text-destructive">*</span>
               </Label>
-              <Select value={formData.status} onValueChange={(value) => setFormData({ ...formData, status: value })}>
+              <Select value={field.value} onValueChange={field.onChange}>
+                <FormControl>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
-                  <SelectItem value="planning">Planning</SelectItem>
-                  <SelectItem value="in_progress">In Progress</SelectItem>
-                  <SelectItem value="on_hold">On Hold</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
+                  {projectStatusOptions.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {status === 'in_progress' ? 'In Progress' : status === 'on_hold' ? 'On Hold' : status.charAt(0).toUpperCase() + status.slice(1)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-            </div>
+              <FormMessage className="text-sm font-medium" />
+            </FormItem>
+              )}
+            />
           </div>
 
-          <div className="flex items-center justify-between rounded-lg border p-4">
+          <FormField
+            control={form.control}
+            name="isActive"
+            render={({ field }) => (
+          <FormItem className="flex items-center justify-between rounded-lg border p-4">
             <div className="space-y-0.5">
               <Label htmlFor="isActive" className="text-base">
                 Active Status
               </Label>
               <p className="text-sm text-muted-foreground">
-                {formData.isActive ? 'Project is currently active' : 'Project is inactive'}
+                {field.value ? 'Project is currently active' : 'Project is inactive'}
               </p>
             </div>
             <Switch
               id="isActive"
-              checked={formData.isActive}
-              onCheckedChange={(checked) => setFormData({ ...formData, isActive: checked })}
+              checked={field.value}
+              onCheckedChange={field.onChange}
             />
-          </div>
+          </FormItem>
+            )}
+          />
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
@@ -462,6 +417,7 @@ export function ProjectFormDialog({
             </Button>
           </DialogFooter>
         </form>
+        </Form>
       </DialogContent>
     </Dialog>
   );

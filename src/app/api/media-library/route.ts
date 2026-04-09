@@ -1,394 +1,132 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { and, desc, eq, like, sql } from 'drizzle-orm';
 import { db } from '@/db';
-import { mediaLibrary, users } from '@/db/schema';
-import { eq, like, and, or, desc } from 'drizzle-orm';
-import { safeErrorMessage } from '@/lib/constants';
+import { mediaLibrary } from '@/db/schema';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, ForbiddenError, NotFoundError } from '@/server/http/errors';
+import { apiSuccess } from '@/server/http/response';
+import { createMediaFileSchema, updateMediaFileSchema } from '@/server/validation/assets';
 
-const VALID_FILE_TYPES = [
-  'image/jpeg',
-  'image/jpg',
-  'image/png',
-  'image/gif',
-  'image/webp',
-  'image/svg+xml',
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'video/mp4',
-  'video/mpeg',
-  'video/quicktime',
-  'audio/mpeg',
-  'audio/wav',
-  'text/plain',
-  'application/zip',
-  'application/x-rar-compressed'
-];
+export const GET = withApiHandler(async (request, context) => {
+  const searchParams = new URL(request.url).searchParams;
+  const id = searchParams.get('id');
+  const user = context.auth!.user;
+  const isAdminLike = user.role === 'Admin' || user.role === 'SuperAdmin' || user.role === 'Manager';
 
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    // Single record fetch
-    if (id) {
-      if (!id || isNaN(parseInt(id))) {
-        return NextResponse.json(
-          { error: 'Valid ID is required', code: 'INVALID_ID' },
-          { status: 400 }
-        );
-      }
-
-      const record = await db
-        .select()
-        .from(mediaLibrary)
-        .where(eq(mediaLibrary.id, parseInt(id)))
-        .limit(1);
-
-      if (record.length === 0) {
-        return NextResponse.json(
-          { error: 'Media file not found', code: 'NOT_FOUND' },
-          { status: 404 }
-        );
-      }
-
-      return NextResponse.json(record[0], { status: 200 });
+  if (id) {
+    const mediaId = Number(id);
+    if (!Number.isInteger(mediaId) || mediaId <= 0) {
+      throw new BadRequestError('Valid media item id is required');
     }
 
-    // List with pagination, search, and filtering
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
-    const search = searchParams.get('search');
-    const fileType = searchParams.get('fileType');
-    const uploadedBy = searchParams.get('uploadedBy');
-
-    let query = db.select().from(mediaLibrary);
-
-    // Build WHERE conditions
-    const conditions = [];
-
-    if (search) {
-      conditions.push(like(mediaLibrary.name, `%${search}%`));
+    const [record] = await db.select().from(mediaLibrary).where(eq(mediaLibrary.id, mediaId)).limit(1);
+    if (!record) throw new NotFoundError('Media file not found');
+    if (!isAdminLike && record.uploadedBy !== user.id) {
+      throw new ForbiddenError('You do not have permission to view this media file');
     }
 
-    if (fileType) {
-      conditions.push(eq(mediaLibrary.fileType, fileType));
-    }
-
-    if (uploadedBy) {
-      const uploadedByInt = parseInt(uploadedBy);
-      if (!isNaN(uploadedByInt)) {
-        conditions.push(eq(mediaLibrary.uploadedBy, uploadedByInt));
-      }
-    }
-
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-
-    // Apply sorting, pagination
-    const results = await query
-      .orderBy(desc(mediaLibrary.createdAt))
-      .limit(limit)
-      .offset(offset);
-
-    return NextResponse.json(results, { status: 200 });
-  } catch (error) {
-    console.error('GET error:', error);
-    return NextResponse.json(
-      { error: safeErrorMessage(error) },
-      { status: 500 }
-    );
+    return apiSuccess(record, 'Media file fetched successfully');
   }
-}
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { name, fileUrl, fileType, fileSize, uploadedBy } = body;
+  const limit = Math.min(Math.max(Number(searchParams.get('limit') ?? '10'), 1), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const search = searchParams.get('search');
+  const fileType = searchParams.get('fileType');
+  const uploadedByParam = searchParams.get('uploadedBy');
+  const conditions = [];
 
-    // Validate required fields
-    if (!name || typeof name !== 'string' || name.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'Name is required and must be a non-empty string', code: 'MISSING_NAME' },
-        { status: 400 }
-      );
+  if (search) conditions.push(like(mediaLibrary.name, `%${search}%`));
+  if (fileType) conditions.push(eq(mediaLibrary.fileType, fileType));
+
+  if (uploadedByParam) {
+    const uploadedBy = Number(uploadedByParam);
+    if (!Number.isInteger(uploadedBy) || uploadedBy <= 0) {
+      throw new BadRequestError('Valid uploadedBy user id is required');
     }
-
-    if (!fileUrl || typeof fileUrl !== 'string' || fileUrl.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'File URL is required and must be a non-empty string', code: 'MISSING_FILE_URL' },
-        { status: 400 }
-      );
+    if (!isAdminLike && uploadedBy !== user.id) {
+      throw new ForbiddenError('You can only filter by your own uploads');
     }
-
-    if (!fileType || typeof fileType !== 'string' || fileType.trim().length === 0) {
-      return NextResponse.json(
-        { error: 'File type is required and must be a non-empty string', code: 'MISSING_FILE_TYPE' },
-        { status: 400 }
-      );
-    }
-
-    // Validate fileType is in allowed list
-    if (!VALID_FILE_TYPES.includes(fileType.toLowerCase())) {
-      return NextResponse.json(
-        {
-          error: `Invalid file type. Allowed types: ${VALID_FILE_TYPES.join(', ')}`,
-          code: 'INVALID_FILE_TYPE'
-        },
-        { status: 400 }
-      );
-    }
-
-    if (!fileSize || typeof fileSize !== 'number') {
-      return NextResponse.json(
-        { error: 'File size is required and must be a number', code: 'MISSING_FILE_SIZE' },
-        { status: 400 }
-      );
-    }
-
-    // Validate fileSize is positive integer
-    if (fileSize <= 0 || !Number.isInteger(fileSize)) {
-      return NextResponse.json(
-        { error: 'File size must be a positive integer (bytes)', code: 'INVALID_FILE_SIZE' },
-        { status: 400 }
-      );
-    }
-
-    if (!uploadedBy || typeof uploadedBy !== 'number') {
-      return NextResponse.json(
-        { error: 'Uploaded by user ID is required and must be a number', code: 'MISSING_UPLOADED_BY' },
-        { status: 400 }
-      );
-    }
-
-    // Validate uploadedBy exists in users table
-    const userExists = await db
-      .select()
-      .from(users)
-      .where(eq(users.id, uploadedBy))
-      .limit(1);
-
-    if (userExists.length === 0) {
-      return NextResponse.json(
-        { error: 'User not found for uploadedBy field', code: 'USER_NOT_FOUND' },
-        { status: 400 }
-      );
-    }
-
-    // Create media file record
-    const newMediaFile = await db
-      .insert(mediaLibrary)
-      .values({
-        name: name.trim(),
-        fileUrl: fileUrl.trim(),
-        fileType: fileType.toLowerCase().trim(),
-        fileSize,
-        uploadedBy,
-        createdAt: new Date().toISOString()
-      })
-      .returning();
-
-    return NextResponse.json(newMediaFile[0], { status: 201 });
-  } catch (error) {
-    console.error('POST error:', error);
-    return NextResponse.json(
-      { error: safeErrorMessage(error) },
-      { status: 500 }
-    );
+    conditions.push(eq(mediaLibrary.uploadedBy, uploadedBy));
+  } else if (!isAdminLike) {
+    conditions.push(eq(mediaLibrary.uploadedBy, user.id));
   }
-}
 
-export async function PUT(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json(
-        { error: 'Valid ID is required', code: 'INVALID_ID' },
-        { status: 400 }
-      );
-    }
-
-    const mediaId = parseInt(id);
-
-    // Check if record exists
-    const existingRecord = await db
-      .select()
-      .from(mediaLibrary)
-      .where(eq(mediaLibrary.id, mediaId))
-      .limit(1);
-
-    if (existingRecord.length === 0) {
-      return NextResponse.json(
-        { error: 'Media file not found', code: 'NOT_FOUND' },
-        { status: 404 }
-      );
-    }
-
-    const body = await request.json();
-    const { name, fileUrl, fileType, fileSize, uploadedBy } = body;
-
-    const updates: Record<string, any> = {};
-
-    // Validate and add name if provided
-    if (name !== undefined) {
-      if (typeof name !== 'string' || name.trim().length === 0) {
-        return NextResponse.json(
-          { error: 'Name must be a non-empty string', code: 'INVALID_NAME' },
-          { status: 400 }
-        );
-      }
-      updates.name = name.trim();
-    }
-
-    // Validate and add fileUrl if provided
-    if (fileUrl !== undefined) {
-      if (typeof fileUrl !== 'string' || fileUrl.trim().length === 0) {
-        return NextResponse.json(
-          { error: 'File URL must be a non-empty string', code: 'INVALID_FILE_URL' },
-          { status: 400 }
-        );
-      }
-      updates.fileUrl = fileUrl.trim();
-    }
-
-    // Validate and add fileType if provided
-    if (fileType !== undefined) {
-      if (typeof fileType !== 'string' || fileType.trim().length === 0) {
-        return NextResponse.json(
-          { error: 'File type must be a non-empty string', code: 'INVALID_FILE_TYPE' },
-          { status: 400 }
-        );
-      }
-      if (!VALID_FILE_TYPES.includes(fileType.toLowerCase())) {
-        return NextResponse.json(
-          {
-            error: `Invalid file type. Allowed types: ${VALID_FILE_TYPES.join(', ')}`,
-            code: 'INVALID_FILE_TYPE'
-          },
-          { status: 400 }
-        );
-      }
-      updates.fileType = fileType.toLowerCase().trim();
-    }
-
-    // Validate and add fileSize if provided
-    if (fileSize !== undefined) {
-      if (typeof fileSize !== 'number') {
-        return NextResponse.json(
-          { error: 'File size must be a number', code: 'INVALID_FILE_SIZE' },
-          { status: 400 }
-        );
-      }
-      if (fileSize <= 0 || !Number.isInteger(fileSize)) {
-        return NextResponse.json(
-          { error: 'File size must be a positive integer (bytes)', code: 'INVALID_FILE_SIZE' },
-          { status: 400 }
-        );
-      }
-      updates.fileSize = fileSize;
-    }
-
-    // Validate and add uploadedBy if provided
-    if (uploadedBy !== undefined) {
-      if (typeof uploadedBy !== 'number') {
-        return NextResponse.json(
-          { error: 'Uploaded by must be a number', code: 'INVALID_UPLOADED_BY' },
-          { status: 400 }
-        );
-      }
-
-      // Validate uploadedBy exists in users table
-      const userExists = await db
-        .select()
-        .from(users)
-        .where(eq(users.id, uploadedBy))
-        .limit(1);
-
-      if (userExists.length === 0) {
-        return NextResponse.json(
-          { error: 'User not found for uploadedBy field', code: 'USER_NOT_FOUND' },
-          { status: 400 }
-        );
-      }
-
-      updates.uploadedBy = uploadedBy;
-    }
-
-    // Check if there are any updates
-    if (Object.keys(updates).length === 0) {
-      return NextResponse.json(
-        { error: 'No valid fields provided for update', code: 'NO_UPDATES' },
-        { status: 400 }
-      );
-    }
-
-    // Perform update
-    const updatedRecord = await db
-      .update(mediaLibrary)
-      .set(updates)
-      .where(eq(mediaLibrary.id, mediaId))
-      .returning();
-
-    return NextResponse.json(updatedRecord[0], { status: 200 });
-  } catch (error) {
-    console.error('PUT error:', error);
-    return NextResponse.json(
-      { error: safeErrorMessage(error) },
-      { status: 500 }
-    );
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+  let query = db.select().from(mediaLibrary);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(mediaLibrary);
+  if (whereClause) {
+    query = query.where(whereClause) as typeof query;
+    countQuery = countQuery.where(whereClause) as typeof countQuery;
   }
-}
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+  const [rows, countRows] = await Promise.all([
+    query.orderBy(desc(mediaLibrary.createdAt)).limit(limit).offset(offset),
+    countQuery,
+  ]);
 
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json(
-        { error: 'Valid ID is required', code: 'INVALID_ID' },
-        { status: 400 }
-      );
-    }
+  return apiSuccess(rows, 'Media files fetched successfully', {
+    meta: { page: Math.floor(offset / limit) + 1, limit, total: Number(countRows[0]?.count ?? 0) },
+  });
+}, { requireAuth: true, roles: ['Employee'] });
 
-    const mediaId = parseInt(id);
+export const POST = withApiHandler(async (request, context) => {
+  const payload = createMediaFileSchema.parse(await request.json());
+  const [created] = await db.insert(mediaLibrary).values({
+    name: payload.name,
+    fileUrl: payload.fileUrl,
+    fileType: payload.fileType,
+    fileSize: payload.fileSize,
+    uploadedBy: context.auth!.user.id,
+    createdAt: new Date().toISOString(),
+  }).returning();
 
-    // Check if record exists
-    const existingRecord = await db
-      .select()
-      .from(mediaLibrary)
-      .where(eq(mediaLibrary.id, mediaId))
-      .limit(1);
+  return apiSuccess(created, 'Media file created successfully', { status: 201 });
+}, { requireAuth: true, roles: ['Employee'] });
 
-    if (existingRecord.length === 0) {
-      return NextResponse.json(
-        { error: 'Media file not found', code: 'NOT_FOUND' },
-        { status: 404 }
-      );
-    }
-
-    // Delete the record
-    const deletedRecord = await db
-      .delete(mediaLibrary)
-      .where(eq(mediaLibrary.id, mediaId))
-      .returning();
-
-    return NextResponse.json(
-      {
-        message: 'Media file deleted successfully',
-        deletedRecord: deletedRecord[0]
-      },
-      { status: 200 }
-    );
-  } catch (error) {
-    console.error('DELETE error:', error);
-    return NextResponse.json(
-      { error: safeErrorMessage(error) },
-      { status: 500 }
-    );
+export const PUT = withApiHandler(async (request, context) => {
+  const mediaId = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(mediaId) || mediaId <= 0) {
+    throw new BadRequestError('Valid media item id is required');
   }
-}
+
+  const payload = updateMediaFileSchema.parse(await request.json());
+  if (Object.keys(payload).length === 0) {
+    throw new BadRequestError('At least one field is required to update a media file');
+  }
+
+  const [existing] = await db.select().from(mediaLibrary).where(eq(mediaLibrary.id, mediaId)).limit(1);
+  if (!existing) throw new NotFoundError('Media file not found');
+
+  const user = context.auth!.user;
+  const isAdminLike = user.role === 'Admin' || user.role === 'SuperAdmin' || user.role === 'Manager';
+  if (!isAdminLike && existing.uploadedBy !== user.id) {
+    throw new ForbiddenError('You do not have permission to update this media file');
+  }
+
+  const [updated] = await db.update(mediaLibrary).set({
+    ...(payload.name !== undefined ? { name: payload.name } : {}),
+    ...(payload.fileUrl !== undefined ? { fileUrl: payload.fileUrl } : {}),
+    ...(payload.fileType !== undefined ? { fileType: payload.fileType } : {}),
+    ...(payload.fileSize !== undefined ? { fileSize: payload.fileSize } : {}),
+  }).where(eq(mediaLibrary.id, mediaId)).returning();
+
+  return apiSuccess(updated, 'Media file updated successfully');
+}, { requireAuth: true, roles: ['Employee'] });
+
+export const DELETE = withApiHandler(async (request, context) => {
+  const mediaId = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(mediaId) || mediaId <= 0) {
+    throw new BadRequestError('Valid media item id is required');
+  }
+
+  const [existing] = await db.select().from(mediaLibrary).where(eq(mediaLibrary.id, mediaId)).limit(1);
+  if (!existing) throw new NotFoundError('Media file not found');
+
+  const user = context.auth!.user;
+  const isAdminLike = user.role === 'Admin' || user.role === 'SuperAdmin' || user.role === 'Manager';
+  if (!isAdminLike && existing.uploadedBy !== user.id) {
+    throw new ForbiddenError('You do not have permission to delete this media file');
+  }
+
+  const [deleted] = await db.delete(mediaLibrary).where(eq(mediaLibrary.id, mediaId)).returning();
+  return apiSuccess(deleted, 'Media file deleted successfully');
+}, { requireAuth: true, roles: ['Employee'] });

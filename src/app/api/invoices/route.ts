@@ -1,535 +1,114 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { and, asc, desc, eq, gte, like, lte, sql } from 'drizzle-orm';
 import { db } from '@/db';
-import { invoices, clients, projects } from '@/db/schema';
-import { eq, like, and, or, desc, asc, gte, lte } from 'drizzle-orm';
-import { getCurrentUser } from '@/lib/auth';
-import { safeErrorMessage } from '@/lib/constants';
+import { clients, invoices, projects } from '@/db/schema';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, ConflictError, NotFoundError } from '@/server/http/errors';
+import { createInvoiceSchema, invoiceStatusSchema, updateInvoiceSchema } from '@/server/validation/billing';
 
-const VALID_STATUSES = ['draft', 'sent', 'paid', 'overdue', 'cancelled'];
-
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    // Single invoice by ID
-    if (id) {
-      if (!id || isNaN(parseInt(id))) {
-        return NextResponse.json({ 
-          error: "Valid ID is required",
-          code: "INVALID_ID" 
-        }, { status: 400 });
-      }
-
-      const invoice = await db.select()
-        .from(invoices)
-        .where(eq(invoices.id, parseInt(id)))
-        .limit(1);
-
-      if (invoice.length === 0) {
-        return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
-      }
-
-      return NextResponse.json(invoice[0], { status: 200 });
-    }
-
-    // List invoices with pagination, search, filtering, and sorting
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
-    const search = searchParams.get('search');
-    const clientId = searchParams.get('clientId');
-    const projectId = searchParams.get('projectId');
-    const status = searchParams.get('status');
-    const startDate = searchParams.get('startDate');
-    const endDate = searchParams.get('endDate');
-    const sort = searchParams.get('sort') ?? 'createdAt';
-    const order = searchParams.get('order') ?? 'desc';
-
-    let query = db.select().from(invoices);
-    const conditions = [];
-
-    // Search by invoice number
-    if (search) {
-      conditions.push(like(invoices.invoiceNumber, `%${search}%`));
-    }
-
-    // Filter by clientId
-    if (clientId && !isNaN(parseInt(clientId))) {
-      conditions.push(eq(invoices.clientId, parseInt(clientId)));
-    }
-
-    // Filter by projectId
-    if (projectId && !isNaN(parseInt(projectId))) {
-      conditions.push(eq(invoices.projectId, parseInt(projectId)));
-    }
-
-    // Filter by status
-    if (status && VALID_STATUSES.includes(status)) {
-      conditions.push(eq(invoices.status, status));
-    }
-
-    // Filter by date range
-    if (startDate) {
-      conditions.push(gte(invoices.dueDate, startDate));
-    }
-    if (endDate) {
-      conditions.push(lte(invoices.dueDate, endDate));
-    }
-
-    // Apply filters
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-
-    // Apply sorting
-    const sortColumn = sort === 'dueDate' ? invoices.dueDate : 
-                       sort === 'totalAmount' ? invoices.totalAmount : 
-                       invoices.createdAt;
-    
-    query = order === 'asc' 
-      ? query.orderBy(asc(sortColumn))
-      : query.orderBy(desc(sortColumn));
-
-    const results = await query.limit(limit).offset(offset);
-
-    return NextResponse.json(results, { status: 200 });
-  } catch (error) {
-    console.error('GET error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+async function assertInvoiceRelations(input: { clientId?: number; projectId?: number | null }) {
+  if (input.clientId !== undefined) {
+    const [client] = await db.select().from(clients).where(eq(clients.id, input.clientId)).limit(1);
+    if (!client) throw new NotFoundError('Client not found');
+  }
+  if (input.projectId) {
+    const [project] = await db.select().from(projects).where(eq(projects.id, input.projectId)).limit(1);
+    if (!project) throw new NotFoundError('Project not found');
   }
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const body = await request.json();
-
-    // Security check: reject if userId provided in body
-    if ('userId' in body || 'user_id' in body) {
-      return NextResponse.json({ 
-        error: "User ID cannot be provided in request body",
-        code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
-
-    const { 
-      invoiceNumber, 
-      clientId, 
-      amount, 
-      tax, 
-      totalAmount, 
-      dueDate,
-      projectId,
-      paidDate,
-      notes,
-      status
-    } = body;
-
-    // Validate required fields
-    if (!invoiceNumber || !invoiceNumber.trim()) {
-      return NextResponse.json({ 
-        error: "Invoice number is required",
-        code: "MISSING_INVOICE_NUMBER" 
-      }, { status: 400 });
-    }
-
-    if (!clientId || isNaN(parseInt(clientId))) {
-      return NextResponse.json({ 
-        error: "Valid client ID is required",
-        code: "INVALID_CLIENT_ID" 
-      }, { status: 400 });
-    }
-
-    if (amount === undefined || amount === null || isNaN(parseInt(amount)) || parseInt(amount) < 0) {
-      return NextResponse.json({ 
-        error: "Valid positive amount is required",
-        code: "INVALID_AMOUNT" 
-      }, { status: 400 });
-    }
-
-    if (tax === undefined || tax === null || isNaN(parseInt(tax)) || parseInt(tax) < 0) {
-      return NextResponse.json({ 
-        error: "Valid positive tax amount is required",
-        code: "INVALID_TAX" 
-      }, { status: 400 });
-    }
-
-    if (totalAmount === undefined || totalAmount === null || isNaN(parseInt(totalAmount)) || parseInt(totalAmount) < 0) {
-      return NextResponse.json({ 
-        error: "Valid positive total amount is required",
-        code: "INVALID_TOTAL_AMOUNT" 
-      }, { status: 400 });
-    }
-
-    if (!dueDate || !dueDate.trim()) {
-      return NextResponse.json({ 
-        error: "Due date is required",
-        code: "MISSING_DUE_DATE" 
-      }, { status: 400 });
-    }
-
-    // Validate status if provided
-    if (status && !VALID_STATUSES.includes(status)) {
-      return NextResponse.json({ 
-        error: `Status must be one of: ${VALID_STATUSES.join(', ')}`,
-        code: "INVALID_STATUS" 
-      }, { status: 400 });
-    }
-
-    // Check if invoice number is unique
-    const existingInvoice = await db.select()
-      .from(invoices)
-      .where(eq(invoices.invoiceNumber, invoiceNumber.trim()))
-      .limit(1);
-
-    if (existingInvoice.length > 0) {
-      return NextResponse.json({ 
-        error: "Invoice number already exists",
-        code: "DUPLICATE_INVOICE_NUMBER" 
-      }, { status: 400 });
-    }
-
-    // Validate client exists
-    const client = await db.select()
-      .from(clients)
-      .where(eq(clients.id, parseInt(clientId)))
-      .limit(1);
-
-    if (client.length === 0) {
-      return NextResponse.json({ 
-        error: "Client not found",
-        code: "CLIENT_NOT_FOUND" 
-      }, { status: 400 });
-    }
-
-    // Validate project exists if projectId provided
-    if (projectId) {
-      if (isNaN(parseInt(projectId))) {
-        return NextResponse.json({ 
-          error: "Valid project ID is required",
-          code: "INVALID_PROJECT_ID" 
-        }, { status: 400 });
-      }
-
-      const project = await db.select()
-        .from(projects)
-        .where(eq(projects.id, parseInt(projectId)))
-        .limit(1);
-
-      if (project.length === 0) {
-        return NextResponse.json({ 
-          error: "Project not found",
-          code: "PROJECT_NOT_FOUND" 
-        }, { status: 400 });
-      }
-    }
-
-    const now = new Date().toISOString();
-    
-    const newInvoice = await db.insert(invoices)
-      .values({
-        invoiceNumber: invoiceNumber.trim(),
-        clientId: parseInt(clientId),
-        projectId: projectId ? parseInt(projectId) : null,
-        amount: parseInt(amount),
-        tax: parseInt(tax),
-        totalAmount: parseInt(totalAmount),
-        dueDate: dueDate.trim(),
-        status: status || 'draft',
-        paidDate: paidDate || null,
-        notes: notes?.trim() || null,
-        createdAt: now,
-        updatedAt: now
-      })
-      .returning();
-
-    return NextResponse.json(newInvoice[0], { status: 201 });
-  } catch (error) {
-    console.error('POST error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+export const GET = withApiHandler(async (request) => {
+  const searchParams = new URL(request.url).searchParams;
+  const id = searchParams.get('id');
+  if (id) {
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, Number(id))).limit(1);
+    if (!invoice) throw new NotFoundError('Invoice not found');
+    return NextResponse.json(invoice);
   }
-}
-
-export async function PUT(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
-
-    const body = await request.json();
-
-    // Security check: reject if userId provided in body
-    if ('userId' in body || 'user_id' in body) {
-      return NextResponse.json({ 
-        error: "User ID cannot be provided in request body",
-        code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
-
-    // Check if invoice exists
-    const existingInvoice = await db.select()
-      .from(invoices)
-      .where(eq(invoices.id, parseInt(id)))
-      .limit(1);
-
-    if (existingInvoice.length === 0) {
-      return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
-    }
-
-    const { 
-      invoiceNumber, 
-      clientId, 
-      amount, 
-      tax, 
-      totalAmount, 
-      dueDate,
-      projectId,
-      paidDate,
-      notes,
-      status
-    } = body;
-
-    const updates: Record<string, any> = {
-      updatedAt: new Date().toISOString()
-    };
-
-    // Validate and update invoice number if provided
-    if (invoiceNumber !== undefined) {
-      if (!invoiceNumber.trim()) {
-        return NextResponse.json({ 
-          error: "Invoice number cannot be empty",
-          code: "INVALID_INVOICE_NUMBER" 
-        }, { status: 400 });
-      }
-
-      // Check if new invoice number is unique (excluding current invoice)
-      const duplicateCheck = await db.select()
-        .from(invoices)
-        .where(and(
-          eq(invoices.invoiceNumber, invoiceNumber.trim()),
-          eq(invoices.id, parseInt(id))
-        ))
-        .limit(1);
-
-      if (duplicateCheck.length === 0) {
-        const existingNumber = await db.select()
-          .from(invoices)
-          .where(eq(invoices.invoiceNumber, invoiceNumber.trim()))
-          .limit(1);
-
-        if (existingNumber.length > 0) {
-          return NextResponse.json({ 
-            error: "Invoice number already exists",
-            code: "DUPLICATE_INVOICE_NUMBER" 
-          }, { status: 400 });
-        }
-      }
-
-      updates.invoiceNumber = invoiceNumber.trim();
-    }
-
-    // Validate and update clientId if provided
-    if (clientId !== undefined) {
-      if (isNaN(parseInt(clientId))) {
-        return NextResponse.json({ 
-          error: "Valid client ID is required",
-          code: "INVALID_CLIENT_ID" 
-        }, { status: 400 });
-      }
-
-      const client = await db.select()
-        .from(clients)
-        .where(eq(clients.id, parseInt(clientId)))
-        .limit(1);
-
-      if (client.length === 0) {
-        return NextResponse.json({ 
-          error: "Client not found",
-          code: "CLIENT_NOT_FOUND" 
-        }, { status: 400 });
-      }
-
-      updates.clientId = parseInt(clientId);
-    }
-
-    // Validate and update projectId if provided
-    if (projectId !== undefined) {
-      if (projectId === null) {
-        updates.projectId = null;
-      } else {
-        if (isNaN(parseInt(projectId))) {
-          return NextResponse.json({ 
-            error: "Valid project ID is required",
-            code: "INVALID_PROJECT_ID" 
-          }, { status: 400 });
-        }
-
-        const project = await db.select()
-          .from(projects)
-          .where(eq(projects.id, parseInt(projectId)))
-          .limit(1);
-
-        if (project.length === 0) {
-          return NextResponse.json({ 
-            error: "Project not found",
-            code: "PROJECT_NOT_FOUND" 
-          }, { status: 400 });
-        }
-
-        updates.projectId = parseInt(projectId);
-      }
-    }
-
-    // Validate and update amounts if provided
-    if (amount !== undefined) {
-      if (isNaN(parseInt(amount)) || parseInt(amount) < 0) {
-        return NextResponse.json({ 
-          error: "Valid positive amount is required",
-          code: "INVALID_AMOUNT" 
-        }, { status: 400 });
-      }
-      updates.amount = parseInt(amount);
-    }
-
-    if (tax !== undefined) {
-      if (isNaN(parseInt(tax)) || parseInt(tax) < 0) {
-        return NextResponse.json({ 
-          error: "Valid positive tax amount is required",
-          code: "INVALID_TAX" 
-        }, { status: 400 });
-      }
-      updates.tax = parseInt(tax);
-    }
-
-    if (totalAmount !== undefined) {
-      if (isNaN(parseInt(totalAmount)) || parseInt(totalAmount) < 0) {
-        return NextResponse.json({ 
-          error: "Valid positive total amount is required",
-          code: "INVALID_TOTAL_AMOUNT" 
-        }, { status: 400 });
-      }
-      updates.totalAmount = parseInt(totalAmount);
-    }
-
-    // Update dueDate if provided
-    if (dueDate !== undefined) {
-      if (!dueDate.trim()) {
-        return NextResponse.json({ 
-          error: "Due date cannot be empty",
-          code: "INVALID_DUE_DATE" 
-        }, { status: 400 });
-      }
-      updates.dueDate = dueDate.trim();
-    }
-
-    // Validate and update status if provided
-    if (status !== undefined) {
-      if (!VALID_STATUSES.includes(status)) {
-        return NextResponse.json({ 
-          error: `Status must be one of: ${VALID_STATUSES.join(', ')}`,
-          code: "INVALID_STATUS" 
-        }, { status: 400 });
-      }
-      updates.status = status;
-
-      // Auto-set paidDate when status changes to 'paid'
-      if (status === 'paid' && existingInvoice[0].status !== 'paid') {
-        updates.paidDate = new Date().toISOString();
-      }
-    }
-
-    // Update paidDate if provided
-    if (paidDate !== undefined) {
-      updates.paidDate = paidDate;
-    }
-
-    // Update notes if provided
-    if (notes !== undefined) {
-      updates.notes = notes?.trim() || null;
-    }
-
-    const updated = await db.update(invoices)
-      .set(updates)
-      .where(eq(invoices.id, parseInt(id)))
-      .returning();
-
-    return NextResponse.json(updated[0], { status: 200 });
-  } catch (error) {
-    console.error('PUT error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  const limit = Math.min(Number(searchParams.get('limit') ?? '10'), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const search = searchParams.get('search');
+  const clientId = searchParams.get('clientId');
+  const projectId = searchParams.get('projectId');
+  const status = searchParams.get('status');
+  const startDate = searchParams.get('startDate');
+  const endDate = searchParams.get('endDate');
+  const sort = searchParams.get('sort') ?? 'createdAt';
+  const order = searchParams.get('order') === 'asc' ? asc : desc;
+  const conditions = [];
+  if (search) conditions.push(like(invoices.invoiceNumber, `%${search}%`));
+  if (clientId) conditions.push(eq(invoices.clientId, Number(clientId)));
+  if (projectId) conditions.push(eq(invoices.projectId, Number(projectId)));
+  if (status) conditions.push(eq(invoices.status, invoiceStatusSchema.parse(status)));
+  if (startDate) conditions.push(gte(invoices.dueDate, startDate));
+  if (endDate) conditions.push(lte(invoices.dueDate, endDate));
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+  let query = db.select().from(invoices);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(invoices);
+  if (whereClause) {
+    query = query.where(whereClause) as typeof query;
+    countQuery = countQuery.where(whereClause) as typeof countQuery;
   }
-}
+  const sortColumn = sort === 'dueDate' ? invoices.dueDate : sort === 'totalAmount' ? invoices.totalAmount : invoices.createdAt;
+  const [rows, countRows] = await Promise.all([query.orderBy(order(sortColumn)).limit(limit).offset(offset), countQuery]);
+  return NextResponse.json({ success: true, data: rows, message: 'Invoices fetched successfully', errors: null, meta: { page: Math.floor(offset / limit) + 1, limit, total: Number(countRows[0]?.count ?? 0) } });
+}, { requireAuth: true, roles: ['Employee'] });
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+export const POST = withApiHandler(async (request) => {
+  const payload = createInvoiceSchema.parse(await request.json());
+  await assertInvoiceRelations({ clientId: payload.clientId, projectId: payload.projectId });
+  const [existing] = await db.select().from(invoices).where(eq(invoices.invoiceNumber, payload.invoiceNumber)).limit(1);
+  if (existing) throw new ConflictError('Invoice number already exists');
+  const now = new Date().toISOString();
+  const [created] = await db.insert(invoices).values({
+    invoiceNumber: payload.invoiceNumber,
+    clientId: payload.clientId,
+    projectId: payload.projectId ?? null,
+    amount: payload.amount,
+    tax: payload.tax,
+    totalAmount: payload.totalAmount,
+    dueDate: payload.dueDate,
+    status: payload.status ?? 'draft',
+    paidDate: payload.paidDate ?? null,
+    notes: payload.notes ?? null,
+    createdAt: now,
+    updatedAt: now,
+  }).returning();
+  return NextResponse.json(created, { status: 201 });
+}, { requireAuth: true, roles: ['Manager'] });
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
-
-    // Check if invoice exists
-    const existingInvoice = await db.select()
-      .from(invoices)
-      .where(eq(invoices.id, parseInt(id)))
-      .limit(1);
-
-    if (existingInvoice.length === 0) {
-      return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
-    }
-
-    // Soft delete by setting status to 'cancelled'
-    const deleted = await db.update(invoices)
-      .set({
-        status: 'cancelled',
-        updatedAt: new Date().toISOString()
-      })
-      .where(eq(invoices.id, parseInt(id)))
-      .returning();
-
-    return NextResponse.json({ 
-      message: 'Invoice cancelled successfully',
-      invoice: deleted[0]
-    }, { status: 200 });
-  } catch (error) {
-    console.error('DELETE error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+export const PUT = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid invoice id is required');
+  const payload = updateInvoiceSchema.parse(await request.json());
+  const [existingInvoice] = await db.select().from(invoices).where(eq(invoices.id, id)).limit(1);
+  if (!existingInvoice) throw new NotFoundError('Invoice not found');
+  await assertInvoiceRelations({ clientId: payload.clientId, projectId: payload.projectId });
+  if (payload.invoiceNumber && payload.invoiceNumber !== existingInvoice.invoiceNumber) {
+    const [duplicate] = await db.select().from(invoices).where(eq(invoices.invoiceNumber, payload.invoiceNumber)).limit(1);
+    if (duplicate) throw new ConflictError('Invoice number already exists');
   }
-}
+  const [updated] = await db.update(invoices).set({
+    ...(payload.invoiceNumber !== undefined ? { invoiceNumber: payload.invoiceNumber } : {}),
+    ...(payload.clientId !== undefined ? { clientId: payload.clientId } : {}),
+    ...(payload.projectId !== undefined ? { projectId: payload.projectId ?? null } : {}),
+    ...(payload.amount !== undefined ? { amount: payload.amount } : {}),
+    ...(payload.tax !== undefined ? { tax: payload.tax } : {}),
+    ...(payload.totalAmount !== undefined ? { totalAmount: payload.totalAmount } : {}),
+    ...(payload.dueDate !== undefined ? { dueDate: payload.dueDate } : {}),
+    ...(payload.paidDate !== undefined ? { paidDate: payload.paidDate ?? null } : {}),
+    ...(payload.notes !== undefined ? { notes: payload.notes ?? null } : {}),
+    ...(payload.status !== undefined ? { status: payload.status } : {}),
+    updatedAt: new Date().toISOString(),
+  }).where(eq(invoices.id, id)).returning();
+  return NextResponse.json(updated);
+}, { requireAuth: true, roles: ['Manager'] });
+
+export const DELETE = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid invoice id is required');
+  const [deleted] = await db.delete(invoices).where(eq(invoices.id, id)).returning();
+  if (!deleted) throw new NotFoundError('Invoice not found');
+  return NextResponse.json({ message: 'Invoice deleted successfully', invoice: deleted });
+}, { requireAuth: true, roles: ['Manager'] });
+

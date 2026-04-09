@@ -9,11 +9,13 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, Mail, Lock, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import Image from 'next/image';
 import { Checkbox } from '@/components/ui/checkbox';
+import { persistClientSession } from '@/lib/client-session';
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -27,7 +29,7 @@ export default function LoginPage() {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, rememberMe }),
       });
 
       const data = await response.json();
@@ -38,10 +40,12 @@ export default function LoginPage() {
         return;
       }
 
-      // Store token in localStorage (iframe-compatible)
-      if (data.token) {
-        localStorage.setItem('session_token', data.token);
-        localStorage.setItem('user', JSON.stringify(data.user));
+      if (data.accessToken || data.token) {
+        persistClientSession({
+          accessToken: data.accessToken || data.token,
+          user: data.user,
+          rememberMe,
+        });
       }
 
       // Redirect to dashboard
@@ -178,7 +182,12 @@ export default function LoginPage() {
 
               <div className="flex items-center justify-between py-2">
                 <div className="flex items-center space-x-2">
-                  <Checkbox id="remember" className="data-[state=checked]:bg-primary flex h-4 w-4 items-center justify-center rounded-sm border border-primary shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50" />
+                  <Checkbox
+                    id="remember"
+                    checked={rememberMe}
+                    onCheckedChange={(checked) => setRememberMe(Boolean(checked))}
+                    className="data-[state=checked]:bg-primary flex h-4 w-4 items-center justify-center rounded-sm border border-primary shrink-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  />
                   <label
                     htmlFor="remember"
                     className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
@@ -188,6 +197,7 @@ export default function LoginPage() {
                 </div>
                 <button
                   type="button"
+                  onClick={() => router.push('/forgot-password')}
                   className="text-sm font-medium text-primary hover:underline underline-offset-4"
                 >
                   Forgot password?

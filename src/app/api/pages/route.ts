@@ -1,446 +1,117 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { and, desc, eq, like, or, sql } from 'drizzle-orm';
 import { db } from '@/db';
-import { pages, users } from '@/db/schema';
-import { eq, like, and, or, desc } from 'drizzle-orm';
-import { getCurrentUser } from '@/lib/auth';
-import { safeErrorMessage } from '@/lib/constants';
+import { pages } from '@/db/schema';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, ConflictError, NotFoundError } from '@/server/http/errors';
+import { createPageSchema, updatePageSchema } from '@/server/validation/content';
 
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+export const GET = withApiHandler(async (request) => {
+  const searchParams = new URL(request.url).searchParams;
+  const id = searchParams.get('id');
+  const slug = searchParams.get('slug');
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-    const slug = searchParams.get('slug');
-
-    // Single record fetch by ID or slug
-    if (id || slug) {
-      if (id && isNaN(parseInt(id))) {
-        return NextResponse.json({ 
-          error: 'Valid ID is required',
-          code: 'INVALID_ID' 
-        }, { status: 400 });
-      }
-
-      const whereCondition = id 
-        ? eq(pages.id, parseInt(id))
-        : eq(pages.slug, slug as string);
-
-      const page = await db.select()
-        .from(pages)
-        .where(whereCondition)
-        .limit(1);
-
-      if (page.length === 0) {
-        return NextResponse.json({ 
-          error: 'Page not found',
-          code: 'PAGE_NOT_FOUND' 
-        }, { status: 404 });
-      }
-
-      return NextResponse.json(page[0], { status: 200 });
-    }
-
-    // List with pagination, search, and filtering
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
-    const search = searchParams.get('search');
-    const status = searchParams.get('status');
-    const createdBy = searchParams.get('createdBy');
-
-    let query = db.select().from(pages);
-    const conditions = [];
-
-    // Search by title or slug
-    if (search) {
-      conditions.push(
-        or(
-          like(pages.title, `%${search}%`),
-          like(pages.slug, `%${search}%`)
-        )
-      );
-    }
-
-    // Filter by status
-    if (status) {
-      conditions.push(eq(pages.status, status));
-    }
-
-    // Filter by createdBy
-    if (createdBy) {
-      if (isNaN(parseInt(createdBy))) {
-        return NextResponse.json({ 
-          error: 'Valid createdBy ID is required',
-          code: 'INVALID_CREATED_BY' 
-        }, { status: 400 });
-      }
-      conditions.push(eq(pages.createdBy, parseInt(createdBy)));
-    }
-
-    if (conditions.length > 0) {
-      query = query.where(conditions.length === 1 ? conditions[0] : and(...conditions));
-    }
-
-    const results = await query
-      .orderBy(desc(pages.updatedAt))
-      .limit(limit)
-      .offset(offset);
-
-    return NextResponse.json(results, { status: 200 });
-  } catch (error) {
-    console.error('GET error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  if (id || slug) {
+    const [page] = await db.select().from(pages).where(id ? eq(pages.id, Number(id)) : eq(pages.slug, String(slug))).limit(1);
+    if (!page) throw new NotFoundError('Page not found');
+    return NextResponse.json(page);
   }
-}
 
-export async function POST(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+  const limit = Math.min(Number(searchParams.get('limit') ?? '10'), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const search = searchParams.get('search');
+  const status = searchParams.get('status');
+  const createdBy = searchParams.get('createdBy');
+  const conditions = [];
 
-    const body = await request.json();
+  if (search) conditions.push(or(like(pages.title, `%${search}%`), like(pages.slug, `%${search}%`)));
+  if (status) conditions.push(eq(pages.status, status));
+  if (createdBy) conditions.push(eq(pages.createdBy, Number(createdBy)));
 
-    // Security check: reject if userId provided in body
-    if ('userId' in body || 'user_id' in body) {
-      return NextResponse.json({ 
-        error: "User ID cannot be provided in request body",
-        code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
-
-    const { 
-      title, 
-      slug, 
-      createdBy, 
-      content, 
-      metaTitle, 
-      metaDescription, 
-      metaKeywords,
-      status 
-    } = body;
-
-    // Validate required fields
-    if (!title || title.trim() === '') {
-      return NextResponse.json({ 
-        error: 'Title is required',
-        code: 'MISSING_TITLE' 
-      }, { status: 400 });
-    }
-
-    if (!slug || slug.trim() === '') {
-      return NextResponse.json({ 
-        error: 'Slug is required',
-        code: 'MISSING_SLUG' 
-      }, { status: 400 });
-    }
-
-    if (!createdBy) {
-      return NextResponse.json({ 
-        error: 'createdBy is required',
-        code: 'MISSING_CREATED_BY' 
-      }, { status: 400 });
-    }
-
-    // Validate slug is URL-friendly
-    const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-    if (!slugRegex.test(slug.trim())) {
-      return NextResponse.json({ 
-        error: 'Slug must be URL-friendly (lowercase letters, numbers, and hyphens only)',
-        code: 'INVALID_SLUG_FORMAT' 
-      }, { status: 400 });
-    }
-
-    // Validate status enum
-    const validStatuses = ['draft', 'published'];
-    const pageStatus = status || 'draft';
-    if (!validStatuses.includes(pageStatus)) {
-      return NextResponse.json({ 
-        error: 'Status must be either "draft" or "published"',
-        code: 'INVALID_STATUS' 
-      }, { status: 400 });
-    }
-
-    // Check if slug already exists
-    const existingSlug = await db.select()
-      .from(pages)
-      .where(eq(pages.slug, slug.trim()))
-      .limit(1);
-
-    if (existingSlug.length > 0) {
-      return NextResponse.json({ 
-        error: 'Slug already exists. Please use a unique slug',
-        code: 'SLUG_EXISTS' 
-      }, { status: 400 });
-    }
-
-    // Validate createdBy user exists
-    const userExists = await db.select()
-      .from(users)
-      .where(eq(users.id, parseInt(createdBy)))
-      .limit(1);
-
-    if (userExists.length === 0) {
-      return NextResponse.json({ 
-        error: 'createdBy user does not exist',
-        code: 'INVALID_CREATED_BY' 
-      }, { status: 400 });
-    }
-
-    // Prepare insert data
-    const now = new Date().toISOString();
-    const insertData: any = {
-      title: title.trim(),
-      slug: slug.trim(),
-      createdBy: parseInt(createdBy),
-      status: pageStatus,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    // Add optional fields if provided
-    if (content !== undefined) {
-      insertData.content = content;
-    }
-    if (metaTitle !== undefined) {
-      insertData.metaTitle = metaTitle.trim();
-    }
-    if (metaDescription !== undefined) {
-      insertData.metaDescription = metaDescription.trim();
-    }
-    if (metaKeywords !== undefined) {
-      insertData.metaKeywords = metaKeywords.trim();
-    }
-
-    // Set publishedAt if status is published
-    if (pageStatus === 'published') {
-      insertData.publishedAt = now;
-    }
-
-    const newPage = await db.insert(pages)
-      .values(insertData)
-      .returning();
-
-    return NextResponse.json(newPage[0], { status: 201 });
-  } catch (error) {
-    console.error('POST error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+  let query = db.select().from(pages);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(pages);
+  if (whereClause) {
+    query = query.where(whereClause) as typeof query;
+    countQuery = countQuery.where(whereClause) as typeof countQuery;
   }
-}
 
-export async function PUT(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+  const [results, countRows] = await Promise.all([
+    query.orderBy(desc(pages.updatedAt)).limit(limit).offset(offset),
+    countQuery,
+  ]);
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+  return NextResponse.json({
+    success: true,
+    data: results,
+    message: 'Pages fetched successfully',
+    errors: null,
+    meta: {
+      page: Math.floor(offset / limit) + 1,
+      limit,
+      total: Number(countRows[0]?.count ?? 0),
+    },
+  });
+}, { requireAuth: true, roles: ['Viewer'] });
 
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: 'Valid ID is required',
-        code: 'INVALID_ID' 
-      }, { status: 400 });
-    }
+export const POST = withApiHandler(async (request, context) => {
+  const payload = createPageSchema.parse(await request.json());
+  const [existingSlug] = await db.select().from(pages).where(eq(pages.slug, payload.slug.trim())).limit(1);
+  if (existingSlug) throw new ConflictError('Slug already exists. Please use a unique slug');
 
-    const body = await request.json();
+  const now = new Date().toISOString();
+  const [created] = await db.insert(pages).values({
+    title: payload.title.trim(),
+    slug: payload.slug.trim(),
+    content: payload.content ?? null,
+    metaTitle: payload.metaTitle?.trim() || null,
+    metaDescription: payload.metaDescription?.trim() || null,
+    metaKeywords: payload.metaKeywords?.trim() || null,
+    status: payload.status ?? 'draft',
+    createdBy: context.auth!.user.id,
+    createdAt: now,
+    updatedAt: now,
+    publishedAt: (payload.status ?? 'draft') === 'published' ? now : null,
+  }).returning();
 
-    // Security check: reject if userId provided in body
-    if ('userId' in body || 'user_id' in body) {
-      return NextResponse.json({ 
-        error: "User ID cannot be provided in request body",
-        code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
+  return NextResponse.json(created, { status: 201 });
+}, { requireAuth: true, roles: ['Admin'] });
 
-    // Check if page exists
-    const existingPage = await db.select()
-      .from(pages)
-      .where(eq(pages.id, parseInt(id)))
-      .limit(1);
+export const PUT = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid page id is required');
 
-    if (existingPage.length === 0) {
-      return NextResponse.json({ 
-        error: 'Page not found',
-        code: 'PAGE_NOT_FOUND' 
-      }, { status: 404 });
-    }
+  const payload = updatePageSchema.parse(await request.json());
+  const [existingPage] = await db.select().from(pages).where(eq(pages.id, id)).limit(1);
+  if (!existingPage) throw new NotFoundError('Page not found');
 
-    const updateData: any = {
-      updatedAt: new Date().toISOString()
-    };
-
-    // Validate and update fields
-    if (body.title !== undefined) {
-      if (body.title.trim() === '') {
-        return NextResponse.json({ 
-          error: 'Title cannot be empty',
-          code: 'INVALID_TITLE' 
-        }, { status: 400 });
-      }
-      updateData.title = body.title.trim();
-    }
-
-    if (body.slug !== undefined) {
-      if (body.slug.trim() === '') {
-        return NextResponse.json({ 
-          error: 'Slug cannot be empty',
-          code: 'INVALID_SLUG' 
-        }, { status: 400 });
-      }
-
-      // Validate slug is URL-friendly
-      const slugRegex = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-      if (!slugRegex.test(body.slug.trim())) {
-        return NextResponse.json({ 
-          error: 'Slug must be URL-friendly (lowercase letters, numbers, and hyphens only)',
-          code: 'INVALID_SLUG_FORMAT' 
-        }, { status: 400 });
-      }
-
-      // Check if new slug already exists (excluding current page)
-      const existingSlug = await db.select()
-        .from(pages)
-        .where(and(
-          eq(pages.slug, body.slug.trim()),
-          eq(pages.id, parseInt(id))
-        ))
-        .limit(1);
-
-      // If no results, check if slug exists for other pages
-      if (existingSlug.length === 0) {
-        const otherSlug = await db.select()
-          .from(pages)
-          .where(eq(pages.slug, body.slug.trim()))
-          .limit(1);
-
-        if (otherSlug.length > 0) {
-          return NextResponse.json({ 
-            error: 'Slug already exists. Please use a unique slug',
-            code: 'SLUG_EXISTS' 
-          }, { status: 400 });
-        }
-      }
-
-      updateData.slug = body.slug.trim();
-    }
-
-    if (body.content !== undefined) {
-      updateData.content = body.content;
-    }
-
-    if (body.metaTitle !== undefined) {
-      updateData.metaTitle = body.metaTitle.trim();
-    }
-
-    if (body.metaDescription !== undefined) {
-      updateData.metaDescription = body.metaDescription.trim();
-    }
-
-    if (body.metaKeywords !== undefined) {
-      updateData.metaKeywords = body.metaKeywords.trim();
-    }
-
-    if (body.status !== undefined) {
-      const validStatuses = ['draft', 'published'];
-      if (!validStatuses.includes(body.status)) {
-        return NextResponse.json({ 
-          error: 'Status must be either "draft" or "published"',
-          code: 'INVALID_STATUS' 
-        }, { status: 400 });
-      }
-
-      updateData.status = body.status;
-
-      // Set publishedAt when status changes to published
-      if (body.status === 'published' && existingPage[0].status !== 'published') {
-        updateData.publishedAt = new Date().toISOString();
-      }
-    }
-
-    if (body.createdBy !== undefined) {
-      // Validate createdBy user exists
-      const userExists = await db.select()
-        .from(users)
-        .where(eq(users.id, parseInt(body.createdBy)))
-        .limit(1);
-
-      if (userExists.length === 0) {
-        return NextResponse.json({ 
-          error: 'createdBy user does not exist',
-          code: 'INVALID_CREATED_BY' 
-        }, { status: 400 });
-      }
-
-      updateData.createdBy = parseInt(body.createdBy);
-    }
-
-    const updated = await db.update(pages)
-      .set(updateData)
-      .where(eq(pages.id, parseInt(id)))
-      .returning();
-
-    return NextResponse.json(updated[0], { status: 200 });
-  } catch (error) {
-    console.error('PUT error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  if (payload.slug && payload.slug !== existingPage.slug) {
+    const [slugOwner] = await db.select().from(pages).where(eq(pages.slug, payload.slug)).limit(1);
+    if (slugOwner && slugOwner.id !== id) throw new ConflictError('Slug already exists. Please use a unique slug');
   }
-}
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+  const nextStatus = payload.status ?? existingPage.status;
+  const [updated] = await db.update(pages).set({
+    ...(payload.title !== undefined ? { title: payload.title.trim() } : {}),
+    ...(payload.slug !== undefined ? { slug: payload.slug.trim() } : {}),
+    ...(payload.content !== undefined ? { content: payload.content ?? null } : {}),
+    ...(payload.metaTitle !== undefined ? { metaTitle: payload.metaTitle?.trim() || null } : {}),
+    ...(payload.metaDescription !== undefined ? { metaDescription: payload.metaDescription?.trim() || null } : {}),
+    ...(payload.metaKeywords !== undefined ? { metaKeywords: payload.metaKeywords?.trim() || null } : {}),
+    ...(payload.status !== undefined ? { status: payload.status } : {}),
+    ...(nextStatus === 'published' && !existingPage.publishedAt ? { publishedAt: new Date().toISOString() } : {}),
+    updatedAt: new Date().toISOString(),
+  }).where(eq(pages.id, id)).returning();
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+  return NextResponse.json(updated);
+}, { requireAuth: true, roles: ['Admin'] });
 
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: 'Valid ID is required',
-        code: 'INVALID_ID' 
-      }, { status: 400 });
-    }
+export const DELETE = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid page id is required');
 
-    // Check if page exists
-    const existingPage = await db.select()
-      .from(pages)
-      .where(eq(pages.id, parseInt(id)))
-      .limit(1);
+  const [deleted] = await db.delete(pages).where(eq(pages.id, id)).returning();
+  if (!deleted) throw new NotFoundError('Page not found');
+  return NextResponse.json({ message: 'Page deleted successfully', page: deleted });
+}, { requireAuth: true, roles: ['Admin'] });
 
-    if (existingPage.length === 0) {
-      return NextResponse.json({ 
-        error: 'Page not found',
-        code: 'PAGE_NOT_FOUND' 
-      }, { status: 404 });
-    }
-
-    const deleted = await db.delete(pages)
-      .where(eq(pages.id, parseInt(id)))
-      .returning();
-
-    return NextResponse.json({ 
-      message: 'Page deleted successfully',
-      page: deleted[0] 
-    }, { status: 200 });
-  } catch (error) {
-    console.error('DELETE error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
-  }
-}

@@ -1,23 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
+import { withApiHandler } from '@/server/http/handler';
 import { getCurrentUser } from '@/lib/auth';
 
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-
-    if (!user) {
-      return NextResponse.json(
-        { error: 'Not authenticated' },
-        { status: 401 }
-      );
-    }
-
-    return NextResponse.json({ user });
-  } catch (error) {
-    console.error('Get user error:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
-}
+export const GET = withApiHandler(async (request, context) => {
+  const user = await getCurrentUser(request as NextRequest);
+  return NextResponse.json({ user: user ?? context.auth?.user ?? null });
+}, { requireAuth: true });

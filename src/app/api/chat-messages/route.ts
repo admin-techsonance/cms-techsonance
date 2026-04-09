@@ -1,368 +1,80 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { and, asc, desc, eq, or, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import { chatMessages, users } from '@/db/schema';
-import { eq, and, or, desc, asc } from 'drizzle-orm';
-import { getCurrentUser } from '@/lib/auth';
-import { safeErrorMessage } from '@/lib/constants';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, ForbiddenError, NotFoundError } from '@/server/http/errors';
+import { createChatMessageSchema, updateChatMessageSchema } from '@/server/validation/internal-comms';
 
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    // Single record fetch
-    if (id) {
-      if (!id || isNaN(parseInt(id))) {
-        return NextResponse.json({ 
-          error: "Valid ID is required",
-          code: "INVALID_ID" 
-        }, { status: 400 });
-      }
-
-      const message = await db.select()
-        .from(chatMessages)
-        .where(
-          and(
-            eq(chatMessages.id, parseInt(id)),
-            or(
-              eq(chatMessages.senderId, user.id),
-              eq(chatMessages.receiverId, user.id)
-            )
-          )
-        )
-        .limit(1);
-
-      if (message.length === 0) {
-        return NextResponse.json({ error: 'Chat message not found' }, { status: 404 });
-      }
-
-      return NextResponse.json(message[0], { status: 200 });
-    }
-
-    // List with pagination and filtering
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '50'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
-    const senderId = searchParams.get('senderId');
-    const receiverId = searchParams.get('receiverId');
-    const roomId = searchParams.get('roomId');
-    const isRead = searchParams.get('isRead');
-    const sort = searchParams.get('sort') ?? 'createdAt';
-    const order = searchParams.get('order') ?? 'asc';
-
-    const conditions = [
-      or(
-        eq(chatMessages.senderId, user.id),
-        eq(chatMessages.receiverId, user.id)
-      )
-    ];
-
-    if (senderId && !isNaN(parseInt(senderId))) {
-      conditions.push(eq(chatMessages.senderId, parseInt(senderId)));
-    }
-
-    if (receiverId && !isNaN(parseInt(receiverId))) {
-      conditions.push(eq(chatMessages.receiverId, parseInt(receiverId)));
-    }
-
-    if (roomId) {
-      conditions.push(eq(chatMessages.roomId, roomId));
-    }
-
-    if (isRead !== null && (isRead === 'true' || isRead === 'false')) {
-      conditions.push(eq(chatMessages.isRead, isRead === 'true'));
-    }
-
-    let query = db.select()
-      .from(chatMessages)
-      .where(and(...conditions));
-
-    // Apply sorting
-    if (sort === 'createdAt') {
-      query = order === 'desc' 
-        ? query.orderBy(desc(chatMessages.createdAt))
-        : query.orderBy(asc(chatMessages.createdAt));
-    }
-
-    const results = await query.limit(limit).offset(offset);
-
-    return NextResponse.json(results, { status: 200 });
-  } catch (error) {
-    console.error('GET error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+export const GET = withApiHandler(async (request, context) => {
+  const userId = context.auth!.user.id;
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get('id');
+  if (id) {
+    const [message] = await db.select().from(chatMessages).where(and(eq(chatMessages.id, Number(id)), or(eq(chatMessages.senderId, userId), eq(chatMessages.receiverId, userId)))).limit(1);
+    if (!message) throw new NotFoundError('Chat message not found');
+    return NextResponse.json(message);
   }
-}
+  const limit = Math.min(Number(searchParams.get('limit') ?? '50'), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const senderId = searchParams.get('senderId');
+  const receiverId = searchParams.get('receiverId');
+  const roomId = searchParams.get('roomId');
+  const isRead = searchParams.get('isRead');
+  const sort = searchParams.get('sort') ?? 'createdAt';
+  const order = searchParams.get('order') === 'desc' ? desc : asc;
+  const conditions = [or(eq(chatMessages.senderId, userId), eq(chatMessages.receiverId, userId))];
+  if (senderId) conditions.push(eq(chatMessages.senderId, Number(senderId)));
+  if (receiverId) conditions.push(eq(chatMessages.receiverId, Number(receiverId)));
+  if (roomId) conditions.push(eq(chatMessages.roomId, roomId));
+  if (isRead === 'true' || isRead === 'false') conditions.push(eq(chatMessages.isRead, isRead === 'true'));
+  let query = db.select().from(chatMessages).where(and(...conditions));
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(chatMessages).where(and(...conditions));
+  const [rows, countRows] = await Promise.all([query.orderBy(sort === 'createdAt' ? order(chatMessages.createdAt) : order(chatMessages.createdAt)).limit(limit).offset(offset), countQuery]);
+  return NextResponse.json({ success: true, data: rows, message: 'Chat messages fetched successfully', errors: null, meta: { page: Math.floor(offset / limit) + 1, limit, total: Number(countRows[0]?.count ?? 0) } });
+}, { requireAuth: true, roles: ['Employee'] });
 
-export async function POST(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const body = await request.json();
-
-    // Security: Prevent user ID injection
-    if ('senderId' in body || 'sender_id' in body) {
-      return NextResponse.json({ 
-        error: "Sender ID cannot be provided in request body",
-        code: "SENDER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
-
-    const { message, receiverId, roomId, attachments } = body;
-
-    // Validate required fields
-    if (!message || message.trim() === '') {
-      return NextResponse.json({ 
-        error: "Message is required and cannot be empty",
-        code: "MISSING_MESSAGE" 
-      }, { status: 400 });
-    }
-
-    // Validate receiverId exists if provided
-    if (receiverId !== undefined && receiverId !== null) {
-      if (isNaN(parseInt(receiverId))) {
-        return NextResponse.json({ 
-          error: "Valid receiver ID is required",
-          code: "INVALID_RECEIVER_ID" 
-        }, { status: 400 });
-      }
-
-      const receiver = await db.select()
-        .from(users)
-        .where(eq(users.id, parseInt(receiverId)))
-        .limit(1);
-
-      if (receiver.length === 0) {
-        return NextResponse.json({ 
-          error: "Receiver user not found",
-          code: "RECEIVER_NOT_FOUND" 
-        }, { status: 400 });
-      }
-    }
-
-    // Validate attachments is valid JSON array if provided
-    if (attachments !== undefined && attachments !== null) {
-      if (!Array.isArray(attachments)) {
-        return NextResponse.json({ 
-          error: "Attachments must be a valid JSON array",
-          code: "INVALID_ATTACHMENTS" 
-        }, { status: 400 });
-      }
-    }
-
-    const now = new Date().toISOString();
-
-    const insertData: any = {
-      senderId: user.id,
-      message: message.trim(),
-      createdAt: now,
-      isRead: false,
-    };
-
-    if (receiverId !== undefined && receiverId !== null) {
-      insertData.receiverId = parseInt(receiverId);
-    }
-
-    if (roomId !== undefined && roomId !== null) {
-      insertData.roomId = roomId;
-    }
-
-    if (attachments !== undefined && attachments !== null) {
-      insertData.attachments = attachments;
-    }
-
-    const newMessage = await db.insert(chatMessages)
-      .values(insertData)
-      .returning();
-
-    return NextResponse.json(newMessage[0], { status: 201 });
-  } catch (error) {
-    console.error('POST error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+export const POST = withApiHandler(async (request, context) => {
+  const payload = createChatMessageSchema.parse(await request.json());
+  if (payload.receiverId) {
+    const [receiver] = await db.select().from(users).where(eq(users.id, payload.receiverId)).limit(1);
+    if (!receiver) throw new NotFoundError('Receiver user not found');
   }
-}
+  const [created] = await db.insert(chatMessages).values({
+    senderId: context.auth!.user.id,
+    receiverId: payload.receiverId ?? null,
+    roomId: payload.roomId ?? null,
+    message: payload.message,
+    attachments: payload.attachments ?? null,
+    createdAt: new Date().toISOString(),
+    isRead: false,
+  }).returning();
+  return NextResponse.json(created, { status: 201 });
+}, { requireAuth: true, roles: ['Employee'] });
 
-export async function PUT(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+export const PUT = withApiHandler(async (request, context) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid chat message id is required');
+  const payload = updateChatMessageSchema.parse(await request.json());
+  const [existing] = await db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
+  if (!existing) throw new NotFoundError('Chat message not found');
+  if (payload.message !== undefined && existing.senderId !== context.auth!.user.id) throw new ForbiddenError('Only the sender can edit the message content');
+  if (payload.isRead !== undefined && existing.receiverId !== context.auth!.user.id && existing.senderId !== context.auth!.user.id) throw new ForbiddenError('Unauthorized');
+  const [updated] = await db.update(chatMessages).set({
+    ...(payload.message !== undefined ? { message: payload.message } : {}),
+    ...(payload.isRead !== undefined ? { isRead: payload.isRead } : {}),
+    ...(payload.attachments !== undefined ? { attachments: payload.attachments ?? null } : {}),
+  }).where(eq(chatMessages.id, id)).returning();
+  return NextResponse.json(updated);
+}, { requireAuth: true, roles: ['Employee'] });
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+export const DELETE = withApiHandler(async (request, context) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid chat message id is required');
+  const [existing] = await db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
+  if (!existing) throw new NotFoundError('Chat message not found');
+  if (existing.senderId !== context.auth!.user.id) throw new ForbiddenError('Only the sender can delete a chat message');
+  const [deleted] = await db.delete(chatMessages).where(eq(chatMessages.id, id)).returning();
+  return NextResponse.json({ message: 'Chat message deleted successfully', data: deleted });
+}, { requireAuth: true, roles: ['Employee'] });
 
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
-
-    const body = await request.json();
-
-    // Security: Prevent user ID injection
-    if ('senderId' in body || 'sender_id' in body) {
-      return NextResponse.json({ 
-        error: "Sender ID cannot be provided in request body",
-        code: "SENDER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
-
-    // Check if message exists and belongs to user (as sender)
-    const existing = await db.select()
-      .from(chatMessages)
-      .where(
-        and(
-          eq(chatMessages.id, parseInt(id)),
-          or(
-            eq(chatMessages.senderId, user.id),
-            eq(chatMessages.receiverId, user.id)
-          )
-        )
-      )
-      .limit(1);
-
-    if (existing.length === 0) {
-      return NextResponse.json({ error: 'Chat message not found' }, { status: 404 });
-    }
-
-    const { message, isRead, attachments } = body;
-    const updates: any = {};
-
-    // Only sender can edit message content
-    if (message !== undefined) {
-      if (existing[0].senderId !== user.id) {
-        return NextResponse.json({ 
-          error: "Only the sender can edit the message content",
-          code: "UNAUTHORIZED_EDIT" 
-        }, { status: 403 });
-      }
-
-      if (!message || message.trim() === '') {
-        return NextResponse.json({ 
-          error: "Message cannot be empty",
-          code: "EMPTY_MESSAGE" 
-        }, { status: 400 });
-      }
-
-      updates.message = message.trim();
-    }
-
-    // Only receiver can mark as read
-    if (isRead !== undefined) {
-      if (existing[0].receiverId !== user.id) {
-        return NextResponse.json({ 
-          error: "Only the receiver can mark the message as read",
-          code: "UNAUTHORIZED_READ_UPDATE" 
-        }, { status: 403 });
-      }
-
-      updates.isRead = Boolean(isRead);
-    }
-
-    // Only sender can update attachments
-    if (attachments !== undefined) {
-      if (existing[0].senderId !== user.id) {
-        return NextResponse.json({ 
-          error: "Only the sender can update attachments",
-          code: "UNAUTHORIZED_ATTACHMENT_UPDATE" 
-        }, { status: 403 });
-      }
-
-      if (attachments !== null && !Array.isArray(attachments)) {
-        return NextResponse.json({ 
-          error: "Attachments must be a valid JSON array",
-          code: "INVALID_ATTACHMENTS" 
-        }, { status: 400 });
-      }
-
-      updates.attachments = attachments;
-    }
-
-    if (Object.keys(updates).length === 0) {
-      return NextResponse.json({ 
-        error: "No valid fields to update",
-        code: "NO_UPDATES" 
-      }, { status: 400 });
-    }
-
-    const updated = await db.update(chatMessages)
-      .set(updates)
-      .where(eq(chatMessages.id, parseInt(id)))
-      .returning();
-
-    return NextResponse.json(updated[0], { status: 200 });
-  } catch (error) {
-    console.error('PUT error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
-  }
-}
-
-export async function DELETE(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
-
-    // Check if message exists and user is the sender
-    const existing = await db.select()
-      .from(chatMessages)
-      .where(
-        and(
-          eq(chatMessages.id, parseInt(id)),
-          eq(chatMessages.senderId, user.id)
-        )
-      )
-      .limit(1);
-
-    if (existing.length === 0) {
-      return NextResponse.json({ 
-        error: 'Chat message not found or you are not authorized to delete it',
-        code: 'MESSAGE_NOT_FOUND_OR_UNAUTHORIZED'
-      }, { status: 404 });
-    }
-
-    const deleted = await db.delete(chatMessages)
-      .where(
-        and(
-          eq(chatMessages.id, parseInt(id)),
-          eq(chatMessages.senderId, user.id)
-        )
-      )
-      .returning();
-
-    return NextResponse.json({
-      message: 'Chat message deleted successfully',
-      deleted: deleted[0]
-    }, { status: 200 });
-  } catch (error) {
-    console.error('DELETE error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
-  }
-}

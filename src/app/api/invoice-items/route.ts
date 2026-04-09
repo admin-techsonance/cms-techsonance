@@ -1,363 +1,85 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { and, asc, desc, eq, like, sql } from 'drizzle-orm';
 import { db } from '@/db';
 import { invoiceItems, invoices } from '@/db/schema';
-import { eq, like, and, or, desc, asc, sql } from 'drizzle-orm';
-import { safeErrorMessage } from '@/lib/constants';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, NotFoundError, UnprocessableEntityError } from '@/server/http/errors';
+import { createInvoiceItemSchema, updateInvoiceItemSchema } from '@/server/validation/invoice-items';
 
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-    const invoiceId = searchParams.get('invoiceId');
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
-    const search = searchParams.get('search');
-    const sort = searchParams.get('sort') ?? 'id';
-    const order = searchParams.get('order') ?? 'desc';
+export const GET = withApiHandler(async (request) => {
+  const searchParams = new URL(request.url).searchParams;
+  const id = searchParams.get('id');
+  const invoiceId = searchParams.get('invoiceId');
+  const limit = Math.min(Number(searchParams.get('limit') ?? '10'), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const search = searchParams.get('search');
+  const sort = searchParams.get('sort') ?? 'id';
+  const order = searchParams.get('order') === 'asc' ? asc : desc;
 
-    // Single record fetch
-    if (id) {
-      if (!id || isNaN(parseInt(id))) {
-        return NextResponse.json({ 
-          error: "Valid ID is required",
-          code: "INVALID_ID" 
-        }, { status: 400 });
-      }
-
-      const record = await db.select()
-        .from(invoiceItems)
-        .where(eq(invoiceItems.id, parseInt(id)))
-        .limit(1);
-
-      if (record.length === 0) {
-        return NextResponse.json({ 
-          error: 'Invoice item not found',
-          code: 'NOT_FOUND' 
-        }, { status: 404 });
-      }
-
-      return NextResponse.json(record[0], { status: 200 });
-    }
-
-    // List with filtering
-    let query = db.select().from(invoiceItems);
-    const conditions = [];
-
-    // Filter by invoiceId
-    if (invoiceId) {
-      if (isNaN(parseInt(invoiceId))) {
-        return NextResponse.json({ 
-          error: "Valid invoice ID is required",
-          code: "INVALID_INVOICE_ID" 
-        }, { status: 400 });
-      }
-      conditions.push(eq(invoiceItems.invoiceId, parseInt(invoiceId)));
-    }
-
-    // Search across text fields
-    if (search) {
-      conditions.push(like(invoiceItems.description, `%${search}%`));
-    }
-
-    // Apply conditions
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-
-    // Sorting
-    const sortColumn = invoiceItems[sort as keyof typeof invoiceItems] || invoiceItems.id;
-    query = order === 'asc' 
-      ? query.orderBy(asc(sortColumn))
-      : query.orderBy(desc(sortColumn));
-
-    // Pagination
-    const results = await query.limit(limit).offset(offset);
-
-    // Calculate total amount per invoice if filtering by invoiceId
-    let totalAmount = null;
-    if (invoiceId) {
-      const aggregation = await db.select({
-        total: sql<number>`sum(${invoiceItems.amount})`.as('total')
-      })
-      .from(invoiceItems)
-      .where(eq(invoiceItems.invoiceId, parseInt(invoiceId)));
-      
-      totalAmount = aggregation[0]?.total || 0;
-    }
-
-    return NextResponse.json({
-      items: results,
-      ...(totalAmount !== null && { totalAmount }),
-      pagination: {
-        limit,
-        offset,
-        total: results.length
-      }
-    }, { status: 200 });
-
-  } catch (error) {
-    console.error('GET error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  if (id) {
+    const [record] = await db.select().from(invoiceItems).where(eq(invoiceItems.id, Number(id))).limit(1);
+    if (!record) throw new NotFoundError('Invoice item not found');
+    return NextResponse.json(record);
   }
-}
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { invoiceId, description, quantity, unitPrice, amount } = body;
+  const conditions = [];
+  if (invoiceId) conditions.push(eq(invoiceItems.invoiceId, Number(invoiceId)));
+  if (search) conditions.push(like(invoiceItems.description, `%${search}%`));
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+  let query = db.select().from(invoiceItems);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(invoiceItems);
+  if (whereClause) { query = query.where(whereClause) as typeof query; countQuery = countQuery.where(whereClause) as typeof countQuery; }
+  const sortColumn = sort === 'amount' ? invoiceItems.amount : sort === 'quantity' ? invoiceItems.quantity : invoiceItems.id;
+  const [rows, countRows] = await Promise.all([query.orderBy(order(sortColumn)).limit(limit).offset(offset), countQuery]);
+  const aggregation = invoiceId ? await db.select({ total: sql<number>`coalesce(sum(${invoiceItems.amount}),0)` }).from(invoiceItems).where(eq(invoiceItems.invoiceId, Number(invoiceId))) : null;
+  return NextResponse.json({ success: true, data: rows, message: 'Invoice items fetched successfully', errors: null, meta: { page: Math.floor(offset / limit) + 1, limit, total: Number(countRows[0]?.count ?? 0) }, ...(aggregation ? { totalAmount: aggregation[0]?.total ?? 0 } : {}) });
+}, { requireAuth: true, roles: ['Employee'] });
 
-    // Validate required fields
-    if (!invoiceId) {
-      return NextResponse.json({ 
-        error: "Invoice ID is required",
-        code: "MISSING_INVOICE_ID" 
-      }, { status: 400 });
-    }
+export const POST = withApiHandler(async (request) => {
+  const payload = createInvoiceItemSchema.parse(await request.json());
+  const [invoice] = await db.select().from(invoices).where(eq(invoices.id, payload.invoiceId)).limit(1);
+  if (!invoice) throw new NotFoundError('Invoice not found');
+  const calculatedAmount = payload.quantity * payload.unitPrice;
+  if (payload.amount !== undefined && payload.amount !== calculatedAmount) throw new UnprocessableEntityError('Amount must equal quantity multiplied by unit price');
+  const [created] = await db.insert(invoiceItems).values({
+    invoiceId: payload.invoiceId,
+    description: payload.description,
+    quantity: payload.quantity,
+    unitPrice: payload.unitPrice,
+    amount: calculatedAmount,
+  }).returning();
+  return NextResponse.json(created, { status: 201 });
+}, { requireAuth: true, roles: ['Manager'] });
 
-    if (!description || description.trim() === '') {
-      return NextResponse.json({ 
-        error: "Description is required",
-        code: "MISSING_DESCRIPTION" 
-      }, { status: 400 });
-    }
-
-    if (quantity === undefined || quantity === null) {
-      return NextResponse.json({ 
-        error: "Quantity is required",
-        code: "MISSING_QUANTITY" 
-      }, { status: 400 });
-    }
-
-    if (unitPrice === undefined || unitPrice === null) {
-      return NextResponse.json({ 
-        error: "Unit price is required",
-        code: "MISSING_UNIT_PRICE" 
-      }, { status: 400 });
-    }
-
-    // Validate data types and values
-    if (isNaN(parseInt(invoiceId.toString()))) {
-      return NextResponse.json({ 
-        error: "Invoice ID must be a valid integer",
-        code: "INVALID_INVOICE_ID" 
-      }, { status: 400 });
-    }
-
-    if (isNaN(parseInt(quantity.toString())) || parseInt(quantity.toString()) <= 0) {
-      return NextResponse.json({ 
-        error: "Quantity must be a positive integer",
-        code: "INVALID_QUANTITY" 
-      }, { status: 400 });
-    }
-
-    if (isNaN(parseInt(unitPrice.toString())) || parseInt(unitPrice.toString()) <= 0) {
-      return NextResponse.json({ 
-        error: "Unit price must be a positive integer",
-        code: "INVALID_UNIT_PRICE" 
-      }, { status: 400 });
-    }
-
-    // Validate invoiceId exists
-    const invoice = await db.select()
-      .from(invoices)
-      .where(eq(invoices.id, parseInt(invoiceId.toString())))
-      .limit(1);
-
-    if (invoice.length === 0) {
-      return NextResponse.json({ 
-        error: "Invoice not found",
-        code: "INVOICE_NOT_FOUND" 
-      }, { status: 400 });
-    }
-
-    // Calculate amount
-    const calculatedAmount = parseInt(quantity.toString()) * parseInt(unitPrice.toString());
-
-    // Validate amount if provided
-    if (amount !== undefined && amount !== null && parseInt(amount.toString()) !== calculatedAmount) {
-      return NextResponse.json({ 
-        error: "Amount must equal quantity multiplied by unit price",
-        code: "INVALID_AMOUNT" 
-      }, { status: 400 });
-    }
-
-    // Insert invoice item
-    const newInvoiceItem = await db.insert(invoiceItems)
-      .values({
-        invoiceId: parseInt(invoiceId.toString()),
-        description: description.trim(),
-        quantity: parseInt(quantity.toString()),
-        unitPrice: parseInt(unitPrice.toString()),
-        amount: calculatedAmount
-      })
-      .returning();
-
-    return NextResponse.json(newInvoiceItem[0], { status: 201 });
-
-  } catch (error) {
-    console.error('POST error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+export const PUT = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid invoice item id is required');
+  const payload = updateInvoiceItemSchema.parse(await request.json());
+  const [existing] = await db.select().from(invoiceItems).where(eq(invoiceItems.id, id)).limit(1);
+  if (!existing) throw new NotFoundError('Invoice item not found');
+  if (payload.invoiceId !== undefined) {
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, payload.invoiceId)).limit(1);
+    if (!invoice) throw new NotFoundError('Invoice not found');
   }
-}
+  const quantity = payload.quantity ?? existing.quantity;
+  const unitPrice = payload.unitPrice ?? existing.unitPrice;
+  const calculatedAmount = quantity * unitPrice;
+  if (payload.amount !== undefined && payload.amount !== calculatedAmount) throw new UnprocessableEntityError('Amount must equal quantity multiplied by unit price');
+  const [updated] = await db.update(invoiceItems).set({
+    ...(payload.invoiceId !== undefined ? { invoiceId: payload.invoiceId } : {}),
+    ...(payload.description !== undefined ? { description: payload.description } : {}),
+    ...(payload.quantity !== undefined ? { quantity: payload.quantity } : {}),
+    ...(payload.unitPrice !== undefined ? { unitPrice: payload.unitPrice } : {}),
+    amount: calculatedAmount,
+  }).where(eq(invoiceItems.id, id)).returning();
+  return NextResponse.json(updated);
+}, { requireAuth: true, roles: ['Manager'] });
 
-export async function PUT(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+export const DELETE = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid invoice item id is required');
+  const [deleted] = await db.delete(invoiceItems).where(eq(invoiceItems.id, id)).returning();
+  if (!deleted) throw new NotFoundError('Invoice item not found');
+  return NextResponse.json({ message: 'Invoice item deleted successfully', item: deleted });
+}, { requireAuth: true, roles: ['Manager'] });
 
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
-
-    // Check if record exists
-    const existing = await db.select()
-      .from(invoiceItems)
-      .where(eq(invoiceItems.id, parseInt(id)))
-      .limit(1);
-
-    if (existing.length === 0) {
-      return NextResponse.json({ 
-        error: 'Invoice item not found',
-        code: 'NOT_FOUND' 
-      }, { status: 404 });
-    }
-
-    const body = await request.json();
-    const { invoiceId, description, quantity, unitPrice, amount } = body;
-    const updates: any = {};
-
-    // Validate and prepare updates
-    if (invoiceId !== undefined) {
-      if (isNaN(parseInt(invoiceId.toString()))) {
-        return NextResponse.json({ 
-          error: "Invoice ID must be a valid integer",
-          code: "INVALID_INVOICE_ID" 
-        }, { status: 400 });
-      }
-
-      // Validate invoiceId exists
-      const invoice = await db.select()
-        .from(invoices)
-        .where(eq(invoices.id, parseInt(invoiceId.toString())))
-        .limit(1);
-
-      if (invoice.length === 0) {
-        return NextResponse.json({ 
-          error: "Invoice not found",
-          code: "INVOICE_NOT_FOUND" 
-        }, { status: 400 });
-      }
-
-      updates.invoiceId = parseInt(invoiceId.toString());
-    }
-
-    if (description !== undefined) {
-      if (description.trim() === '') {
-        return NextResponse.json({ 
-          error: "Description cannot be empty",
-          code: "INVALID_DESCRIPTION" 
-        }, { status: 400 });
-      }
-      updates.description = description.trim();
-    }
-
-    if (quantity !== undefined) {
-      if (isNaN(parseInt(quantity.toString())) || parseInt(quantity.toString()) <= 0) {
-        return NextResponse.json({ 
-          error: "Quantity must be a positive integer",
-          code: "INVALID_QUANTITY" 
-        }, { status: 400 });
-      }
-      updates.quantity = parseInt(quantity.toString());
-    }
-
-    if (unitPrice !== undefined) {
-      if (isNaN(parseInt(unitPrice.toString())) || parseInt(unitPrice.toString()) <= 0) {
-        return NextResponse.json({ 
-          error: "Unit price must be a positive integer",
-          code: "INVALID_UNIT_PRICE" 
-        }, { status: 400 });
-      }
-      updates.unitPrice = parseInt(unitPrice.toString());
-    }
-
-    // Recalculate amount if quantity or unitPrice changed
-    const currentQuantity = updates.quantity ?? existing[0].quantity;
-    const currentUnitPrice = updates.unitPrice ?? existing[0].unitPrice;
-    const calculatedAmount = currentQuantity * currentUnitPrice;
-
-    // Validate amount if provided
-    if (amount !== undefined && amount !== null && parseInt(amount.toString()) !== calculatedAmount) {
-      return NextResponse.json({ 
-        error: "Amount must equal quantity multiplied by unit price",
-        code: "INVALID_AMOUNT" 
-      }, { status: 400 });
-    }
-
-    updates.amount = calculatedAmount;
-
-    // Update record
-    const updated = await db.update(invoiceItems)
-      .set(updates)
-      .where(eq(invoiceItems.id, parseInt(id)))
-      .returning();
-
-    return NextResponse.json(updated[0], { status: 200 });
-
-  } catch (error) {
-    console.error('PUT error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
-  }
-}
-
-export async function DELETE(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
-
-    // Check if record exists
-    const existing = await db.select()
-      .from(invoiceItems)
-      .where(eq(invoiceItems.id, parseInt(id)))
-      .limit(1);
-
-    if (existing.length === 0) {
-      return NextResponse.json({ 
-        error: 'Invoice item not found',
-        code: 'NOT_FOUND' 
-      }, { status: 404 });
-    }
-
-    // Delete record
-    const deleted = await db.delete(invoiceItems)
-      .where(eq(invoiceItems.id, parseInt(id)))
-      .returning();
-
-    return NextResponse.json({
-      message: 'Invoice item deleted successfully',
-      deleted: deleted[0]
-    }, { status: 200 });
-
-  } catch (error) {
-    console.error('DELETE error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
-  }
-}

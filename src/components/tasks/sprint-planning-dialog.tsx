@@ -1,12 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { sprintFormSchema, sprintStatusOptions, type SprintFormValues } from '@/lib/forms/schemas';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -15,22 +19,6 @@ interface SprintPlanningDialogProps {
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
   projectId?: number;
-}
-
-interface FormData {
-  projectId: string;
-  name: string;
-  goal: string;
-  startDate: string;
-  endDate: string;
-  status: string;
-}
-
-interface FormErrors {
-  projectId?: string;
-  name?: string;
-  startDate?: string;
-  endDate?: string;
 }
 
 interface Project {
@@ -42,15 +30,17 @@ export function SprintPlanningDialog({ open, onOpenChange, onSuccess, projectId 
   const [loading, setLoading] = useState(false);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [formData, setFormData] = useState<FormData>({
-    projectId: projectId?.toString() || '',
-    name: '',
-    goal: '',
-    startDate: '',
-    endDate: '',
-    status: 'planning',
+  const form = useForm<SprintFormValues>({
+    resolver: zodResolver(sprintFormSchema),
+    defaultValues: {
+      projectId: projectId?.toString() || '',
+      name: '',
+      goal: '',
+      startDate: '',
+      endDate: '',
+      status: 'planning',
+    },
   });
-  const [errors, setErrors] = useState<FormErrors>({});
 
   useEffect(() => {
     if (open) {
@@ -60,9 +50,9 @@ export function SprintPlanningDialog({ open, onOpenChange, onSuccess, projectId 
 
   useEffect(() => {
     if (projectId) {
-      setFormData(prev => ({ ...prev, projectId: projectId.toString() }));
+      form.setValue('projectId', projectId.toString());
     }
-  }, [projectId]);
+  }, [projectId, form]);
 
   const fetchProjects = async () => {
     setLoadingProjects(true);
@@ -76,75 +66,32 @@ export function SprintPlanningDialog({ open, onOpenChange, onSuccess, projectId 
 
       if (response.ok) {
         const data = await response.json();
-        setProjects(data);
+        setProjects(Array.isArray(data) ? data : data.data ?? []);
       }
-    } catch (error) {
-      console.error('Error fetching projects:', error);
+    } catch {
+      toast.error('Failed to load projects');
     } finally {
       setLoadingProjects(false);
     }
   };
 
-  const validateForm = (): boolean => {
-    const newErrors: FormErrors = {};
-
-    if (!formData.projectId) {
-      newErrors.projectId = 'Project is required';
-    }
-
-    if (!formData.name.trim()) {
-      newErrors.name = 'Sprint name is required';
-    } else if (formData.name.trim().length < 3) {
-      newErrors.name = 'Sprint name must be at least 3 characters';
-    }
-
-    if (!formData.startDate) {
-      newErrors.startDate = 'Start date is required';
-    }
-
-    if (!formData.endDate) {
-      newErrors.endDate = 'End date is required';
-    }
-
-    if (formData.startDate && formData.endDate) {
-      const start = new Date(formData.startDate);
-      const end = new Date(formData.endDate);
-      
-      if (end <= start) {
-        newErrors.endDate = 'End date must be after start date';
-      }
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!validateForm()) {
-      toast.error('Please fix the validation errors');
-      return;
-    }
-
+  const handleSubmit = async (values: SprintFormValues) => {
     setLoading(true);
 
     try {
-      const token = localStorage.getItem('session_token');
       const payload = {
-        projectId: parseInt(formData.projectId),
-        name: formData.name.trim(),
-        goal: formData.goal.trim() || null,
-        startDate: formData.startDate,
-        endDate: formData.endDate,
-        status: formData.status,
+        projectId: parseInt(values.projectId, 10),
+        name: values.name.trim(),
+        goal: values.goal?.trim() || null,
+        startDate: values.startDate,
+        endDate: values.endDate,
+        status: values.status,
       };
 
       const response = await fetch('/api/sprints', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(payload),
       });
@@ -157,9 +104,7 @@ export function SprintPlanningDialog({ open, onOpenChange, onSuccess, projectId 
       toast.success('Sprint created successfully');
       onOpenChange(false);
       onSuccess();
-      
-      // Reset form
-      setFormData({
+      form.reset({
         projectId: projectId?.toString() || '',
         name: '',
         goal: '',
@@ -167,19 +112,10 @@ export function SprintPlanningDialog({ open, onOpenChange, onSuccess, projectId 
         endDate: '',
         status: 'planning',
       });
-      setErrors({});
     } catch (error) {
-      console.error('Error creating sprint:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to create sprint');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleChange = (field: keyof FormData, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-    if (errors[field as keyof FormErrors]) {
-      setErrors(prev => ({ ...prev, [field]: undefined }));
     }
   };
 
@@ -193,17 +129,24 @@ export function SprintPlanningDialog({ open, onOpenChange, onSuccess, projectId 
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
+        <Form {...form}>
+        <form onSubmit={form.handleSubmit(handleSubmit, () => toast.error('Please fix the validation errors'))} className="space-y-4">
+          <FormField
+            control={form.control}
+            name="projectId"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="projectId">Project *</Label>
             <Select
-              value={formData.projectId}
-              onValueChange={(value) => handleChange('projectId', value)}
+              value={field.value}
+              onValueChange={field.onChange}
               disabled={loading || loadingProjects || !!projectId}
             >
-              <SelectTrigger className={errors.projectId ? 'border-destructive' : ''}>
+              <FormControl>
+              <SelectTrigger>
                 <SelectValue placeholder="Select project" />
               </SelectTrigger>
+              </FormControl>
               <SelectContent>
                 {projects.map((project) => (
                   <SelectItem key={project.id} value={project.id.toString()}>
@@ -212,93 +155,124 @@ export function SprintPlanningDialog({ open, onOpenChange, onSuccess, projectId 
                 ))}
               </SelectContent>
             </Select>
-            {errors.projectId && (
-              <p className="text-xs text-destructive">{errors.projectId}</p>
+            <FormMessage className="text-xs" />
+          </FormItem>
             )}
-          </div>
+          />
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="name"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="name">Sprint Name *</Label>
+            <FormControl>
             <Input
               id="name"
-              value={formData.name}
-              onChange={(e) => handleChange('name', e.target.value)}
+              {...field}
               disabled={loading}
               placeholder="e.g., Sprint 1, Q1 Sprint"
-              className={errors.name ? 'border-destructive' : ''}
             />
-            {errors.name && (
-              <p className="text-xs text-destructive">{errors.name}</p>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
             )}
-          </div>
+          />
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="goal"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="goal">Sprint Goal</Label>
+            <FormControl>
             <Textarea
               id="goal"
-              value={formData.goal}
-              onChange={(e) => handleChange('goal', e.target.value)}
+              {...field}
               disabled={loading}
               placeholder="What do you want to achieve in this sprint?"
               rows={3}
             />
+            </FormControl>
             <p className="text-xs text-muted-foreground">
               Optional: Describe the main objective of this sprint
             </p>
-          </div>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="startDate"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="startDate">Start Date *</Label>
+              <FormControl>
               <Input
                 id="startDate"
                 type="date"
-                value={formData.startDate}
-                onChange={(e) => handleChange('startDate', e.target.value)}
+                {...field}
                 disabled={loading}
-                className={errors.startDate ? 'border-destructive' : ''}
               />
-              {errors.startDate && (
-                <p className="text-xs text-destructive">{errors.startDate}</p>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
               )}
-            </div>
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="endDate"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="endDate">End Date *</Label>
+              <FormControl>
               <Input
                 id="endDate"
                 type="date"
-                value={formData.endDate}
-                onChange={(e) => handleChange('endDate', e.target.value)}
+                {...field}
                 disabled={loading}
-                className={errors.endDate ? 'border-destructive' : ''}
               />
-              {errors.endDate && (
-                <p className="text-xs text-destructive">{errors.endDate}</p>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
               )}
-            </div>
+            />
           </div>
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="status"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="status">Status</Label>
             <Select
-              value={formData.status}
-              onValueChange={(value) => handleChange('status', value)}
+              value={field.value}
+              onValueChange={field.onChange}
               disabled={loading}
             >
+              <FormControl>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
+              </FormControl>
               <SelectContent>
-                <SelectItem value="planning">Planning</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="completed">Completed</SelectItem>
+                {sprintStatusOptions.map((status) => (
+                  <SelectItem key={status} value={status}>
+                    {status.charAt(0).toUpperCase() + status.slice(1)}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
               Set the initial status of the sprint
             </p>
-          </div>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
           <DialogFooter>
             <Button
@@ -321,6 +295,7 @@ export function SprintPlanningDialog({ open, onOpenChange, onSuccess, projectId 
             </Button>
           </DialogFooter>
         </form>
+        </Form>
       </DialogContent>
     </Dialog>
   );

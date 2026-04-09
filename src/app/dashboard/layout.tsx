@@ -6,6 +6,8 @@ import { DashboardSidebar } from '@/components/dashboard/sidebar';
 import { DashboardHeader } from '@/components/dashboard/header';
 import { User } from '@/lib/auth';
 import { Loader2 } from 'lucide-react';
+import { AppErrorBoundary } from '@/components/ui/app-error-boundary';
+import { clearClientSession, getStoredSessionToken } from '@/lib/client-session';
 
 export default function DashboardLayout({
   children,
@@ -18,7 +20,7 @@ export default function DashboardLayout({
 
   useEffect(() => {
     async function checkAuth() {
-      const token = localStorage.getItem('session_token');
+      const token = getStoredSessionToken();
       
       if (!token) {
         router.push('/login');
@@ -27,22 +29,18 @@ export default function DashboardLayout({
 
       try {
         const response = await fetch('/api/auth/me', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         });
 
         if (!response.ok) {
-          localStorage.removeItem('session_token');
-          localStorage.removeItem('user');
+          clearClientSession();
           router.push('/login');
           return;
         }
 
         const data = await response.json();
-        setUser(data.user);
+        setUser((data?.user ?? data?.data ?? null) as User | null);
       } catch (error) {
-        console.error('Auth check failed:', error);
         router.push('/login');
       } finally {
         setLoading(false);
@@ -70,7 +68,9 @@ export default function DashboardLayout({
       <div className="flex-1 flex flex-col min-w-0 h-full">
         <DashboardHeader user={user} />
         <main className="flex-1 p-6 overflow-y-auto">
-          {children}
+          <AppErrorBoundary title="Dashboard module unavailable" description="We couldn't render this dashboard section.">
+            {children}
+          </AppErrorBoundary>
         </main>
       </div>
     </div>

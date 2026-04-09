@@ -1,243 +1,98 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { db } from '@/db';
-import { payroll, employees } from '@/db/schema';
-import { eq, and, desc } from 'drizzle-orm';
-import { getCurrentUser } from '@/lib/auth';
-import { hasFullAccess, type UserRole } from '@/lib/permissions';
-import {
-  PAYROLL_STATUSES,
-  DEFAULT_PAYROLL_PAGE_SIZE,
-  MAX_PAGE_SIZE,
-  isValidEnum,
-  safeErrorMessage,
-} from '@/lib/constants';
+import { employees, payroll } from '@/db/schema';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, ConflictError, NotFoundError } from '@/server/http/errors';
+import { updatePayrollSchema } from '@/server/validation/payroll';
 
-export async function GET(request: NextRequest) {
-    try {
-        const currentUser = await getCurrentUser(request);
+export const GET = withApiHandler(async (request, context) => {
+  const currentUser = context.auth!.user;
+  const isAdminLike = currentUser.role === 'Admin' || currentUser.role === 'SuperAdmin';
+  const { searchParams } = new URL(request.url);
+  const employeeId = searchParams.get('employeeId');
+  const month = searchParams.get('month');
+  const year = searchParams.get('year');
+  const status = searchParams.get('status');
+  const limit = Math.min(parseInt(searchParams.get('limit') || '10'), 100);
+  const offset = parseInt(searchParams.get('offset') || '0');
 
-        if (!currentUser) {
-            return NextResponse.json(
-                { error: 'Unauthorized' },
-                { status: 401 }
-            );
-        }
-
-        const isAdmin = hasFullAccess(currentUser.role as UserRole);
-        const { searchParams } = new URL(request.url);
-        const employeeId = searchParams.get('employeeId');
-        const month = searchParams.get('month');
-        const year = searchParams.get('year');
-        const status = searchParams.get('status');
-        const limit = Math.min(parseInt(searchParams.get('limit') || String(DEFAULT_PAYROLL_PAGE_SIZE)), MAX_PAGE_SIZE);
-        const offset = parseInt(searchParams.get('offset') || '0');
-
-        const conditions = [];
-
-        if (!isAdmin) {
-            // Employees can only see their own payroll
-            const [employee] = await db.select()
-                .from(employees)
-                .where(eq(employees.userId, currentUser.id))
-                .limit(1);
-
-            if (!employee) {
-                return NextResponse.json([]);
-            }
-
-            conditions.push(eq(payroll.employeeId, employee.id));
-        } else if (employeeId) {
-            conditions.push(eq(payroll.employeeId, parseInt(employeeId)));
-        }
-
-        if (month) {
-            conditions.push(eq(payroll.month, month));
-        }
-        if (year) {
-            conditions.push(eq(payroll.year, parseInt(year)));
-        }
-        if (status) {
-            if (isValidEnum(status, PAYROLL_STATUSES)) {
-                conditions.push(eq(payroll.status, status));
-            }
-        }
-
-        let query = db.select().from(payroll);
-
-        if (conditions.length > 0) {
-            query = query.where(and(...conditions));
-        }
-
-        const payrolls = await query
-            .orderBy(desc(payroll.generatedAt))
-            .limit(limit)
-            .offset(offset);
-
-        return NextResponse.json(payrolls);
-
-    } catch (error) {
-        console.error('Error fetching payrolls:', error);
-        return NextResponse.json(
-            { error: safeErrorMessage(error) },
-            { status: 500 }
-        );
+  const conditions = [];
+  if (!isAdminLike) {
+    const [employee] = await db.select().from(employees).where(eq(employees.userId, currentUser.id)).limit(1);
+    if (!employee) {
+      return NextResponse.json([]);
     }
-}
+    conditions.push(eq(payroll.employeeId, employee.id));
+  } else if (employeeId) {
+    conditions.push(eq(payroll.employeeId, parseInt(employeeId)));
+  }
+  if (month) conditions.push(eq(payroll.month, month));
+  if (year) conditions.push(eq(payroll.year, parseInt(year)));
+  if (status) conditions.push(eq(payroll.status, status));
 
-export async function PUT(request: NextRequest) {
-    try {
-        const currentUser = await getCurrentUser(request);
+  let query = db.select().from(payroll);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(payroll);
+  if (conditions.length > 0) {
+    const whereClause = and(...conditions);
+    query = query.where(whereClause) as typeof query;
+    countQuery = countQuery.where(whereClause) as typeof countQuery;
+  }
 
-        if (!currentUser) {
-            return NextResponse.json(
-                { error: 'Unauthorized' },
-                { status: 401 }
-            );
-        }
+  const [rows, countRows] = await Promise.all([
+    query.orderBy(desc(payroll.generatedAt)).limit(limit).offset(offset),
+    countQuery,
+  ]);
 
-        // Only admin/HR can modify payroll
-        if (!hasFullAccess(currentUser.role as UserRole)) {
-            return NextResponse.json(
-                { error: 'Only admin/HR can modify payroll records' },
-                { status: 403 }
-            );
-        }
+  return NextResponse.json({
+    success: true,
+    data: rows,
+    message: 'Payroll records fetched successfully',
+    errors: null,
+    meta: {
+      page: Math.floor(offset / limit) + 1,
+      limit,
+      total: Number(countRows[0]?.count ?? 0),
+    },
+  });
+}, { requireAuth: true, roles: ['Employee'] });
 
-        const body = await request.json();
-        const { id, status: newStatus, deductions, bonuses, notes } = body;
+export const PUT = withApiHandler(async (request, context) => {
+  const payload = updatePayrollSchema.parse(await request.json());
+  const [existingPayroll] = await db.select().from(payroll).where(eq(payroll.id, payload.id));
+  if (!existingPayroll) throw new NotFoundError('Payroll not found');
+  if (existingPayroll.status === 'paid') throw new ConflictError('Paid payroll records are immutable');
 
-        if (!id) {
-            return NextResponse.json(
-                { error: 'Payroll ID is required' },
-                { status: 400 }
-            );
-        }
-
-        // Fetch existing payroll
-        const [existingPayroll] = await db.select().from(payroll).where(eq(payroll.id, id));
-
-        if (!existingPayroll) {
-            return NextResponse.json(
-                { error: 'Payroll not found' },
-                { status: 404 }
-            );
-        }
-
-        // Prepare update data
-        const updateData: any = {};
-
-        if (deductions !== undefined) {
-            updateData.deductions = deductions;
-        }
-        if (bonuses !== undefined) {
-            updateData.bonuses = bonuses;
-        }
-        if (notes !== undefined) {
-            updateData.notes = notes;
-        }
-
-        // Recalculate net salary if deductions or bonuses changed
-        if (deductions !== undefined || bonuses !== undefined) {
-            const finalDeductions = deductions !== undefined ? deductions : existingPayroll.deductions || 0;
-            const finalBonuses = bonuses !== undefined ? bonuses : existingPayroll.bonuses || 0;
-            updateData.netSalary = existingPayroll.calculatedSalary - finalDeductions + finalBonuses;
-        }
-
-        // Handle status changes
-        if (newStatus) {
-            if (!isValidEnum(newStatus, PAYROLL_STATUSES)) {
-                return NextResponse.json(
-                    { error: `Invalid status. Must be one of: ${PAYROLL_STATUSES.join(', ')}` },
-                    { status: 400 }
-                );
-            }
-
-            updateData.status = newStatus;
-
-            if (newStatus === 'approved' && !existingPayroll.approvedBy) {
-                updateData.approvedBy = currentUser.id;
-                updateData.approvedAt = new Date().toISOString();
-            }
-
-            if (newStatus === 'paid' && !existingPayroll.paidAt) {
-                updateData.paidAt = new Date().toISOString();
-            }
-        }
-
-        // Update payroll
-        const [updatedPayroll] = await db
-            .update(payroll)
-            .set(updateData)
-            .where(eq(payroll.id, id))
-            .returning();
-
-        return NextResponse.json(updatedPayroll);
-
-    } catch (error) {
-        console.error('Error updating payroll:', error);
-        return NextResponse.json(
-            { error: safeErrorMessage(error) },
-            { status: 500 }
-        );
+  const updateData: Record<string, unknown> = {};
+  if (payload.deductions !== undefined) updateData.deductions = payload.deductions;
+  if (payload.bonuses !== undefined) updateData.bonuses = payload.bonuses;
+  if (payload.notes !== undefined) updateData.notes = payload.notes;
+  if (payload.deductions !== undefined || payload.bonuses !== undefined) {
+    const finalDeductions = payload.deductions ?? existingPayroll.deductions ?? 0;
+    const finalBonuses = payload.bonuses ?? existingPayroll.bonuses ?? 0;
+    updateData.netSalary = existingPayroll.calculatedSalary - finalDeductions + finalBonuses;
+  }
+  if (payload.status) {
+    updateData.status = payload.status;
+    if (payload.status === 'approved' && !existingPayroll.approvedBy) {
+      updateData.approvedBy = context.auth!.user.id;
+      updateData.approvedAt = new Date().toISOString();
     }
-}
-
-export async function DELETE(request: NextRequest) {
-    try {
-        const currentUser = await getCurrentUser(request);
-
-        if (!currentUser) {
-            return NextResponse.json(
-                { error: 'Unauthorized' },
-                { status: 401 }
-            );
-        }
-
-        // Only admin/HR can delete payroll
-        if (!hasFullAccess(currentUser.role as UserRole)) {
-            return NextResponse.json(
-                { error: 'Only admin/HR can delete payroll records' },
-                { status: 403 }
-            );
-        }
-
-        const { searchParams } = new URL(request.url);
-        const id = searchParams.get('id');
-
-        if (!id) {
-            return NextResponse.json(
-                { error: 'Payroll ID is required' },
-                { status: 400 }
-            );
-        }
-
-        // Fetch existing payroll to check status
-        const [existingPayroll] = await db.select().from(payroll).where(eq(payroll.id, parseInt(id)));
-
-        if (!existingPayroll) {
-            return NextResponse.json(
-                { error: 'Payroll not found' },
-                { status: 404 }
-            );
-        }
-
-        // Only allow deletion of draft payrolls
-        if (existingPayroll.status !== 'draft') {
-            return NextResponse.json(
-                { error: 'Only draft payrolls can be deleted' },
-                { status: 400 }
-            );
-        }
-
-        await db.delete(payroll).where(eq(payroll.id, parseInt(id)));
-
-        return NextResponse.json({ success: true, message: 'Payroll deleted successfully' });
-
-    } catch (error) {
-        console.error('Error deleting payroll:', error);
-        return NextResponse.json(
-            { error: safeErrorMessage(error) },
-            { status: 500 }
-        );
+    if (payload.status === 'paid' && !existingPayroll.paidAt) {
+      updateData.paidAt = new Date().toISOString();
     }
-}
+  }
+
+  const [updatedPayroll] = await db.update(payroll).set(updateData).where(eq(payroll.id, payload.id)).returning();
+  return NextResponse.json(updatedPayroll);
+}, { requireAuth: true, roles: ['Admin'] });
+
+export const DELETE = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Payroll ID is required');
+  const [existingPayroll] = await db.select().from(payroll).where(eq(payroll.id, id));
+  if (!existingPayroll) throw new NotFoundError('Payroll not found');
+  if (existingPayroll.status !== 'draft') throw new ConflictError('Only draft payrolls can be deleted');
+  await db.delete(payroll).where(eq(payroll.id, id));
+  return NextResponse.json({ success: true, message: 'Payroll deleted successfully' });
+}, { requireAuth: true, roles: ['Admin'] });

@@ -1,8 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -32,6 +35,15 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  helpDeskPriorityOptions,
+  helpDeskStatusOptions,
+  helpDeskSupportTypeOptions,
+  helpDeskTicketFormSchema,
+  helpDeskTicketUpdateFormSchema,
+  type HelpDeskTicketFormValues,
+  type HelpDeskTicketUpdateFormValues,
+} from '@/lib/forms/schemas';
 import { hasFullAccess, type UserRole } from '@/lib/permissions';
 
 interface Ticket {
@@ -83,16 +95,21 @@ export default function HelpDeskPage() {
   
   const [editingTicket, setEditingTicket] = useState<Ticket | null>(null);
   const [deletingTicket, setDeletingTicket] = useState<Ticket | null>(null);
-  const [editTicketForm, setEditTicketForm] = useState({
-    status: '',
-    priority: '',
+  const createTicketForm = useForm<HelpDeskTicketFormValues>({
+    resolver: zodResolver(helpDeskTicketFormSchema),
+    defaultValues: {
+      supportType: 'it_support',
+      subject: '',
+      description: '',
+      priority: 'medium',
+    },
   });
-  
-  const [ticketForm, setTicketForm] = useState({
-    supportType: 'it_support',
-    subject: '',
-    description: '',
-    priority: 'medium',
+  const editTicketForm = useForm<HelpDeskTicketUpdateFormValues>({
+    resolver: zodResolver(helpDeskTicketUpdateFormSchema),
+    defaultValues: {
+      status: 'open',
+      priority: 'medium',
+    },
   });
 
   const formatDateOrdinal = (dateStr: string) => {
@@ -285,26 +302,24 @@ export default function HelpDeskPage() {
 
   const handleEditTicket = (ticket: Ticket) => {
     setEditingTicket(ticket);
-    setEditTicketForm({
-      status: ticket.status,
-      priority: ticket.priority,
+    editTicketForm.reset({
+      status: ticket.status as HelpDeskTicketUpdateFormValues['status'],
+      priority: ticket.priority as HelpDeskTicketUpdateFormValues['priority'],
     });
   };
 
-  const handleUpdateTicket = async () => {
+  const handleUpdateTicket = async (values: HelpDeskTicketUpdateFormValues) => {
     if (!editingTicket) return;
     
     try {
-      const token = localStorage.getItem('session_token');
       const response = await fetch(`/api/tickets?id=${editingTicket.id}`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          status: editTicketForm.status,
-          priority: editTicketForm.priority,
+          status: values.status,
+          priority: values.priority,
         }),
       });
       
@@ -316,8 +331,7 @@ export default function HelpDeskPage() {
         const error = await response.json();
         toast.error(error.error || 'Failed to update ticket');
       }
-    } catch (error) {
-      console.error('Error updating ticket:', error);
+    } catch {
       toast.error('An error occurred while updating ticket');
     }
   };
@@ -339,8 +353,7 @@ export default function HelpDeskPage() {
         const error = await response.json();
         toast.error(error.error || 'Failed to delete ticket');
       }
-    } catch (error) {
-      console.error('Error deleting ticket:', error);
+    } catch {
       toast.error('An error occurred while deleting ticket');
     } finally {
       setDeletingTicket(null);
@@ -354,12 +367,7 @@ export default function HelpDeskPage() {
     return `${prefix}-${timestamp}-${random}`;
   };
 
-  const handleTicketSubmit = async () => {
-    if (!ticketForm.subject || !ticketForm.description) {
-      toast.error('Please fill all required fields');
-      return;
-    }
-
+  const handleTicketSubmit = async (values: HelpDeskTicketFormValues) => {
     if (!userId) {
       toast.error('User not authenticated. Please log in again.');
       return;
@@ -367,11 +375,9 @@ export default function HelpDeskPage() {
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('session_token');
-
       // Fetch first available client for the ticket
       const clientsResponse = await fetch('/api/clients?limit=1', {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Content-Type': 'application/json' }
       });
       
       let clientId: number;
@@ -397,15 +403,14 @@ export default function HelpDeskPage() {
       const response = await fetch('/api/tickets', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           ticketNumber: ticketNumber,
           clientId: clientId,
-          subject: `[${ticketForm.supportType.toUpperCase().replace('_', ' ')}] ${ticketForm.subject}`,
-          description: ticketForm.description,
-          priority: ticketForm.priority,
+          subject: `[${values.supportType.toUpperCase().replace('_', ' ')}] ${values.subject.trim()}`,
+          description: values.description.trim(),
+          priority: values.priority,
           status: 'open',
         }),
       });
@@ -413,7 +418,7 @@ export default function HelpDeskPage() {
       if (response.ok) {
         toast.success('Support ticket created successfully!');
         setShowTicketDialog(false);
-        setTicketForm({
+        createTicketForm.reset({
           supportType: 'it_support',
           subject: '',
           description: '',
@@ -428,8 +433,7 @@ export default function HelpDeskPage() {
         const error = await response.json();
         toast.error(error.error || 'Failed to create ticket');
       }
-    } catch (error) {
-      console.error('Error creating ticket:', error);
+    } catch {
       toast.error('An error occurred while creating the ticket');
     } finally {
       setLoading(false);
@@ -567,70 +571,111 @@ export default function HelpDeskPage() {
                     Fill in the details to submit a new support request
                   </DialogDescription>
                 </DialogHeader>
-                
+
+                <Form {...createTicketForm}>
                 <div className="space-y-4">
-                  <div className="space-y-2">
+                  <FormField
+                    control={createTicketForm.control}
+                    name="supportType"
+                    render={({ field }) => (
+                  <FormItem className="space-y-2">
                     <Label>Support Type *</Label>
                     <Select
-                      value={ticketForm.supportType}
-                      onValueChange={(value) => setTicketForm({ ...ticketForm, supportType: value })}
+                      value={field.value}
+                      onValueChange={field.onChange}
                     >
+                      <FormControl>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
+                      </FormControl>
                       <SelectContent>
-                        <SelectItem value="it_support">IT Support</SelectItem>
-                        <SelectItem value="hr_support">HR Support</SelectItem>
+                        {helpDeskSupportTypeOptions.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {type === 'it_support' ? 'IT Support' : 'HR Support'}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
-                  </div>
+                    <FormMessage className="text-xs" />
+                  </FormItem>
+                    )}
+                  />
 
-                  <div className="space-y-2">
+                  <FormField
+                    control={createTicketForm.control}
+                    name="subject"
+                    render={({ field }) => (
+                  <FormItem className="space-y-2">
                     <Label>Subject *</Label>
+                    <FormControl>
                     <Input
-                      value={ticketForm.subject}
-                      onChange={(e) => setTicketForm({ ...ticketForm, subject: e.target.value })}
+                      {...field}
                       placeholder="Brief description of the issue..."
                     />
-                  </div>
+                    </FormControl>
+                    <FormMessage className="text-xs" />
+                  </FormItem>
+                    )}
+                  />
 
-                  <div className="space-y-2">
+                  <FormField
+                    control={createTicketForm.control}
+                    name="description"
+                    render={({ field }) => (
+                  <FormItem className="space-y-2">
                     <Label>Description *</Label>
+                    <FormControl>
                     <Textarea
-                      value={ticketForm.description}
-                      onChange={(e) => setTicketForm({ ...ticketForm, description: e.target.value })}
+                      {...field}
                       placeholder="Provide detailed information about your issue..."
                       rows={5}
                     />
-                  </div>
+                    </FormControl>
+                    <FormMessage className="text-xs" />
+                  </FormItem>
+                    )}
+                  />
 
-                  <div className="space-y-2">
+                  <FormField
+                    control={createTicketForm.control}
+                    name="priority"
+                    render={({ field }) => (
+                  <FormItem className="space-y-2">
                     <Label>Priority *</Label>
                     <Select
-                      value={ticketForm.priority}
-                      onValueChange={(value) => setTicketForm({ ...ticketForm, priority: value })}
+                      value={field.value}
+                      onValueChange={field.onChange}
                     >
+                      <FormControl>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
+                      </FormControl>
                       <SelectContent>
-                        <SelectItem value="low">Low</SelectItem>
-                        <SelectItem value="medium">Medium</SelectItem>
-                        <SelectItem value="high">High</SelectItem>
+                        {helpDeskPriorityOptions.filter((priority) => priority !== 'urgent').map((priority) => (
+                          <SelectItem key={priority} value={priority}>
+                            {priority.charAt(0).toUpperCase() + priority.slice(1)}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
-                  </div>
+                    <FormMessage className="text-xs" />
+                  </FormItem>
+                    )}
+                  />
                 </div>
 
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setShowTicketDialog(false)}>
                     Cancel
                   </Button>
-                  <Button onClick={handleTicketSubmit} disabled={loading}>
+                  <Button onClick={() => void createTicketForm.handleSubmit(handleTicketSubmit, () => toast.error('Please fix the ticket details before submitting'))()} disabled={loading}>
                     {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     Submit Ticket
                   </Button>
                 </DialogFooter>
+                </Form>
               </DialogContent>
             </Dialog>
           </div>
@@ -885,52 +930,74 @@ export default function HelpDeskPage() {
               </DialogDescription>
             </DialogHeader>
             
+            <Form {...editTicketForm}>
             <div className="space-y-4">
-              <div className="space-y-2">
+              <FormField
+                control={editTicketForm.control}
+                name="status"
+                render={({ field }) => (
+              <FormItem className="space-y-2">
                 <Label>Status *</Label>
                 <Select
-                  value={editTicketForm.status}
-                  onValueChange={(value) => setEditTicketForm({ ...editTicketForm, status: value })}
+                  value={field.value}
+                  onValueChange={field.onChange}
                 >
+                  <FormControl>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
+                  </FormControl>
                   <SelectContent>
-                    <SelectItem value="open">Open</SelectItem>
-                    <SelectItem value="in_progress">In Progress</SelectItem>
-                    <SelectItem value="resolved">Resolved</SelectItem>
-                    <SelectItem value="closed">Closed</SelectItem>
+                    {helpDeskStatusOptions.map((status) => (
+                      <SelectItem key={status} value={status}>
+                        {status === 'in_progress' ? 'In Progress' : status.charAt(0).toUpperCase() + status.slice(1)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-              </div>
+                <FormMessage className="text-xs" />
+              </FormItem>
+                )}
+              />
 
-              <div className="space-y-2">
+              <FormField
+                control={editTicketForm.control}
+                name="priority"
+                render={({ field }) => (
+              <FormItem className="space-y-2">
                 <Label>Priority *</Label>
                 <Select
-                  value={editTicketForm.priority}
-                  onValueChange={(value) => setEditTicketForm({ ...editTicketForm, priority: value })}
+                  value={field.value}
+                  onValueChange={field.onChange}
                 >
+                  <FormControl>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
+                  </FormControl>
                   <SelectContent>
-                    <SelectItem value="low">Low</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                    <SelectItem value="urgent">Urgent</SelectItem>
+                    {helpDeskPriorityOptions.map((priority) => (
+                      <SelectItem key={priority} value={priority}>
+                        {priority.charAt(0).toUpperCase() + priority.slice(1)}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
-              </div>
+                <FormMessage className="text-xs" />
+              </FormItem>
+                )}
+              />
             </div>
 
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditingTicket(null)}>
                 Cancel
               </Button>
-              <Button onClick={handleUpdateTicket}>
+              <Button onClick={() => void editTicketForm.handleSubmit(handleUpdateTicket, () => toast.error('Please fix the ticket update details'))()}>
                 Update Ticket
               </Button>
             </DialogFooter>
+            </Form>
           </DialogContent>
         </Dialog>
       )}

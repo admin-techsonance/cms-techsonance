@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -10,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -20,7 +23,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { taskPriorityOptions, taskStatusOptions, type TaskFormValues } from '@/lib/forms/schemas';
 import { Loader2 } from 'lucide-react';
+import { z } from 'zod';
+import { toast } from 'sonner';
 
 interface TaskFormDialogProps {
   open: boolean;
@@ -36,6 +42,17 @@ interface User {
   lastName: string;
 }
 
+const projectTaskFormSchema = z.object({
+  title: z.string().trim().min(3, 'Task title must be at least 3 characters'),
+  description: z.string().optional().or(z.literal('')),
+  assignedTo: z.string().min(1, 'Please select a team member'),
+  status: z.enum(taskStatusOptions),
+  priority: z.enum(taskPriorityOptions),
+  dueDate: z.string().optional().or(z.literal('')),
+});
+
+type ProjectTaskFormValues = z.infer<typeof projectTaskFormSchema>;
+
 export function TaskFormDialog({
   open,
   onOpenChange,
@@ -45,13 +62,16 @@ export function TaskFormDialog({
 }: TaskFormDialogProps) {
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
-  const [formData, setFormData] = useState({
-    title: '',
-    description: '',
-    assignedTo: '',
-    status: 'todo',
-    priority: 'medium',
-    dueDate: '',
+  const form = useForm<ProjectTaskFormValues>({
+    resolver: zodResolver(projectTaskFormSchema),
+    defaultValues: {
+      title: '',
+      description: '',
+      assignedTo: '',
+      status: 'todo',
+      priority: 'medium',
+      dueDate: '',
+    },
   });
 
   useEffect(() => {
@@ -62,16 +82,16 @@ export function TaskFormDialog({
 
   useEffect(() => {
     if (task) {
-      setFormData({
+      form.reset({
         title: task.title || '',
         description: task.description || '',
         assignedTo: task.assignedTo?.toString() || '',
-        status: task.status || 'todo',
-        priority: task.priority || 'medium',
+        status: (task.status as TaskFormValues['status']) || 'todo',
+        priority: (task.priority as TaskFormValues['priority']) || 'medium',
         dueDate: task.dueDate ? task.dueDate.split('T')[0] : '',
       });
     } else {
-      setFormData({
+      form.reset({
         title: '',
         description: '',
         assignedTo: '',
@@ -80,22 +100,22 @@ export function TaskFormDialog({
         dueDate: '',
       });
     }
-  }, [task, open]);
+  }, [task, open, form]);
 
   const fetchUsers = async () => {
     try {
       const response = await fetch('/api/users?limit=100');
       if (response.ok) {
         const data = await response.json();
-        setUsers(data.filter((u: any) => u.role !== 'client'));
+        const usersData = Array.isArray(data) ? data : data.data ?? [];
+        setUsers(usersData.filter((u: any) => u.role !== 'client'));
       }
-    } catch (error) {
-      console.error('Error fetching users:', error);
+    } catch {
+      toast.error('Failed to load team members');
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (values: ProjectTaskFormValues) => {
     setLoading(true);
 
     try {
@@ -104,12 +124,12 @@ export function TaskFormDialog({
 
       const payload: any = {
         projectId,
-        title: formData.title,
-        description: formData.description || null,
-        assignedTo: parseInt(formData.assignedTo),
-        status: formData.status,
-        priority: formData.priority,
-        dueDate: formData.dueDate || null,
+        title: values.title.trim(),
+        description: values.description?.trim() || null,
+        assignedTo: parseInt(values.assignedTo, 10),
+        status: values.status,
+        priority: values.priority,
+        dueDate: values.dueDate || null,
       };
 
       const response = await fetch(url, {
@@ -121,13 +141,13 @@ export function TaskFormDialog({
       if (response.ok) {
         onSuccess();
         onOpenChange(false);
+        toast.success(task ? 'Task updated successfully' : 'Task created successfully');
       } else {
         const error = await response.json();
-        alert(error.error || 'Failed to save task');
+        toast.error(error.error || 'Failed to save task');
       }
-    } catch (error) {
-      console.error('Error saving task:', error);
-      alert('An error occurred');
+    } catch {
+      toast.error('An error occurred while saving the task');
     } finally {
       setLoading(false);
     }
@@ -143,36 +163,58 @@ export function TaskFormDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
+        <Form {...form}>
+        <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+          <FormField
+            control={form.control}
+            name="title"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="title">Task Title *</Label>
+            <FormControl>
             <Input
               id="title"
-              value={formData.title}
-              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              {...field}
               placeholder="Implement user authentication"
-              required
             />
-          </div>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="description"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="description">Description</Label>
+            <FormControl>
             <Textarea
               id="description"
-              value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              {...field}
               placeholder="Task details..."
               rows={3}
             />
-          </div>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="assignedTo"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="assignedTo">Assign To *</Label>
-              <Select value={formData.assignedTo} onValueChange={(value) => setFormData({ ...formData, assignedTo: value })}>
+              <Select value={field.value} onValueChange={field.onChange}>
+                <FormControl>
                 <SelectTrigger>
                   <SelectValue placeholder="Select team member" />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
                   {users.map((user) => (
                     <SelectItem key={user.id} value={user.id.toString()}>
@@ -181,48 +223,80 @@ export function TaskFormDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="dueDate"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="dueDate">Due Date</Label>
+              <FormControl>
               <Input
                 id="dueDate"
                 type="date"
-                value={formData.dueDate}
-                onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
+                {...field}
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="status"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="status">Status *</Label>
-              <Select value={formData.status} onValueChange={(value) => setFormData({ ...formData, status: value })}>
+              <Select value={field.value} onValueChange={field.onChange}>
+                <FormControl>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
-                  <SelectItem value="todo">To Do</SelectItem>
-                  <SelectItem value="in_progress">In Progress</SelectItem>
-                  <SelectItem value="review">Review</SelectItem>
-                  <SelectItem value="done">Done</SelectItem>
+                  {taskStatusOptions.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {status === 'todo' ? 'To Do' : status === 'in_progress' ? 'In Progress' : status.charAt(0).toUpperCase() + status.slice(1)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-            </div>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="priority"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="priority">Priority *</Label>
-              <Select value={formData.priority} onValueChange={(value) => setFormData({ ...formData, priority: value })}>
+              <Select value={field.value} onValueChange={field.onChange}>
+                <FormControl>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
-                  <SelectItem value="low">Low</SelectItem>
-                  <SelectItem value="medium">Medium</SelectItem>
-                  <SelectItem value="high">High</SelectItem>
+                  {taskPriorityOptions.map((priority) => (
+                    <SelectItem key={priority} value={priority}>
+                      {priority.charAt(0).toUpperCase() + priority.slice(1)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-            </div>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
           <DialogFooter>
@@ -241,6 +315,7 @@ export function TaskFormDialog({
             </Button>
           </DialogFooter>
         </form>
+        </Form>
       </DialogContent>
     </Dialog>
   );

@@ -1,551 +1,174 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { and, asc, desc, eq, like, or, sql } from 'drizzle-orm';
 import { db } from '@/db';
-import { tasks, projects, users, milestones, sprints } from '@/db/schema';
-import { eq, like, and, or, desc, asc } from 'drizzle-orm';
-import { getCurrentUser } from '@/lib/auth';
-import { safeErrorMessage } from '@/lib/constants';
+import { milestones, projects, sprints, tasks, users } from '@/db/schema';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, NotFoundError, UnprocessableEntityError } from '@/server/http/errors';
+import { createTaskSchema, taskPrioritySchema, taskStatusSchema, updateTaskSchema } from '@/server/validation/tasks';
 
-const VALID_STATUSES = ['todo', 'in_progress', 'review', 'done'] as const;
-const VALID_PRIORITIES = ['low', 'medium', 'high'] as const;
+const allowedTransitions: Record<string, string[]> = {
+  todo: ['in_progress'],
+  in_progress: ['review', 'todo'],
+  review: ['done', 'in_progress'],
+  done: [],
+};
 
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+async function assertTaskRelations(input: {
+  projectId?: number;
+  assignedTo?: number;
+  milestoneId?: number | null;
+  sprintId?: number | null;
+}) {
+  if (input.projectId !== undefined) {
+    const [project] = await db.select().from(projects).where(eq(projects.id, input.projectId)).limit(1);
+    if (!project) throw new NotFoundError('Project not found');
+  }
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+  if (input.assignedTo !== undefined) {
+    const [assignee] = await db.select().from(users).where(eq(users.id, input.assignedTo)).limit(1);
+    if (!assignee) throw new NotFoundError('Assigned user not found');
+  }
 
-    // Single task by ID
-    if (id) {
-      if (!id || isNaN(parseInt(id))) {
-        return NextResponse.json({ 
-          error: "Valid ID is required",
-          code: "INVALID_ID" 
-        }, { status: 400 });
-      }
+  if (input.milestoneId !== undefined && input.milestoneId !== null) {
+    const [milestone] = await db.select().from(milestones).where(eq(milestones.id, input.milestoneId)).limit(1);
+    if (!milestone) throw new NotFoundError('Milestone not found');
+  }
 
-      const task = await db.select()
-        .from(tasks)
-        .where(eq(tasks.id, parseInt(id)))
-        .limit(1);
-
-      if (task.length === 0) {
-        return NextResponse.json({ error: 'Task not found' }, { status: 404 });
-      }
-
-      return NextResponse.json(task[0], { status: 200 });
-    }
-
-    // List tasks with filters and pagination
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
-    const search = searchParams.get('search');
-    const projectId = searchParams.get('projectId');
-    const milestoneId = searchParams.get('milestoneId');
-    const sprintId = searchParams.get('sprintId');
-    const assignedTo = searchParams.get('assignedTo');
-    const status = searchParams.get('status');
-    const priority = searchParams.get('priority');
-    const sort = searchParams.get('sort') || 'id';
-    const order = searchParams.get('order') || 'desc';
-
-    let query = db.select().from(tasks);
-    const conditions = [];
-
-    // Search by title or description
-    if (search) {
-      conditions.push(
-        or(
-          like(tasks.title, `%${search}%`),
-          like(tasks.description, `%${search}%`)
-        )
-      );
-    }
-
-    // Filter by projectId
-    if (projectId) {
-      const projectIdNum = parseInt(projectId);
-      if (!isNaN(projectIdNum)) {
-        conditions.push(eq(tasks.projectId, projectIdNum));
-      }
-    }
-
-    // Filter by milestoneId
-    if (milestoneId) {
-      const milestoneIdNum = parseInt(milestoneId);
-      if (!isNaN(milestoneIdNum)) {
-        conditions.push(eq(tasks.milestoneId, milestoneIdNum));
-      }
-    }
-
-    // Add sprintId filter
-    if (sprintId) {
-      const sprintIdNum = parseInt(sprintId);
-      if (!isNaN(sprintIdNum)) {
-        conditions.push(eq(tasks.sprintId, sprintIdNum));
-      }
-    }
-
-    // Filter by assignedTo
-    if (assignedTo) {
-      const assignedToNum = parseInt(assignedTo);
-      if (!isNaN(assignedToNum)) {
-        conditions.push(eq(tasks.assignedTo, assignedToNum));
-      }
-    }
-
-    // Filter by status
-    if (status) {
-      conditions.push(eq(tasks.status, status));
-    }
-
-    // Filter by priority
-    if (priority) {
-      conditions.push(eq(tasks.priority, priority));
-    }
-
-    // Apply conditions
-    if (conditions.length > 0) {
-      query = query.where(and(...conditions));
-    }
-
-    // Apply sorting
-    if (sort === 'dueDate') {
-      query = order === 'asc' ? query.orderBy(asc(tasks.dueDate)) : query.orderBy(desc(tasks.dueDate));
-    } else if (sort === 'priority') {
-      query = order === 'asc' ? query.orderBy(asc(tasks.priority)) : query.orderBy(desc(tasks.priority));
-    } else if (sort === 'status') {
-      query = order === 'asc' ? query.orderBy(asc(tasks.status)) : query.orderBy(desc(tasks.status));
-    } else {
-      query = order === 'asc' ? query.orderBy(asc(tasks.id)) : query.orderBy(desc(tasks.id));
-    }
-
-    const results = await query.limit(limit).offset(offset);
-
-    return NextResponse.json(results, { status: 200 });
-  } catch (error) {
-    console.error('GET error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  if (input.sprintId !== undefined && input.sprintId !== null) {
+    const [sprint] = await db.select().from(sprints).where(eq(sprints.id, input.sprintId)).limit(1);
+    if (!sprint) throw new NotFoundError('Sprint not found');
   }
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const body = await request.json();
-
-    // Security check: reject if user identifier fields provided
-    if ('userId' in body || 'user_id' in body || 'createdBy' in body) {
-      return NextResponse.json({ 
-        error: "User ID cannot be provided in request body",
-        code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
-
-    const { projectId, title, assignedTo, description, milestoneId, sprintId, storyPoints, dueDate, status, priority } = body;
-
-    // Validate required fields
-    if (!projectId) {
-      return NextResponse.json({ 
-        error: "Project ID is required",
-        code: "MISSING_PROJECT_ID" 
-      }, { status: 400 });
-    }
-
-    if (!title || typeof title !== 'string' || title.trim().length === 0) {
-      return NextResponse.json({ 
-        error: "Valid title is required",
-        code: "MISSING_TITLE" 
-      }, { status: 400 });
-    }
-
-    if (!assignedTo) {
-      return NextResponse.json({ 
-        error: "Assigned to user ID is required",
-        code: "MISSING_ASSIGNED_TO" 
-      }, { status: 400 });
-    }
-
-    // Validate projectId exists
-    const projectExists = await db.select()
-      .from(projects)
-      .where(eq(projects.id, parseInt(projectId)))
-      .limit(1);
-
-    if (projectExists.length === 0) {
-      return NextResponse.json({ 
-        error: "Project not found",
-        code: "INVALID_PROJECT_ID" 
-      }, { status: 400 });
-    }
-
-    // Validate assignedTo user exists
-    const userExists = await db.select()
-      .from(users)
-      .where(eq(users.id, parseInt(assignedTo)))
-      .limit(1);
-
-    if (userExists.length === 0) {
-      return NextResponse.json({ 
-        error: "Assigned user not found",
-        code: "INVALID_ASSIGNED_TO" 
-      }, { status: 400 });
-    }
-
-    // Validate milestoneId if provided
-    if (milestoneId) {
-      const milestoneExists = await db.select()
-        .from(milestones)
-        .where(eq(milestones.id, parseInt(milestoneId)))
-        .limit(1);
-
-      if (milestoneExists.length === 0) {
-        return NextResponse.json({ 
-          error: "Milestone not found",
-          code: "INVALID_MILESTONE_ID" 
-        }, { status: 400 });
-      }
-    }
-
-    // Validate sprintId if provided
-    if (sprintId !== undefined && sprintId !== null) {
-      const sprintIdNum = parseInt(sprintId);
-      if (isNaN(sprintIdNum)) {
-        return NextResponse.json({ 
-          error: "Valid sprint ID is required",
-          code: "INVALID_SPRINT_ID" 
-        }, { status: 400 });
-      }
-
-      const sprintExists = await db.select()
-        .from(sprints)
-        .where(eq(sprints.id, sprintIdNum))
-        .limit(1);
-
-      if (sprintExists.length === 0) {
-        return NextResponse.json({ 
-          error: "Sprint not found",
-          code: "SPRINT_NOT_FOUND" 
-        }, { status: 400 });
-      }
-    }
-
-    // Validate storyPoints if provided
-    if (storyPoints !== undefined && storyPoints !== null) {
-      const validStoryPoints = [1, 2, 3, 5, 8, 13, 21];
-      const points = parseInt(storyPoints);
-      if (isNaN(points) || !validStoryPoints.includes(points)) {
-        return NextResponse.json({ 
-          error: "Story points must be one of: 1, 2, 3, 5, 8, 13, 21",
-          code: "INVALID_STORY_POINTS" 
-        }, { status: 400 });
-      }
-    }
-
-    // Validate status enum if provided
-    if (status && !VALID_STATUSES.includes(status)) {
-      return NextResponse.json({ 
-        error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`,
-        code: "INVALID_STATUS" 
-      }, { status: 400 });
-    }
-
-    // Validate priority enum if provided
-    if (priority && !VALID_PRIORITIES.includes(priority)) {
-      return NextResponse.json({ 
-        error: `Invalid priority. Must be one of: ${VALID_PRIORITIES.join(', ')}`,
-        code: "INVALID_PRIORITY" 
-      }, { status: 400 });
-    }
-
-    // Prepare task data
-    const taskData: any = {
-      projectId: parseInt(projectId),
-      title: title.trim(),
-      assignedTo: parseInt(assignedTo),
-      status: status || 'todo',
-      priority: priority || 'medium',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    // Add optional fields if provided
-    if (description) {
-      taskData.description = description.trim();
-    }
-
-    if (milestoneId) {
-      taskData.milestoneId = parseInt(milestoneId);
-    }
-
-    if (sprintId !== undefined && sprintId !== null) {
-      taskData.sprintId = parseInt(sprintId);
-    }
-
-    if (storyPoints !== undefined && storyPoints !== null) {
-      taskData.storyPoints = parseInt(storyPoints);
-    }
-
-    if (dueDate) {
-      taskData.dueDate = dueDate;
-    }
-
-    const newTask = await db.insert(tasks)
-      .values(taskData)
-      .returning();
-
-    return NextResponse.json(newTask[0], { status: 201 });
-  } catch (error) {
-    console.error('POST error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+export const GET = withApiHandler(async (request) => {
+  const searchParams = new URL(request.url).searchParams;
+  const id = searchParams.get('id');
+  if (id) {
+    const [task] = await db.select().from(tasks).where(eq(tasks.id, Number(id))).limit(1);
+    if (!task) throw new NotFoundError('Task not found');
+    return NextResponse.json(task);
   }
-}
 
-export async function PUT(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+  const limit = Math.min(Number(searchParams.get('limit') ?? '10'), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const sort = searchParams.get('sort') ?? 'id';
+  const order = searchParams.get('order') === 'asc' ? asc : desc;
+  const search = searchParams.get('search');
+  const projectId = searchParams.get('projectId');
+  const milestoneId = searchParams.get('milestoneId');
+  const sprintId = searchParams.get('sprintId');
+  const assignedTo = searchParams.get('assignedTo');
+  const status = searchParams.get('status');
+  const priority = searchParams.get('priority');
+  const conditions = [];
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+  if (search) conditions.push(or(like(tasks.title, `%${search}%`), like(tasks.description, `%${search}%`)));
+  if (projectId) conditions.push(eq(tasks.projectId, Number(projectId)));
+  if (milestoneId) conditions.push(eq(tasks.milestoneId, Number(milestoneId)));
+  if (sprintId) conditions.push(eq(tasks.sprintId, Number(sprintId)));
+  if (assignedTo) conditions.push(eq(tasks.assignedTo, Number(assignedTo)));
+  if (status) conditions.push(eq(tasks.status, taskStatusSchema.parse(status)));
+  if (priority) conditions.push(eq(tasks.priority, taskPrioritySchema.parse(priority)));
 
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
-
-    const body = await request.json();
-
-    // Security check: reject if user identifier fields provided
-    if ('userId' in body || 'user_id' in body || 'createdBy' in body) {
-      return NextResponse.json({ 
-        error: "User ID cannot be provided in request body",
-        code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
-
-    // Check if task exists
-    const existingTask = await db.select()
-      .from(tasks)
-      .where(eq(tasks.id, parseInt(id)))
-      .limit(1);
-
-    if (existingTask.length === 0) {
-      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
-    }
-
-    const { title, description, assignedTo, milestoneId, sprintId, storyPoints, status, priority, dueDate } = body;
-
-    // Validate assignedTo user if provided
-    if (assignedTo) {
-      const userExists = await db.select()
-        .from(users)
-        .where(eq(users.id, parseInt(assignedTo)))
-        .limit(1);
-
-      if (userExists.length === 0) {
-        return NextResponse.json({ 
-          error: "Assigned user not found",
-          code: "INVALID_ASSIGNED_TO" 
-        }, { status: 400 });
-      }
-    }
-
-    // Validate milestoneId if provided
-    if (milestoneId !== undefined && milestoneId !== null) {
-      const milestoneExists = await db.select()
-        .from(milestones)
-        .where(eq(milestones.id, parseInt(milestoneId)))
-        .limit(1);
-
-      if (milestoneExists.length === 0) {
-        return NextResponse.json({ 
-          error: "Milestone not found",
-          code: "INVALID_MILESTONE_ID" 
-        }, { status: 400 });
-      }
-    }
-
-    // Validate sprintId if provided
-    if (sprintId !== undefined) {
-      if (sprintId === null) {
-        // Allow unsetting sprintId
-      } else {
-        const sprintIdNum = parseInt(sprintId);
-        if (isNaN(sprintIdNum)) {
-          return NextResponse.json({ 
-            error: "Valid sprint ID is required",
-            code: "INVALID_SPRINT_ID" 
-          }, { status: 400 });
-        }
-
-        const sprintExists = await db.select()
-          .from(sprints)
-          .where(eq(sprints.id, sprintIdNum))
-          .limit(1);
-
-        if (sprintExists.length === 0) {
-          return NextResponse.json({ 
-            error: "Sprint not found",
-            code: "SPRINT_NOT_FOUND" 
-          }, { status: 400 });
-        }
-      }
-    }
-
-    // Validate storyPoints if provided
-    if (storyPoints !== undefined) {
-      if (storyPoints !== null) {
-        const validStoryPoints = [1, 2, 3, 5, 8, 13, 21];
-        const points = parseInt(storyPoints);
-        if (isNaN(points) || !validStoryPoints.includes(points)) {
-          return NextResponse.json({ 
-            error: "Story points must be one of: 1, 2, 3, 5, 8, 13, 21",
-            code: "INVALID_STORY_POINTS" 
-          }, { status: 400 });
-        }
-      }
-    }
-
-    // Validate status enum if provided
-    if (status && !VALID_STATUSES.includes(status)) {
-      return NextResponse.json({ 
-        error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`,
-        code: "INVALID_STATUS" 
-      }, { status: 400 });
-    }
-
-    // Validate priority enum if provided
-    if (priority && !VALID_PRIORITIES.includes(priority)) {
-      return NextResponse.json({ 
-        error: `Invalid priority. Must be one of: ${VALID_PRIORITIES.join(', ')}`,
-        code: "INVALID_PRIORITY" 
-      }, { status: 400 });
-    }
-
-    // Prepare update data (excluding id and projectId)
-    const updateData: any = {
-      updatedAt: new Date().toISOString()
-    };
-
-    if (title !== undefined) {
-      if (typeof title !== 'string' || title.trim().length === 0) {
-        return NextResponse.json({ 
-          error: "Valid title is required",
-          code: "INVALID_TITLE" 
-        }, { status: 400 });
-      }
-      updateData.title = title.trim();
-    }
-
-    if (description !== undefined) {
-      updateData.description = description ? description.trim() : description;
-    }
-
-    if (assignedTo !== undefined) {
-      updateData.assignedTo = parseInt(assignedTo);
-    }
-
-    if (milestoneId !== undefined) {
-      updateData.milestoneId = milestoneId ? parseInt(milestoneId) : null;
-    }
-
-    if (sprintId !== undefined) {
-      updateData.sprintId = sprintId ? parseInt(sprintId) : null;
-    }
-
-    if (storyPoints !== undefined) {
-      updateData.storyPoints = storyPoints ? parseInt(storyPoints) : null;
-    }
-
-    if (status !== undefined) {
-      updateData.status = status;
-    }
-
-    if (priority !== undefined) {
-      updateData.priority = priority;
-    }
-
-    if (dueDate !== undefined) {
-      updateData.dueDate = dueDate;
-    }
-
-    const updated = await db.update(tasks)
-      .set(updateData)
-      .where(eq(tasks.id, parseInt(id)))
-      .returning();
-
-    if (updated.length === 0) {
-      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
-    }
-
-    return NextResponse.json(updated[0], { status: 200 });
-  } catch (error) {
-    console.error('PUT error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+  let query = db.select().from(tasks);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(tasks);
+  if (whereClause) {
+    query = query.where(whereClause) as typeof query;
+    countQuery = countQuery.where(whereClause) as typeof countQuery;
   }
-}
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+  const [results, countRows] = await Promise.all([
+    query
+      .orderBy(
+        sort === 'dueDate' ? order(tasks.dueDate) :
+        sort === 'priority' ? order(tasks.priority) :
+        sort === 'status' ? order(tasks.status) :
+        order(tasks.id)
+      )
+      .limit(limit)
+      .offset(offset),
+    countQuery,
+  ]);
+
+  return NextResponse.json({
+    success: true,
+    data: results,
+    message: 'Tasks fetched successfully',
+    errors: null,
+    meta: {
+      page: Math.floor(offset / limit) + 1,
+      limit,
+      total: Number(countRows[0]?.count ?? 0),
+    },
+  });
+}, { requireAuth: true, roles: ['Employee'] });
+
+export const POST = withApiHandler(async (request) => {
+  const payload = createTaskSchema.parse(await request.json());
+  await assertTaskRelations(payload);
+
+  const [created] = await db.insert(tasks).values({
+    projectId: payload.projectId,
+    title: payload.title.trim(),
+    description: payload.description?.trim() || null,
+    assignedTo: payload.assignedTo,
+    milestoneId: payload.milestoneId ?? null,
+    sprintId: payload.sprintId ?? null,
+    storyPoints: payload.storyPoints ?? null,
+    dueDate: payload.dueDate ?? null,
+    status: payload.status ?? 'todo',
+    priority: payload.priority ?? 'medium',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }).returning();
+
+  return NextResponse.json(created, { status: 201 });
+}, { requireAuth: true, roles: ['Employee'] });
+
+export const PUT = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid task id is required');
+
+  const payload = updateTaskSchema.parse(await request.json());
+  const [existingTask] = await db.select().from(tasks).where(eq(tasks.id, id)).limit(1);
+  if (!existingTask) throw new NotFoundError('Task not found');
+
+  await assertTaskRelations({
+    assignedTo: payload.assignedTo,
+    milestoneId: payload.milestoneId,
+    sprintId: payload.sprintId,
+  });
+
+  if (payload.status && payload.status !== existingTask.status) {
+    const nextStates = allowedTransitions[existingTask.status] ?? [];
+    if (!nextStates.includes(payload.status)) {
+      throw new UnprocessableEntityError(`Invalid task status transition from ${existingTask.status} to ${payload.status}`);
     }
-
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id || isNaN(parseInt(id))) {
-      return NextResponse.json({ 
-        error: "Valid ID is required",
-        code: "INVALID_ID" 
-      }, { status: 400 });
-    }
-
-    // Check if task exists
-    const existingTask = await db.select()
-      .from(tasks)
-      .where(eq(tasks.id, parseInt(id)))
-      .limit(1);
-
-    if (existingTask.length === 0) {
-      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
-    }
-
-    const deleted = await db.delete(tasks)
-      .where(eq(tasks.id, parseInt(id)))
-      .returning();
-
-    if (deleted.length === 0) {
-      return NextResponse.json({ error: 'Task not found' }, { status: 404 });
-    }
-
-    return NextResponse.json({ 
-      message: 'Task deleted successfully',
-      task: deleted[0]
-    }, { status: 200 });
-  } catch (error) {
-    console.error('DELETE error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
   }
-}
+
+  const [updated] = await db.update(tasks).set({
+    ...(payload.title !== undefined ? { title: payload.title.trim() } : {}),
+    ...(payload.description !== undefined ? { description: payload.description?.trim() || null } : {}),
+    ...(payload.assignedTo !== undefined ? { assignedTo: payload.assignedTo } : {}),
+    ...(payload.milestoneId !== undefined ? { milestoneId: payload.milestoneId ?? null } : {}),
+    ...(payload.sprintId !== undefined ? { sprintId: payload.sprintId ?? null } : {}),
+    ...(payload.storyPoints !== undefined ? { storyPoints: payload.storyPoints ?? null } : {}),
+    ...(payload.status !== undefined ? { status: payload.status } : {}),
+    ...(payload.priority !== undefined ? { priority: payload.priority } : {}),
+    ...(payload.dueDate !== undefined ? { dueDate: payload.dueDate ?? null } : {}),
+    updatedAt: new Date().toISOString(),
+  }).where(eq(tasks.id, id)).returning();
+
+  return NextResponse.json(updated);
+}, { requireAuth: true, roles: ['Employee'] });
+
+export const DELETE = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid task id is required');
+
+  const [deleted] = await db.delete(tasks).where(eq(tasks.id, id)).returning();
+  if (!deleted) throw new NotFoundError('Task not found');
+  return NextResponse.json({ message: 'Task deleted successfully', task: deleted });
+}, { requireAuth: true, roles: ['Manager'] });
+

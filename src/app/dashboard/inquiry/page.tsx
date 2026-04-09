@@ -1,9 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -35,6 +38,15 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  inquiryAppStatusOptions,
+  inquiryFeedFormSchema,
+  inquiryFormSchema,
+  inquiryStatusOptions,
+  inquiryTagOptions,
+  type InquiryFeedFormValues,
+  type InquiryFormValues,
+} from '@/lib/forms/schemas';
 import { hasPermission, hasFullAccess, UserRole } from '@/lib/permissions';
 
 interface Inquiry {
@@ -87,19 +99,25 @@ export default function InquiryPage() {
   // Add/Edit Inquiry
   const [showInquiryDialog, setShowInquiryDialog] = useState(false);
   const [editingInquiry, setEditingInquiry] = useState<Inquiry | null>(null);
-  const [inquiryForm, setInquiryForm] = useState({
-    aliasName: '',
-    tag: 'need_estimation',
-    status: 'lead',
-    dueDate: '',
-    appStatus: 'open',
+  const inquiryForm = useForm<InquiryFormValues>({
+    resolver: zodResolver(inquiryFormSchema),
+    defaultValues: {
+      aliasName: '',
+      tag: 'need_estimation',
+      status: 'lead',
+      dueDate: '',
+      appStatus: 'open',
+    },
   });
 
   // Add Inquiry Feed
   const [showFeedDialog, setShowFeedDialog] = useState(false);
-  const [feedForm, setFeedForm] = useState({
-    technology: '',
-    description: '',
+  const feedForm = useForm<InquiryFeedFormValues>({
+    resolver: zodResolver(inquiryFeedFormSchema),
+    defaultValues: {
+      technology: '',
+      description: '',
+    },
   });
 
   // Delete dialogs
@@ -133,8 +151,8 @@ export default function InquiryPage() {
         const data = await response.json();
         setCurrentUser(data.user);
       }
-    } catch (error) {
-      console.error('Error fetching current user:', error);
+    } catch {
+      toast.error('Failed to load user profile');
     } finally {
       setLoading(false);
     }
@@ -159,23 +177,17 @@ export default function InquiryPage() {
       
       if (response.ok) {
         const data = await response.json();
-        setInquiries(data);
+        setInquiries(Array.isArray(data) ? data : data.data ?? []);
         setInquiryPage(0); // Reset to first page
       }
-    } catch (error) {
-      console.error('Error fetching inquiries:', error);
+    } catch {
       toast.error('Failed to load inquiries');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleInquirySubmit = async () => {
-    if (!inquiryForm.aliasName.trim()) {
-      toast.error('Please enter alias name');
-      return;
-    }
-
+  const handleInquirySubmit = async (values: InquiryFormValues) => {
     setLoading(true);
     try {
       const token = localStorage.getItem('session_token');
@@ -193,8 +205,8 @@ export default function InquiryPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          ...inquiryForm,
-          dueDate: inquiryForm.dueDate || null,
+          ...values,
+          dueDate: values.dueDate || null,
         }),
       });
 
@@ -202,7 +214,7 @@ export default function InquiryPage() {
         toast.success(editingInquiry ? 'Inquiry updated successfully!' : 'Inquiry created successfully!');
         setShowInquiryDialog(false);
         setEditingInquiry(null);
-        setInquiryForm({
+        inquiryForm.reset({
           aliasName: '',
           tag: 'need_estimation',
           status: 'lead',
@@ -214,8 +226,7 @@ export default function InquiryPage() {
         const error = await response.json();
         toast.error(error.error || 'Failed to save inquiry');
       }
-    } catch (error) {
-      console.error('Error saving inquiry:', error);
+    } catch {
       toast.error('An error occurred while saving inquiry');
     } finally {
       setLoading(false);
@@ -239,8 +250,7 @@ export default function InquiryPage() {
         const error = await response.json();
         toast.error(error.error || 'Failed to delete inquiry');
       }
-    } catch (error) {
-      console.error('Error deleting inquiry:', error);
+    } catch {
       toast.error('An error occurred while deleting inquiry');
     } finally {
       setDeletingInquiry(null);
@@ -263,8 +273,7 @@ export default function InquiryPage() {
         toast.success(inquiry.isFavourite ? 'Removed from favourites' : 'Added to favourites');
         fetchInquiries();
       }
-    } catch (error) {
-      console.error('Error toggling favourite:', error);
+    } catch {
       toast.error('Failed to update favourite status');
     }
   };
@@ -280,25 +289,19 @@ export default function InquiryPage() {
       
       if (response.ok) {
         const data = await response.json();
-        setInquiryFeeds(data);
+        setInquiryFeeds(Array.isArray(data) ? data : data.data ?? []);
         setFeedPage(0); // Reset to first page
       }
-    } catch (error) {
-      console.error('Error fetching inquiry feeds:', error);
+    } catch {
       toast.error('Failed to load inquiry feeds');
     } finally {
       setFeedsLoading(false);
     }
   };
 
-  const handleFeedSubmit = async () => {
+  const handleFeedSubmit = async (values: InquiryFeedFormValues) => {
     if (!selectedInquiry) {
       toast.error('Please select an inquiry first');
-      return;
-    }
-
-    if (!feedForm.description.trim()) {
-      toast.error('Please enter description');
       return;
     }
 
@@ -314,22 +317,21 @@ export default function InquiryPage() {
         },
         body: JSON.stringify({
           inquiryId: selectedInquiry,
-          technology: feedForm.technology || null,
-          description: feedForm.description,
+          technology: values.technology || null,
+          description: values.description.trim(),
         }),
       });
 
       if (response.ok) {
         toast.success('Feed added successfully!');
         setShowFeedDialog(false);
-        setFeedForm({ technology: '', description: '' });
+        feedForm.reset({ technology: '', description: '' });
         fetchInquiryFeeds(selectedInquiry);
       } else {
         const error = await response.json();
         toast.error(error.error || 'Failed to add feed');
       }
-    } catch (error) {
-      console.error('Error adding feed:', error);
+    } catch {
       toast.error('An error occurred while adding feed');
     } finally {
       setLoading(false);
@@ -355,8 +357,7 @@ export default function InquiryPage() {
         const error = await response.json();
         toast.error(error.error || 'Failed to delete feed');
       }
-    } catch (error) {
-      console.error('Error deleting feed:', error);
+    } catch {
       toast.error('An error occurred while deleting feed');
     } finally {
       setDeletingFeed(null);
@@ -365,12 +366,12 @@ export default function InquiryPage() {
 
   const openEditDialog = (inquiry: Inquiry) => {
     setEditingInquiry(inquiry);
-    setInquiryForm({
+    inquiryForm.reset({
       aliasName: inquiry.aliasName,
-      tag: inquiry.tag,
-      status: inquiry.status,
+      tag: inquiry.tag as InquiryFormValues['tag'],
+      status: inquiry.status as InquiryFormValues['status'],
       dueDate: inquiry.dueDate || '',
-      appStatus: inquiry.appStatus || 'open',
+      appStatus: (inquiry.appStatus as InquiryFormValues['appStatus']) || 'open',
     });
     setShowInquiryDialog(true);
   };
@@ -447,7 +448,7 @@ export default function InquiryPage() {
                     <DialogTrigger asChild>
                       <Button onClick={() => {
                         setEditingInquiry(null);
-                        setInquiryForm({
+                        inquiryForm.reset({
                           aliasName: '',
                           tag: 'need_estimation',
                           status: 'lead',
@@ -467,86 +468,125 @@ export default function InquiryPage() {
                         </DialogDescription>
                       </DialogHeader>
                       
+                      <Form {...inquiryForm}>
                       <div className="space-y-4">
-                        <div className="space-y-2">
+                        <FormField
+                          control={inquiryForm.control}
+                          name="aliasName"
+                          render={({ field }) => (
+                        <FormItem className="space-y-2">
                           <Label>Alias Name *</Label>
+                          <FormControl>
                           <Input
-                            value={inquiryForm.aliasName}
-                            onChange={(e) => setInquiryForm({ ...inquiryForm, aliasName: e.target.value })}
+                            {...field}
                             placeholder="Client alias name"
                           />
-                        </div>
+                          </FormControl>
+                          <FormMessage className="text-xs" />
+                        </FormItem>
+                          )}
+                        />
 
-                        <div className="space-y-2">
+                        <FormField
+                          control={inquiryForm.control}
+                          name="tag"
+                          render={({ field }) => (
+                        <FormItem className="space-y-2">
                           <Label>Tag *</Label>
                           <Select
-                            value={inquiryForm.tag}
-                            onValueChange={(value) => setInquiryForm({ ...inquiryForm, tag: value })}
+                            value={field.value}
+                            onValueChange={field.onChange}
                           >
+                            <FormControl>
                             <SelectTrigger>
                               <SelectValue />
                             </SelectTrigger>
+                            </FormControl>
                             <SelectContent>
-                              <SelectItem value="need_estimation">Need Estimation</SelectItem>
-                              <SelectItem value="rough_estimation">Rough Estimation</SelectItem>
-                              <SelectItem value="scheduling_meeting">Scheduling Meeting</SelectItem>
-                              <SelectItem value="need_schedule_meeting">Need Schedule Meeting</SelectItem>
-                              <SelectItem value="hired_someone_else">Hired Someone Else</SelectItem>
-                              <SelectItem value="hired">Hired</SelectItem>
+                              {inquiryTagOptions.map((tag) => (
+                                <SelectItem key={tag} value={tag}>
+                                  {tag.replace(/_/g, ' ')}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
-                        </div>
+                          <FormMessage className="text-xs" />
+                        </FormItem>
+                          )}
+                        />
 
-                        <div className="space-y-2">
+                        <FormField
+                          control={inquiryForm.control}
+                          name="status"
+                          render={({ field }) => (
+                        <FormItem className="space-y-2">
                           <Label>Status *</Label>
                           <Select
-                            value={inquiryForm.status}
-                            onValueChange={(value) => setInquiryForm({ ...inquiryForm, status: value })}
+                            value={field.value}
+                            onValueChange={field.onChange}
                           >
+                            <FormControl>
                             <SelectTrigger>
                               <SelectValue />
                             </SelectTrigger>
+                            </FormControl>
                             <SelectContent>
-                              <SelectItem value="lead">Lead</SelectItem>
-                              <SelectItem value="no_reply">No Reply</SelectItem>
-                              <SelectItem value="follow_up">Follow Up Taken</SelectItem>
-                              <SelectItem value="hired">Hired</SelectItem>
-                              <SelectItem value="rejected_client">Rejected by Client</SelectItem>
-                              <SelectItem value="rejected_us">Rejected by Us</SelectItem>
-                              <SelectItem value="invite_lead">Invite Lead</SelectItem>
-                              <SelectItem value="invite_hire">Invite Hire</SelectItem>
-                              <SelectItem value="not_good_client">Not Good Client</SelectItem>
-                              <SelectItem value="budget_low">Budget Too Low</SelectItem>
-                              <SelectItem value="cant_work">Can't Work</SelectItem>
-                              <SelectItem value="hired_someone_else">Hired Someone Else</SelectItem>
+                              {inquiryStatusOptions.map((status) => (
+                                <SelectItem key={status} value={status}>
+                                  {status.replace(/_/g, ' ')}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
-                        </div>
+                          <FormMessage className="text-xs" />
+                        </FormItem>
+                          )}
+                        />
 
-                        <div className="space-y-2">
+                        <FormField
+                          control={inquiryForm.control}
+                          name="dueDate"
+                          render={({ field }) => (
+                        <FormItem className="space-y-2">
                           <Label>Due Date</Label>
+                          <FormControl>
                           <Input
                             type="date"
-                            value={inquiryForm.dueDate}
-                            onChange={(e) => setInquiryForm({ ...inquiryForm, dueDate: e.target.value })}
+                            {...field}
                           />
-                        </div>
+                          </FormControl>
+                          <FormMessage className="text-xs" />
+                        </FormItem>
+                          )}
+                        />
 
-                        <div className="space-y-2">
+                        <FormField
+                          control={inquiryForm.control}
+                          name="appStatus"
+                          render={({ field }) => (
+                        <FormItem className="space-y-2">
                           <Label>App Status *</Label>
                           <Select
-                            value={inquiryForm.appStatus}
-                            onValueChange={(value) => setInquiryForm({ ...inquiryForm, appStatus: value })}
+                            value={field.value}
+                            onValueChange={field.onChange}
                           >
+                            <FormControl>
                             <SelectTrigger>
                               <SelectValue />
                             </SelectTrigger>
+                            </FormControl>
                             <SelectContent>
-                              <SelectItem value="open">Open</SelectItem>
-                              <SelectItem value="close">Close</SelectItem>
+                              {inquiryAppStatusOptions.map((status) => (
+                                <SelectItem key={status} value={status}>
+                                  {status.charAt(0).toUpperCase() + status.slice(1)}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
-                        </div>
+                          <FormMessage className="text-xs" />
+                        </FormItem>
+                          )}
+                        />
                       </div>
 
                       <DialogFooter>
@@ -560,7 +600,7 @@ export default function InquiryPage() {
                         >
                           Cancel
                         </Button>
-                        <Button onClick={handleInquirySubmit} disabled={loading}>
+                        <Button onClick={() => void inquiryForm.handleSubmit(handleInquirySubmit, () => toast.error('Please fix the inquiry form before saving'))()} disabled={loading}>
                           {loading ? (
                             <>
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -571,6 +611,7 @@ export default function InquiryPage() {
                           )}
                         </Button>
                       </DialogFooter>
+                      </Form>
                     </DialogContent>
                   </Dialog>
                 )}
@@ -831,25 +872,42 @@ export default function InquiryPage() {
                         </DialogDescription>
                       </DialogHeader>
                       
+                      <Form {...feedForm}>
                       <div className="space-y-4">
-                        <div className="space-y-2">
+                        <FormField
+                          control={feedForm.control}
+                          name="technology"
+                          render={({ field }) => (
+                        <FormItem className="space-y-2">
                           <Label>Technology</Label>
+                          <FormControl>
                           <Input
-                            value={feedForm.technology}
-                            onChange={(e) => setFeedForm({ ...feedForm, technology: e.target.value })}
+                            {...field}
                             placeholder="Technology stack (optional)"
                           />
-                        </div>
+                          </FormControl>
+                          <FormMessage className="text-xs" />
+                        </FormItem>
+                          )}
+                        />
 
-                        <div className="space-y-2">
+                        <FormField
+                          control={feedForm.control}
+                          name="description"
+                          render={({ field }) => (
+                        <FormItem className="space-y-2">
                           <Label>Description *</Label>
+                          <FormControl>
                           <Textarea
-                            value={feedForm.description}
-                            onChange={(e) => setFeedForm({ ...feedForm, description: e.target.value })}
+                            {...field}
                             placeholder="Enter communication details..."
                             rows={4}
                           />
-                        </div>
+                          </FormControl>
+                          <FormMessage className="text-xs" />
+                        </FormItem>
+                          )}
+                        />
                       </div>
 
                       <DialogFooter>
@@ -860,7 +918,7 @@ export default function InquiryPage() {
                         >
                           Cancel
                         </Button>
-                        <Button onClick={handleFeedSubmit} disabled={loading}>
+                        <Button onClick={() => void feedForm.handleSubmit(handleFeedSubmit, () => toast.error('Please fix the inquiry feed form before saving'))()} disabled={loading}>
                           {loading ? (
                             <>
                               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -871,6 +929,7 @@ export default function InquiryPage() {
                           )}
                         </Button>
                       </DialogFooter>
+                      </Form>
                     </DialogContent>
                   </Dialog>
                 )}

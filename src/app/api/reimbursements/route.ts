@@ -1,348 +1,135 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { and, desc, eq, gte, like, lte, or, sql } from 'drizzle-orm';
 import { db } from '@/db';
-import { reimbursements, reimbursementCategories, employees, users, sessions } from '@/db/schema';
-import { eq, and, gte, lte, desc, or, sql, like } from 'drizzle-orm';
-import { getCurrentUser } from '@/lib/auth';
-import { hasFullAccess, type UserRole } from '@/lib/permissions';
-import { DEFAULT_CURRENCY, safeErrorMessage } from '@/lib/constants';
+import { employees, reimbursementCategories, reimbursements } from '@/db/schema';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, NotFoundError, ForbiddenError } from '@/server/http/errors';
+import { createReimbursementSchema, updateReimbursementSchema } from '@/server/validation/reimbursements';
 
-
-function generateRequestId(): string {
-    const year = new Date().getFullYear();
-    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-    return `RMB-${year}-${random}`;
+function generateRequestId() {
+  const year = new Date().getFullYear();
+  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+  return `RMB-${year}-${random}`;
 }
 
-// GET - Fetch reimbursements
-export async function GET(request: NextRequest) {
-    try {
-        const currentUser = await getCurrentUser(request);
+export const GET = withApiHandler(async (request, context) => {
+  const currentUser = context.auth!.user;
+  const isAdminLike = currentUser.role === 'Admin' || currentUser.role === 'SuperAdmin';
+  const { searchParams } = new URL(request.url);
+  const status = searchParams.get('status');
+  const categoryId = searchParams.get('categoryId');
+  const startDate = searchParams.get('startDate');
+  const endDate = searchParams.get('endDate');
+  const minAmount = searchParams.get('minAmount');
+  const maxAmount = searchParams.get('maxAmount');
+  const employeeIdParam = searchParams.get('employeeId');
+  const search = searchParams.get('search');
+  const conditions = [];
 
-        if (!currentUser) {
-            return NextResponse.json(
-                { error: 'Unauthorized' },
-                { status: 401 }
-            );
-        }
+  if (search) conditions.push(or(like(reimbursements.requestId, `%${search}%`), like(reimbursements.description, `%${search}%`)));
+  if (!isAdminLike) {
+    const [employee] = await db.select().from(employees).where(eq(employees.userId, currentUser.id)).limit(1);
+    if (!employee) return NextResponse.json([]);
+    conditions.push(eq(reimbursements.employeeId, employee.id));
+  } else if (employeeIdParam) {
+    conditions.push(eq(reimbursements.employeeId, Number(employeeIdParam)));
+  }
+  if (status) conditions.push(eq(reimbursements.status, status));
+  if (categoryId) conditions.push(eq(reimbursements.categoryId, Number(categoryId)));
+  if (startDate) conditions.push(gte(reimbursements.expenseDate, startDate));
+  if (endDate) conditions.push(lte(reimbursements.expenseDate, endDate));
+  if (minAmount) conditions.push(gte(reimbursements.amount, Number(minAmount)));
+  if (maxAmount) conditions.push(lte(reimbursements.amount, Number(maxAmount)));
 
-        const { searchParams } = new URL(request.url);
-        const status = searchParams.get('status');
-        const categoryId = searchParams.get('categoryId');
-        const startDate = searchParams.get('startDate');
-        const endDate = searchParams.get('endDate');
-        const minAmount = searchParams.get('minAmount');
-        const maxAmount = searchParams.get('maxAmount');
-        const employeeIdParam = searchParams.get('employeeId');
-        const search = searchParams.get('search');
-        const isAdmin = hasFullAccess(currentUser.role as UserRole);
+  const whereClause = conditions.length ? and(...conditions) : undefined;
+  let query = db.select().from(reimbursements);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(reimbursements);
+  if (whereClause) {
+    query = query.where(whereClause) as typeof query;
+    countQuery = countQuery.where(whereClause) as typeof countQuery;
+  }
+  const [rows, countRows] = await Promise.all([
+    query.orderBy(desc(reimbursements.createdAt)),
+    countQuery,
+  ]);
+  return NextResponse.json({ success: true, data: rows, message: 'Reimbursements fetched successfully', errors: null, meta: { page: 1, limit: rows.length || 0, total: Number(countRows[0]?.count ?? 0) } });
+}, { requireAuth: true, roles: ['Employee'] });
 
-        // Build query conditions
-        let conditions: any[] = [];
+export const POST = withApiHandler(async (request, context) => {
+  const [employee] = await db.select().from(employees).where(eq(employees.userId, context.auth!.user.id)).limit(1);
+  if (!employee) throw new NotFoundError('Employee record not found');
+  const payload = createReimbursementSchema.parse(await request.json());
+  const [category] = await db.select().from(reimbursementCategories).where(eq(reimbursementCategories.id, payload.categoryId)).limit(1);
+  if (!category) throw new NotFoundError('Reimbursement category not found');
 
-        if (search) {
-            conditions.push(or(
-                like(reimbursements.requestId, `%${search}%`),
-                like(reimbursements.description, `%${search}%`)
-            ));
-        }
+  const now = new Date().toISOString();
+  const [created] = await db.insert(reimbursements).values({
+    requestId: generateRequestId(),
+    employeeId: employee.id,
+    categoryId: payload.categoryId,
+    amount: payload.amount,
+    currency: 'INR',
+    expenseDate: payload.expenseDate,
+    description: payload.description,
+    receiptUrl: payload.receiptUrl ?? null,
+    status: payload.status ?? 'draft',
+    submittedAt: (payload.status ?? 'draft') === 'submitted' ? now : null,
+    createdAt: now,
+    updatedAt: now,
+  }).returning();
+  return NextResponse.json(created, { status: 201 });
+}, { requireAuth: true, roles: ['Employee'] });
 
-        // If not admin, only show user's own reimbursements
-        if (!isAdmin) {
-            const [employee] = await db.select()
-                .from(employees)
-                .where(eq(employees.userId, currentUser.id))
-                .limit(1);
+export const PUT = withApiHandler(async (request, context) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Reimbursement ID is required');
+  const payload = updateReimbursementSchema.parse(await request.json());
+  const [existing] = await db.select().from(reimbursements).where(eq(reimbursements.id, id)).limit(1);
+  if (!existing) throw new NotFoundError('Reimbursement not found');
 
-            if (!employee) {
-                return NextResponse.json([]);
-            }
+  const isAdminLike = context.auth!.user.role === 'Admin' || context.auth!.user.role === 'SuperAdmin';
+  if (!isAdminLike) {
+    const [employee] = await db.select().from(employees).where(eq(employees.userId, context.auth!.user.id)).limit(1);
+    if (!employee || existing.employeeId !== employee.id) throw new ForbiddenError('Unauthorized to update this reimbursement');
+    if (existing.status !== 'draft') throw new BadRequestError('Can only edit draft reimbursements');
+  }
 
-            conditions.push(eq(reimbursements.employeeId, employee.id));
-        } else if (employeeIdParam) {
-            // Admin filtering by specific employee
-            conditions.push(eq(reimbursements.employeeId, parseInt(employeeIdParam)));
-        }
-
-        // Apply filters
-        if (status) {
-            conditions.push(eq(reimbursements.status, status));
-        }
-        if (categoryId) {
-            conditions.push(eq(reimbursements.categoryId, parseInt(categoryId)));
-        }
-        if (startDate) {
-            conditions.push(gte(reimbursements.expenseDate, startDate));
-        }
-        if (endDate) {
-            conditions.push(lte(reimbursements.expenseDate, endDate));
-        }
-        if (minAmount) {
-            conditions.push(gte(reimbursements.amount, parseInt(minAmount)));
-        }
-        if (maxAmount) {
-            conditions.push(lte(reimbursements.amount, parseInt(maxAmount)));
-        }
-
-        const query = conditions.length > 0
-            ? db.select().from(reimbursements).where(and(...conditions)).orderBy(desc(reimbursements.createdAt))
-            : db.select().from(reimbursements).orderBy(desc(reimbursements.createdAt));
-
-        const results = await query;
-
-        return NextResponse.json(results);
-    } catch (error) {
-        console.error('Error fetching reimbursements:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch reimbursements' },
-            { status: 500 }
-        );
+  const now = new Date().toISOString();
+  const updates: Record<string, unknown> = { updatedAt: now };
+  if (!isAdminLike) {
+    if (payload.categoryId !== undefined) updates.categoryId = payload.categoryId;
+    if (payload.amount !== undefined) updates.amount = payload.amount;
+    if (payload.expenseDate !== undefined) updates.expenseDate = payload.expenseDate;
+    if (payload.description !== undefined) updates.description = payload.description;
+    if (payload.receiptUrl !== undefined) updates.receiptUrl = payload.receiptUrl ?? null;
+    if (payload.status !== undefined) {
+      updates.status = payload.status;
+      if (payload.status === 'submitted') updates.submittedAt = now;
     }
-}
-
-// POST - Create new reimbursement
-export async function POST(request: NextRequest) {
-    try {
-        const currentUser = await getCurrentUser(request);
-
-        if (!currentUser) {
-            return NextResponse.json(
-                { error: 'Unauthorized' },
-                { status: 401 }
-            );
-        }
-
-        // Get employee record
-        const [employee] = await db.select()
-            .from(employees)
-            .where(eq(employees.userId, currentUser.id))
-            .limit(1);
-
-        if (!employee) {
-            return NextResponse.json(
-                { error: 'Employee record not found' },
-                { status: 404 }
-            );
-        }
-
-        const body = await request.json();
-        const { categoryId, amount, expenseDate, description, receiptUrl, status: requestStatus } = body;
-
-        // Validate required fields
-        if (!categoryId || !amount || !expenseDate || !description) {
-            return NextResponse.json(
-                { error: 'Missing required fields' },
-                { status: 400 }
-            );
-        }
-
-        const now = new Date().toISOString();
-        const requestId = generateRequestId();
-        const status = requestStatus || 'draft';
-
-        const [reimbursement] = await db.insert(reimbursements).values({
-            requestId,
-            employeeId: employee.id,
-            categoryId: parseInt(categoryId),
-            amount: parseInt(amount), // Amount in paise
-            currency: DEFAULT_CURRENCY,
-            expenseDate,
-            description,
-            receiptUrl: receiptUrl || null,
-            status,
-            submittedAt: status === 'submitted' ? now : null,
-            createdAt: now,
-            updatedAt: now,
-        }).returning();
-
-        return NextResponse.json(reimbursement, { status: 201 });
-    } catch (error) {
-        console.error('Error creating reimbursement:', error);
-        return NextResponse.json(
-            { error: 'Failed to create reimbursement' },
-            { status: 500 }
-        );
+  } else {
+    if (payload.status !== undefined) {
+      updates.status = payload.status;
+      updates.reviewedBy = context.auth!.user.id;
+      updates.reviewedAt = now;
     }
-}
+    if (payload.adminComments !== undefined) updates.adminComments = payload.adminComments ?? null;
+  }
+  const [updated] = await db.update(reimbursements).set(updates).where(eq(reimbursements.id, id)).returning();
+  return NextResponse.json(updated);
+}, { requireAuth: true, roles: ['Employee'] });
 
-// PUT - Update reimbursement
-export async function PUT(request: NextRequest) {
-    try {
-        const currentUser = await getCurrentUser(request);
+export const DELETE = withApiHandler(async (request, context) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Reimbursement ID is required');
+  const [existing] = await db.select().from(reimbursements).where(eq(reimbursements.id, id)).limit(1);
+  if (!existing) throw new NotFoundError('Reimbursement not found');
+  const isAdminLike = context.auth!.user.role === 'Admin' || context.auth!.user.role === 'SuperAdmin';
+  if (!isAdminLike) {
+    const [employee] = await db.select().from(employees).where(eq(employees.userId, context.auth!.user.id)).limit(1);
+    if (!employee || existing.employeeId !== employee.id) throw new ForbiddenError('Unauthorized to delete this reimbursement');
+    if (existing.status !== 'draft') throw new BadRequestError('Can only delete draft reimbursements');
+  }
+  await db.delete(reimbursements).where(eq(reimbursements.id, id));
+  return NextResponse.json({ message: 'Reimbursement deleted successfully' });
+}, { requireAuth: true, roles: ['Employee'] });
 
-        if (!currentUser) {
-            return NextResponse.json(
-                { error: 'Unauthorized' },
-                { status: 401 }
-            );
-        }
-
-        const { searchParams } = new URL(request.url);
-        const id = searchParams.get('id');
-
-        if (!id) {
-            return NextResponse.json(
-                { error: 'Reimbursement ID is required' },
-                { status: 400 }
-            );
-        }
-
-        const body = await request.json();
-        const { categoryId, amount, expenseDate, description, receiptUrl, status, adminComments } = body;
-
-        const isAdmin = currentUser.role === 'admin' || currentUser.role === 'hr_manager' || currentUser.role === 'cms_administrator';
-
-        // Fetch existing reimbursement
-        const [existing] = await db.select()
-            .from(reimbursements)
-            .where(eq(reimbursements.id, parseInt(id)))
-            .limit(1);
-
-        if (!existing) {
-            return NextResponse.json(
-                { error: 'Reimbursement not found' },
-                { status: 404 }
-            );
-        }
-
-        // Check permissions
-        if (!isAdmin) {
-            const [employee] = await db.select()
-                .from(employees)
-                .where(eq(employees.userId, currentUser.id))
-                .limit(1);
-
-            if (!employee || existing.employeeId !== employee.id) {
-                return NextResponse.json(
-                    { error: 'Unauthorized to update this reimbursement' },
-                    { status: 403 }
-                );
-            }
-
-            // Employees can only edit drafts
-            if (existing.status !== 'draft') {
-                return NextResponse.json(
-                    { error: 'Can only edit draft reimbursements' },
-                    { status: 400 }
-                );
-            }
-        }
-
-        const now = new Date().toISOString();
-        const updates: any = { updatedAt: now };
-
-        // Employee updates
-        if (!isAdmin) {
-            if (categoryId) updates.categoryId = parseInt(categoryId);
-            if (amount) updates.amount = parseInt(amount);
-            if (expenseDate) updates.expenseDate = expenseDate;
-            if (description) updates.description = description;
-            if (receiptUrl !== undefined) updates.receiptUrl = receiptUrl;
-            if (status) {
-                updates.status = status;
-                if (status === 'submitted') {
-                    updates.submittedAt = now;
-                }
-            }
-        } else {
-            // Admin updates (approval/rejection)
-            if (status) {
-                updates.status = status;
-                updates.reviewedBy = currentUser.id;
-                updates.reviewedAt = now;
-            }
-            if (adminComments !== undefined) {
-                updates.adminComments = adminComments;
-            }
-        }
-
-        await db.update(reimbursements)
-            .set(updates)
-            .where(eq(reimbursements.id, parseInt(id)));
-
-        const [updated] = await db.select()
-            .from(reimbursements)
-            .where(eq(reimbursements.id, parseInt(id)))
-            .limit(1);
-
-        return NextResponse.json(updated);
-    } catch (error) {
-        console.error('Error updating reimbursement:', error);
-        return NextResponse.json(
-            { error: 'Failed to update reimbursement' },
-            { status: 500 }
-        );
-    }
-}
-
-// DELETE - Delete reimbursement
-export async function DELETE(request: NextRequest) {
-    try {
-        const currentUser = await getCurrentUser(request);
-
-        if (!currentUser) {
-            return NextResponse.json(
-                { error: 'Unauthorized' },
-                { status: 401 }
-            );
-        }
-
-        const { searchParams } = new URL(request.url);
-        const id = searchParams.get('id');
-
-        if (!id) {
-            return NextResponse.json(
-                { error: 'Reimbursement ID is required' },
-                { status: 400 }
-            );
-        }
-
-        const isAdmin = currentUser.role === 'admin' || currentUser.role === 'hr_manager' || currentUser.role === 'cms_administrator';
-
-        // Fetch existing reimbursement
-        const [existing] = await db.select()
-            .from(reimbursements)
-            .where(eq(reimbursements.id, parseInt(id)))
-            .limit(1);
-
-        if (!existing) {
-            return NextResponse.json(
-                { error: 'Reimbursement not found' },
-                { status: 404 }
-            );
-        }
-
-        // Check permissions
-        if (!isAdmin) {
-            const [employee] = await db.select()
-                .from(employees)
-                .where(eq(employees.userId, currentUser.id))
-                .limit(1);
-
-            if (!employee || existing.employeeId !== employee.id) {
-                return NextResponse.json(
-                    { error: 'Unauthorized to delete this reimbursement' },
-                    { status: 403 }
-                );
-            }
-
-            // Employees can only delete drafts
-            if (existing.status !== 'draft') {
-                return NextResponse.json(
-                    { error: 'Can only delete draft reimbursements' },
-                    { status: 400 }
-                );
-            }
-        }
-
-        await db.delete(reimbursements)
-            .where(eq(reimbursements.id, parseInt(id)));
-
-        return NextResponse.json({ message: 'Reimbursement deleted successfully' });
-    } catch (error) {
-        console.error('Error deleting reimbursement:', error);
-        return NextResponse.json(
-            { error: 'Failed to delete reimbursement' },
-            { status: 500 }
-        );
-    }
-}

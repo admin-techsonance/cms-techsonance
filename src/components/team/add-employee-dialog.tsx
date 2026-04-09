@@ -1,11 +1,20 @@
 'use client';
 
 import { useState } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  employeeCreateFormSchema,
+  employeeDepartmentOptions,
+  employeeRoleOptions,
+  type EmployeeCreateFormValues,
+} from '@/lib/forms/schemas';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -15,46 +24,35 @@ interface AddEmployeeDialogProps {
   onSuccess: () => void;
 }
 
-interface FormData {
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone: string;
-  password: string;
-  employeeId: string;
-  department: string;
-  designation: string;
-  dateOfJoining: string;
-  dateOfBirth: string;
-  salary: string;
-  skills: string;
-  role: string;
-}
-
-interface FormErrors {
-  firstName?: string;
-  lastName?: string;
-  email?: string;
-  phone?: string;
-  password?: string;
-  employeeId?: string;
-  department?: string;
-  designation?: string;
-  dateOfJoining?: string;
-  salary?: string;
-  role?: string;
-}
-
 export function AddEmployeeDialog({ open, onOpenChange, onSuccess }: AddEmployeeDialogProps) {
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState<FormData>({
+  const form = useForm<EmployeeCreateFormValues>({
+    resolver: zodResolver(employeeCreateFormSchema),
+    defaultValues: {
+      firstName: '',
+      lastName: '',
+      email: '',
+      phone: '',
+      password: '',
+      employeeId: '',
+      department: 'Engineering',
+      designation: '',
+      dateOfJoining: '',
+      dateOfBirth: '',
+      salary: '',
+      skills: '',
+      role: 'developer',
+    },
+  });
+
+  const resetForm = () => form.reset({
     firstName: '',
     lastName: '',
     email: '',
     phone: '',
     password: '',
     employeeId: '',
-    department: '',
+    department: 'Engineering',
     designation: '',
     dateOfJoining: '',
     dateOfBirth: '',
@@ -62,97 +60,18 @@ export function AddEmployeeDialog({ open, onOpenChange, onSuccess }: AddEmployee
     skills: '',
     role: 'developer',
   });
-  const [errors, setErrors] = useState<FormErrors>({});
-
-  const validateForm = (): boolean => {
-    const newErrors: FormErrors = {};
-
-    // First Name validation
-    if (!formData.firstName.trim()) {
-      newErrors.firstName = 'First name is required';
-    } else if (formData.firstName.trim().length < 2) {
-      newErrors.firstName = 'First name must be at least 2 characters';
-    }
-
-    // Last Name validation
-    if (!formData.lastName.trim()) {
-      newErrors.lastName = 'Last name is required';
-    } else if (formData.lastName.trim().length < 2) {
-      newErrors.lastName = 'Last name must be at least 2 characters';
-    }
-
-    // Email validation
-    if (!formData.email.trim()) {
-      newErrors.email = 'Email is required';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      newErrors.email = 'Invalid email format';
-    }
-
-    // Phone validation
-    if (formData.phone && !/^\+?[\d\s-()]+$/.test(formData.phone)) {
-      newErrors.phone = 'Invalid phone number format';
-    }
-
-    // Password validation
-    if (!formData.password) {
-      newErrors.password = 'Password is required';
-    } else if (formData.password.length < 8) {
-      newErrors.password = 'Password must be at least 8 characters';
-    }
-
-    // Employee ID validation
-    if (!formData.employeeId.trim()) {
-      newErrors.employeeId = 'Employee ID is required';
-    }
-
-    // Department validation
-    if (!formData.department.trim()) {
-      newErrors.department = 'Department is required';
-    }
-
-    // Designation validation
-    if (!formData.designation.trim()) {
-      newErrors.designation = 'Designation is required';
-    }
-
-    // Date of Joining validation
-    if (!formData.dateOfJoining) {
-      newErrors.dateOfJoining = 'Date of joining is required';
-    }
-
-    // Salary validation
-    if (formData.salary && (isNaN(Number(formData.salary)) || Number(formData.salary) < 0)) {
-      newErrors.salary = 'Salary must be a valid positive number';
-    }
-
-    // Role validation
-    if (!formData.role) {
-      newErrors.role = 'Role is required';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!validateForm()) {
-      toast.error('Please fix the validation errors');
-      return;
-    }
-
+  
+  const handleSubmit = async (values: EmployeeCreateFormValues) => {
     setLoading(true);
 
     try {
-      // Step 1: Create user account
       const userPayload = {
-        email: formData.email.trim(),
-        password: formData.password,
-        firstName: formData.firstName.trim(),
-        lastName: formData.lastName.trim(),
-        role: formData.role,
-        phone: formData.phone.trim() || null,
+        email: values.email.trim(),
+        password: values.password,
+        firstName: values.firstName.trim(),
+        lastName: values.lastName.trim(),
+        role: values.role,
+        phone: values.phone?.trim() || null,
       };
 
       const userResponse = await fetch('/api/users', {
@@ -171,16 +90,15 @@ export function AddEmployeeDialog({ open, onOpenChange, onSuccess }: AddEmployee
 
       const userData = await userResponse.json();
 
-      // Step 2: Create employee record
       const employeePayload = {
         userId: userData.id,
-        employeeId: formData.employeeId.trim(),
-        department: formData.department.trim(),
-        designation: formData.designation.trim(),
-        dateOfJoining: formData.dateOfJoining,
-        dateOfBirth: formData.dateOfBirth || null,
-        salary: formData.salary ? parseInt(formData.salary) : null,
-        skills: formData.skills.trim() ? formData.skills.split(',').map(s => s.trim()).filter(Boolean) : [],
+        employeeId: values.employeeId.trim(),
+        department: values.department.trim(),
+        designation: values.designation.trim(),
+        dateOfJoining: values.dateOfJoining,
+        dateOfBirth: values.dateOfBirth || null,
+        salary: values.salary ? parseInt(values.salary, 10) : null,
+        skills: values.skills?.trim() ? values.skills.split(',').map((skill) => skill.trim()).filter(Boolean) : [],
         status: 'active',
       };
 
@@ -201,37 +119,11 @@ export function AddEmployeeDialog({ open, onOpenChange, onSuccess }: AddEmployee
       toast.success('Employee added successfully');
       onOpenChange(false);
       onSuccess();
-      
-      // Reset form
-      setFormData({
-        firstName: '',
-        lastName: '',
-        email: '',
-        phone: '',
-        password: '',
-        employeeId: '',
-        department: '',
-        designation: '',
-        dateOfJoining: '',
-        dateOfBirth: '',
-        salary: '',
-        skills: '',
-        role: 'developer',
-      });
-      setErrors({});
+      resetForm();
     } catch (error) {
-      console.error('Error adding employee:', error);
       toast.error(error instanceof Error ? error.message : 'Failed to add employee');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleChange = (field: keyof FormData, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-    // Clear error for this field when user starts typing
-    if (errors[field as keyof FormErrors]) {
-      setErrors(prev => ({ ...prev, [field]: undefined }));
     }
   };
 
@@ -245,220 +137,285 @@ export function AddEmployeeDialog({ open, onOpenChange, onSuccess }: AddEmployee
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <Form {...form}>
+        <form onSubmit={form.handleSubmit(handleSubmit, () => toast.error('Please fix the validation errors'))} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="firstName"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="firstName">First Name *</Label>
+              <FormControl>
               <Input
                 id="firstName"
-                value={formData.firstName}
-                onChange={(e) => handleChange('firstName', e.target.value)}
+                {...field}
                 disabled={loading}
-                className={errors.firstName ? 'border-destructive' : ''}
               />
-              {errors.firstName && (
-                <p className="text-xs text-destructive">{errors.firstName}</p>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
               )}
-            </div>
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="lastName"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="lastName">Last Name *</Label>
+              <FormControl>
               <Input
                 id="lastName"
-                value={formData.lastName}
-                onChange={(e) => handleChange('lastName', e.target.value)}
+                {...field}
                 disabled={loading}
-                className={errors.lastName ? 'border-destructive' : ''}
               />
-              {errors.lastName && (
-                <p className="text-xs text-destructive">{errors.lastName}</p>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
               )}
-            </div>
+            />
           </div>
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="email"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="email">Email *</Label>
+            <FormControl>
             <Input
               id="email"
               type="email"
-              value={formData.email}
-              onChange={(e) => handleChange('email', e.target.value)}
+              {...field}
               disabled={loading}
-              className={errors.email ? 'border-destructive' : ''}
             />
-            {errors.email && (
-              <p className="text-xs text-destructive">{errors.email}</p>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
             )}
-          </div>
+          />
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="phone"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="phone">Phone</Label>
+              <FormControl>
               <Input
                 id="phone"
                 type="tel"
-                value={formData.phone}
-                onChange={(e) => handleChange('phone', e.target.value)}
+                {...field}
                 disabled={loading}
-                className={errors.phone ? 'border-destructive' : ''}
               />
-              {errors.phone && (
-                <p className="text-xs text-destructive">{errors.phone}</p>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
               )}
-            </div>
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="password"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="password">Password *</Label>
+              <FormControl>
               <Input
                 id="password"
                 type="password"
-                value={formData.password}
-                onChange={(e) => handleChange('password', e.target.value)}
+                {...field}
                 disabled={loading}
-                className={errors.password ? 'border-destructive' : ''}
                 autoComplete="off"
               />
-              {errors.password && (
-                <p className="text-xs text-destructive">{errors.password}</p>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
               )}
-            </div>
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="employeeId"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="employeeId">Employee ID *</Label>
+              <FormControl>
               <Input
                 id="employeeId"
-                value={formData.employeeId}
-                onChange={(e) => handleChange('employeeId', e.target.value)}
+                {...field}
                 disabled={loading}
                 placeholder="e.g., EMP001"
-                className={errors.employeeId ? 'border-destructive' : ''}
               />
-              {errors.employeeId && (
-                <p className="text-xs text-destructive">{errors.employeeId}</p>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
               )}
-            </div>
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="role"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="role">Role *</Label>
               <Select
-                value={formData.role}
-                onValueChange={(value) => handleChange('role', value)}
+                value={field.value}
+                onValueChange={field.onChange}
                 disabled={loading}
               >
-                <SelectTrigger className={errors.role ? 'border-destructive' : ''}>
+                <FormControl>
+                <SelectTrigger>
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
-                  <SelectItem value="developer">Developer</SelectItem>
-                  <SelectItem value="project_manager">Project Manager</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
+                  {employeeRoleOptions.map((role) => (
+                    <SelectItem key={role} value={role}>
+                      {role === 'project_manager' ? 'Project Manager' : role.charAt(0).toUpperCase() + role.slice(1)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-              {errors.role && (
-                <p className="text-xs text-destructive">{errors.role}</p>
+              <FormMessage className="text-xs" />
+            </FormItem>
               )}
-            </div>
+            />
           </div>
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="department"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="department">Department *</Label>
             <Select
-              value={formData.department}
-              onValueChange={(value) => handleChange('department', value)}
+              value={field.value}
+              onValueChange={field.onChange}
               disabled={loading}
             >
-              <SelectTrigger className={errors.department ? 'border-destructive' : ''}>
+              <FormControl>
+              <SelectTrigger>
                 <SelectValue placeholder="Select department" />
               </SelectTrigger>
+              </FormControl>
               <SelectContent>
-                <SelectItem value="Engineering">Engineering</SelectItem>
-                <SelectItem value="Design">Design</SelectItem>
-                <SelectItem value="Marketing">Marketing</SelectItem>
-                <SelectItem value="Sales">Sales</SelectItem>
-                <SelectItem value="HR">HR</SelectItem>
-                <SelectItem value="Finance">Finance</SelectItem>
-                <SelectItem value="Operations">Operations</SelectItem>
+                {employeeDepartmentOptions.map((department) => (
+                  <SelectItem key={department} value={department}>
+                    {department}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
-            {errors.department && (
-              <p className="text-xs text-destructive">{errors.department}</p>
+            <FormMessage className="text-xs" />
+          </FormItem>
             )}
-          </div>
+          />
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="designation"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="designation">Designation *</Label>
+            <FormControl>
             <Input
               id="designation"
-              value={formData.designation}
-              onChange={(e) => handleChange('designation', e.target.value)}
+              {...field}
               disabled={loading}
               placeholder="e.g., Senior Developer"
-              className={errors.designation ? 'border-destructive' : ''}
             />
-            {errors.designation && (
-              <p className="text-xs text-destructive">{errors.designation}</p>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
             )}
-          </div>
+          />
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="dateOfJoining"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="dateOfJoining">Date of Joining *</Label>
+              <FormControl>
               <Input
                 id="dateOfJoining"
                 type="date"
-                value={formData.dateOfJoining}
-                onChange={(e) => handleChange('dateOfJoining', e.target.value)}
+                {...field}
                 disabled={loading}
-                className={errors.dateOfJoining ? 'border-destructive' : ''}
               />
-              {errors.dateOfJoining && (
-                <p className="text-xs text-destructive">{errors.dateOfJoining}</p>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
               )}
-            </div>
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="dateOfBirth"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="dateOfBirth">Date of Birth</Label>
+              <FormControl>
               <Input
                 id="dateOfBirth"
                 type="date"
-                value={formData.dateOfBirth}
-                onChange={(e) => handleChange('dateOfBirth', e.target.value)}
+                {...field}
                 disabled={loading}
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="salary"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="salary">Salary (Annual)</Label>
+            <FormControl>
             <Input
               id="salary"
               type="number"
-              value={formData.salary}
-              onChange={(e) => handleChange('salary', e.target.value)}
+              {...field}
               disabled={loading}
               placeholder="e.g., 50000"
-              className={errors.salary ? 'border-destructive' : ''}
             />
-            {errors.salary && (
-              <p className="text-xs text-destructive">{errors.salary}</p>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
             )}
-          </div>
+          />
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="skills"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="skills">Skills (comma separated)</Label>
+            <FormControl>
             <Input
               id="skills"
-              value={formData.skills}
-              onChange={(e) => handleChange('skills', e.target.value)}
+              {...field}
               disabled={loading}
               placeholder="e.g., JavaScript, React, Node.js"
             />
+            </FormControl>
             <p className="text-xs text-muted-foreground">
               Enter skills separated by commas
             </p>
-          </div>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
           <DialogFooter>
             <Button
@@ -481,6 +438,7 @@ export function AddEmployeeDialog({ open, onOpenChange, onSuccess }: AddEmployee
             </Button>
           </DialogFooter>
         </form>
+        </Form>
       </DialogContent>
     </Dialog>
   );

@@ -1,512 +1,187 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { and, asc, desc, eq, gte, like, lte, or, sql } from 'drizzle-orm';
 import { db } from '@/db';
-import { projects, clients, users, projectMembers } from '@/db/schema';
-import { eq, like, and, or, desc, asc, gte, lte } from 'drizzle-orm';
-import { getCurrentUser } from '@/lib/auth';
-import { safeErrorMessage } from '@/lib/constants';
+import { clients, projectMembers, projects } from '@/db/schema';
+import { withApiHandler } from '@/server/http/handler';
+import { BadRequestError, NotFoundError, UnprocessableEntityError } from '@/server/http/errors';
+import { createProjectSchema, projectPrioritySchema, projectStatusSchema, updateProjectSchema } from '@/server/validation/projects';
 
-const VALID_STATUSES = ['planning', 'in_progress', 'on_hold', 'completed', 'cancelled'] as const;
-const VALID_PRIORITIES = ['low', 'medium', 'high', 'critical'] as const;
+function buildProjectFilters(searchParams: URLSearchParams) {
+  const conditions = [];
+  const search = searchParams.get('search');
+  const clientId = searchParams.get('clientId');
+  const status = searchParams.get('status');
+  const priority = searchParams.get('priority');
+  const createdBy = searchParams.get('createdBy');
+  const startDate = searchParams.get('startDate');
+  const endDate = searchParams.get('endDate');
+  const isActive = searchParams.get('isActive');
 
-type ProjectStatus = typeof VALID_STATUSES[number];
-type ProjectPriority = typeof VALID_PRIORITIES[number];
-
-function isValidStatus(status: string): status is ProjectStatus {
-  return VALID_STATUSES.includes(status as ProjectStatus);
-}
-
-function isValidPriority(priority: string): priority is ProjectPriority {
-  return VALID_PRIORITIES.includes(priority as ProjectPriority);
-}
-
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (id) {
-      const projectId = parseInt(id);
-      if (isNaN(projectId)) {
-        return NextResponse.json({ 
-          error: 'Valid ID is required',
-          code: 'INVALID_ID' 
-        }, { status: 400 });
-      }
-
-      const project = await db.select()
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-
-      if (project.length === 0) {
-        return NextResponse.json({ 
-          error: 'Project not found',
-          code: 'PROJECT_NOT_FOUND' 
-        }, { status: 404 });
-      }
-
-      return NextResponse.json(project[0], { status: 200 });
-    }
-
-    const limit = Math.min(parseInt(searchParams.get('limit') ?? '10'), 100);
-    const offset = parseInt(searchParams.get('offset') ?? '0');
-    const search = searchParams.get('search');
-    const clientId = searchParams.get('clientId');
-    const status = searchParams.get('status');
-    const priority = searchParams.get('priority');
-    const createdBy = searchParams.get('createdBy');
-    const assignedTo = searchParams.get('assignedTo');
-    const startDate = searchParams.get('startDate');
-    const endDate = searchParams.get('endDate');
-    const isActive = searchParams.get('isActive');
-    const sortBy = searchParams.get('sort');
-    const order = searchParams.get('order') ?? 'desc';
-
-    const conditions = [];
-    if (search) {
-      conditions.push(
-        or(
-          like(projects.name, `%${search}%`),
-          like(projects.description, `%${search}%`)
-        )
-      );
-    }
-
-    if (clientId) {
-      const clientIdNum = parseInt(clientId);
-      if (!isNaN(clientIdNum)) {
-        conditions.push(eq(projects.clientId, clientIdNum));
-      }
-    }
-
-    if (status) {
-      if (isValidStatus(status)) {
-        conditions.push(eq(projects.status, status));
-      } else {
-        return NextResponse.json({ 
-          error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`,
-          code: 'INVALID_STATUS' 
-        }, { status: 400 });
-      }
-    }
-
-    if (priority) {
-      if (isValidPriority(priority)) {
-        conditions.push(eq(projects.priority, priority));
-      } else {
-        return NextResponse.json({ 
-          error: `Invalid priority. Must be one of: ${VALID_PRIORITIES.join(', ')}`,
-          code: 'INVALID_PRIORITY' 
-        }, { status: 400 });
-      }
-    }
-
-    if (createdBy) {
-      const createdByNum = parseInt(createdBy);
-      if (!isNaN(createdByNum)) {
-        conditions.push(eq(projects.createdBy, createdByNum));
-      }
-    }
-
-    if (assignedTo) {
-      const assignedToNum = parseInt(assignedTo);
-      if (!isNaN(assignedToNum)) {
-        // This will be handled by the join condition
-      }
-    }
-
-    if (startDate) {
-      conditions.push(gte(projects.startDate, startDate));
-    }
-
-    if (endDate) {
-      conditions.push(lte(projects.endDate, endDate));
-    }
-
-    if (isActive !== null && isActive !== undefined && isActive !== 'all') {
-      const isActiveBool = isActive === 'true';
-      conditions.push(eq(projects.isActive, isActiveBool));
-    }
-
-    let query: any;
-    if (assignedTo && !isNaN(parseInt(assignedTo))) {
-      query = db.select({
-        id: projects.id,
-        name: projects.name,
-        description: projects.description,
-        clientId: projects.clientId,
-        status: projects.status,
-        priority: projects.priority,
-        startDate: projects.startDate,
-        endDate: projects.endDate,
-        budget: projects.budget,
-        isActive: projects.isActive,
-        createdBy: projects.createdBy,
-        createdAt: projects.createdAt,
-        updatedAt: projects.updatedAt,
-      })
-        .from(projects)
-        .innerJoin(projectMembers, eq(projects.id, projectMembers.projectId))
-        .where(and(eq(projectMembers.userId, parseInt(assignedTo)), ...conditions));
-    } else {
-      query = db.select().from(projects).where(and(...conditions));
-    }
-
-    if (sortBy) {
-      const validSortFields = ['startDate', 'endDate', 'budget'];
-      if (validSortFields.includes(sortBy)) {
-        const orderFn = order.toLowerCase() === 'asc' ? asc : desc;
-        if (sortBy === 'startDate') {
-          query = query.orderBy(orderFn(projects.startDate));
-        } else if (sortBy === 'endDate') {
-          query = query.orderBy(orderFn(projects.endDate));
-        } else if (sortBy === 'budget') {
-          query = query.orderBy(orderFn(projects.budget));
-        }
-      }
-    } else {
-      query = query.orderBy(desc(projects.createdAt));
-    }
-
-    const results = await query.limit(limit).offset(offset);
-
-    return NextResponse.json(results, { status: 200 });
-  } catch (error) {
-    console.error('GET error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  if (search) {
+    conditions.push(or(like(projects.name, `%${search}%`), like(projects.description, `%${search}%`)));
   }
+  if (clientId) conditions.push(eq(projects.clientId, Number(clientId)));
+  if (status) conditions.push(eq(projects.status, projectStatusSchema.parse(status)));
+  if (priority) conditions.push(eq(projects.priority, projectPrioritySchema.parse(priority)));
+  if (createdBy) conditions.push(eq(projects.createdBy, Number(createdBy)));
+  if (startDate) conditions.push(gte(projects.startDate, startDate));
+  if (endDate) conditions.push(lte(projects.endDate, endDate));
+  if (isActive === 'true' || isActive === 'false') conditions.push(eq(projects.isActive, isActive === 'true'));
+
+  return conditions;
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+export const GET = withApiHandler(async (request, context) => {
+  const searchParams = new URL(request.url).searchParams;
+  const id = searchParams.get('id');
 
-    const body = await request.json();
-
-    if ('userId' in body || 'user_id' in body || 'createdBy' in body) {
-      return NextResponse.json({ 
-        error: "User ID cannot be provided in request body",
-        code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
-
-    const { name, clientId, description, startDate, endDate, budget, status, priority, isActive } = body;
-
-    if (!name || !name.trim()) {
-      return NextResponse.json({ 
-        error: 'Project name is required',
-        code: 'MISSING_NAME' 
-      }, { status: 400 });
-    }
-
-    if (!clientId) {
-      return NextResponse.json({ 
-        error: 'Client ID is required',
-        code: 'MISSING_CLIENT_ID' 
-      }, { status: 400 });
-    }
-
-    const clientIdNum = parseInt(clientId);
-    if (isNaN(clientIdNum)) {
-      return NextResponse.json({ 
-        error: 'Client ID must be a valid number',
-        code: 'INVALID_CLIENT_ID' 
-      }, { status: 400 });
-    }
-
-    const client = await db.select()
-      .from(clients)
-      .where(eq(clients.id, clientIdNum))
-      .limit(1);
-
-    if (client.length === 0) {
-      return NextResponse.json({ 
-        error: 'Client does not exist',
-        code: 'CLIENT_NOT_FOUND' 
-      }, { status: 400 });
-    }
-
-    const projectStatus = status || 'planning';
-    if (!isValidStatus(projectStatus)) {
-      return NextResponse.json({ 
-        error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`,
-        code: 'INVALID_STATUS' 
-      }, { status: 400 });
-    }
-
-    const projectPriority = priority || 'medium';
-    if (!isValidPriority(projectPriority)) {
-      return NextResponse.json({ 
-        error: `Invalid priority. Must be one of: ${VALID_PRIORITIES.join(', ')}`,
-        code: 'INVALID_PRIORITY' 
-      }, { status: 400 });
-    }
-
-    if (budget !== undefined && budget !== null) {
-      const budgetNum = parseInt(budget);
-      if (isNaN(budgetNum) || budgetNum < 0) {
-        return NextResponse.json({ 
-          error: 'Budget must be a valid positive number',
-          code: 'INVALID_BUDGET' 
-        }, { status: 400 });
-      }
-    }
-
-    const now = new Date().toISOString();
-
-    const newProject = await db.insert(projects)
-      .values({
-        name: name.trim(),
-        description: description ? description.trim() : null,
-        clientId: clientIdNum,
-        status: projectStatus,
-        priority: projectPriority,
-        startDate: startDate || null,
-        endDate: endDate || null,
-        budget: budget ? parseInt(budget) : null,
-        isActive: isActive !== undefined ? isActive : true,
-        createdBy: user.id,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .returning();
-
-    return NextResponse.json(newProject[0], { status: 201 });
-  } catch (error) {
-    console.error('POST error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  if (id) {
+    const [project] = await db.select().from(projects).where(eq(projects.id, Number(id))).limit(1);
+    if (!project) throw new NotFoundError('Project not found');
+    return NextResponse.json(project);
   }
-}
 
-export async function PUT(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+  const limit = Math.min(Number(searchParams.get('limit') ?? '10'), 100);
+  const offset = Math.max(Number(searchParams.get('offset') ?? '0'), 0);
+  const assignedTo = searchParams.get('assignedTo');
+  const sortBy = searchParams.get('sort') ?? 'createdAt';
+  const order = searchParams.get('order') === 'asc' ? asc : desc;
+  const conditions = buildProjectFilters(searchParams);
+  const whereClause = conditions.length ? and(...conditions) : undefined;
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
+  if (assignedTo) {
+    const baseWhere = and(eq(projectMembers.userId, Number(assignedTo)), ...(whereClause ? [whereClause] : []));
+    const results = await db.select({
+      id: projects.id,
+      name: projects.name,
+      description: projects.description,
+      clientId: projects.clientId,
+      status: projects.status,
+      priority: projects.priority,
+      startDate: projects.startDate,
+      endDate: projects.endDate,
+      budget: projects.budget,
+      isActive: projects.isActive,
+      createdBy: projects.createdBy,
+      createdAt: projects.createdAt,
+      updatedAt: projects.updatedAt,
+    }).from(projects)
+      .innerJoin(projectMembers, eq(projects.id, projectMembers.projectId))
+      .where(baseWhere)
+      .orderBy(sortBy === 'endDate' ? order(projects.endDate) : sortBy === 'startDate' ? order(projects.startDate) : sortBy === 'budget' ? order(projects.budget) : order(projects.createdAt))
+      .limit(limit)
+      .offset(offset);
 
-    if (!id) {
-      return NextResponse.json({ 
-        error: 'Project ID is required',
-        code: 'MISSING_ID' 
-      }, { status: 400 });
-    }
-
-    const projectId = parseInt(id);
-    if (isNaN(projectId)) {
-      return NextResponse.json({ 
-        error: 'Valid ID is required',
-        code: 'INVALID_ID' 
-      }, { status: 400 });
-    }
-
-    const body = await request.json();
-
-    if ('userId' in body || 'user_id' in body || 'createdBy' in body) {
-      return NextResponse.json({ 
-        error: "User ID cannot be provided in request body",
-        code: "USER_ID_NOT_ALLOWED" 
-      }, { status: 400 });
-    }
-
-    const existingProject = await db.select()
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1);
-
-    if (existingProject.length === 0) {
-      return NextResponse.json({ 
-        error: 'Project not found',
-        code: 'PROJECT_NOT_FOUND' 
-      }, { status: 404 });
-    }
-
-    const { name, clientId, description, startDate, endDate, budget, status, priority, isActive } = body;
-
-    const updates: any = {
-      updatedAt: new Date().toISOString()
-    };
-
-    if (name !== undefined) {
-      if (!name.trim()) {
-        return NextResponse.json({ 
-          error: 'Project name cannot be empty',
-          code: 'INVALID_NAME' 
-        }, { status: 400 });
-      }
-      updates.name = name.trim();
-    }
-
-    if (clientId !== undefined) {
-      const clientIdNum = parseInt(clientId);
-      if (isNaN(clientIdNum)) {
-        return NextResponse.json({ 
-          error: 'Client ID must be a valid number',
-          code: 'INVALID_CLIENT_ID' 
-        }, { status: 400 });
-      }
-
-      const client = await db.select()
-        .from(clients)
-        .where(eq(clients.id, clientIdNum))
-        .limit(1);
-
-      if (client.length === 0) {
-        return NextResponse.json({ 
-          error: 'Client does not exist',
-          code: 'CLIENT_NOT_FOUND' 
-        }, { status: 400 });
-      }
-
-      updates.clientId = clientIdNum;
-    }
-
-    if (description !== undefined) {
-      updates.description = description ? description.trim() : null;
-    }
-
-    if (status !== undefined) {
-      if (!isValidStatus(status)) {
-        return NextResponse.json({ 
-          error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`,
-          code: 'INVALID_STATUS' 
-        }, { status: 400 });
-      }
-      updates.status = status;
-    }
-
-    if (priority !== undefined) {
-      if (!isValidPriority(priority)) {
-        return NextResponse.json({ 
-          error: `Invalid priority. Must be one of: ${VALID_PRIORITIES.join(', ')}`,
-          code: 'INVALID_PRIORITY' 
-        }, { status: 400 });
-      }
-      updates.priority = priority;
-    }
-
-    if (startDate !== undefined) {
-      updates.startDate = startDate || null;
-    }
-
-    if (endDate !== undefined) {
-      updates.endDate = endDate || null;
-    }
-
-    if (budget !== undefined) {
-      if (budget !== null) {
-        const budgetNum = parseInt(budget);
-        if (isNaN(budgetNum) || budgetNum < 0) {
-          return NextResponse.json({ 
-            error: 'Budget must be a valid positive number',
-            code: 'INVALID_BUDGET' 
-          }, { status: 400 });
-        }
-        updates.budget = budgetNum;
-      } else {
-        updates.budget = null;
-      }
-    }
-
-    if (isActive !== undefined) {
-      if (typeof isActive !== 'boolean') {
-        return NextResponse.json({ 
-          error: 'isActive must be a boolean',
-          code: 'INVALID_IS_ACTIVE' 
-        }, { status: 400 });
-      }
-      updates.isActive = isActive;
-    }
-
-    const updatedProject = await db.update(projects)
-      .set(updates)
-      .where(eq(projects.id, projectId))
-      .returning();
-
-    if (updatedProject.length === 0) {
-      return NextResponse.json({ 
-        error: 'Failed to update project',
-        code: 'UPDATE_FAILED' 
-      }, { status: 500 });
-    }
-
-    return NextResponse.json(updatedProject[0], { status: 200 });
-  } catch (error) {
-    console.error('PUT error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+    return NextResponse.json(results);
   }
-}
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
-
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id) {
-      return NextResponse.json({ 
-        error: 'Project ID is required',
-        code: 'MISSING_ID' 
-      }, { status: 400 });
-    }
-
-    const projectId = parseInt(id);
-    if (isNaN(projectId)) {
-      return NextResponse.json({ 
-        error: 'Valid ID is required',
-        code: 'INVALID_ID' 
-      }, { status: 400 });
-    }
-
-    const existingProject = await db.select()
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .limit(1);
-
-    if (existingProject.length === 0) {
-      return NextResponse.json({ 
-        error: 'Project not found',
-        code: 'PROJECT_NOT_FOUND' 
-      }, { status: 404 });
-    }
-
-    const deletedProject = await db.update(projects)
-      .set({
-        status: 'cancelled',
-        updatedAt: new Date().toISOString()
-      })
-      .where(eq(projects.id, projectId))
-      .returning();
-
-    return NextResponse.json({
-      message: 'Project successfully cancelled',
-      project: deletedProject[0]
-    }, { status: 200 });
-  } catch (error) {
-    console.error('DELETE error:', error);
-    return NextResponse.json({ 
-      error: safeErrorMessage(error) 
-    }, { status: 500 });
+  let query = db.select().from(projects);
+  let countQuery = db.select({ count: sql<number>`count(*)` }).from(projects);
+  if (whereClause) {
+    query = query.where(whereClause) as typeof query;
+    countQuery = countQuery.where(whereClause) as typeof countQuery;
   }
-}
+
+  const [results, countRows] = await Promise.all([
+    query
+      .orderBy(sortBy === 'endDate' ? order(projects.endDate) : sortBy === 'startDate' ? order(projects.startDate) : sortBy === 'budget' ? order(projects.budget) : order(projects.createdAt))
+      .limit(limit)
+      .offset(offset),
+    countQuery,
+  ]);
+
+  return NextResponse.json({
+    success: true,
+    data: results,
+    message: 'Projects fetched successfully',
+    errors: null,
+    meta: {
+      page: Math.floor(offset / limit) + 1,
+      limit,
+      total: Number(countRows[0]?.count ?? 0),
+    },
+  });
+}, { requireAuth: true, roles: ['Employee'] });
+
+export const POST = withApiHandler(async (request, context) => {
+  const payload = createProjectSchema.parse(await request.json());
+  const [client] = await db.select().from(clients).where(eq(clients.id, payload.clientId)).limit(1);
+  if (!client) throw new NotFoundError('Client does not exist');
+
+  if (payload.startDate && payload.endDate && new Date(payload.endDate) < new Date(payload.startDate)) {
+    throw new UnprocessableEntityError('End date must be after start date');
+  }
+
+  const now = new Date().toISOString();
+  const [created] = await db.insert(projects).values({
+    name: payload.name.trim(),
+    description: payload.description?.trim() || null,
+    clientId: payload.clientId,
+    status: payload.status ?? 'planning',
+    priority: payload.priority ?? 'medium',
+    startDate: payload.startDate ?? null,
+    endDate: payload.endDate ?? null,
+    budget: payload.budget ?? null,
+    isActive: payload.isActive ?? true,
+    createdBy: context.auth!.user.id,
+    createdAt: now,
+    updatedAt: now,
+  }).returning();
+
+  return NextResponse.json(created, { status: 201 });
+}, { requireAuth: true, roles: ['Manager'] });
+
+export const PUT = withApiHandler(async (request) => {
+  const searchParams = new URL(request.url).searchParams;
+  const id = Number(searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid project id is required');
+
+  const payload = updateProjectSchema.parse(await request.json());
+  const [existingProject] = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+  if (!existingProject) throw new NotFoundError('Project not found');
+
+  if (payload.clientId !== undefined) {
+    const [client] = await db.select().from(clients).where(eq(clients.id, payload.clientId)).limit(1);
+    if (!client) throw new NotFoundError('Client does not exist');
+  }
+
+  const nextStart = payload.startDate ?? existingProject.startDate;
+  const nextEnd = payload.endDate ?? existingProject.endDate;
+  if (nextStart && nextEnd && new Date(nextEnd) < new Date(nextStart)) {
+    throw new UnprocessableEntityError('End date must be after start date');
+  }
+
+  const [updated] = await db.update(projects).set({
+    ...(payload.name !== undefined ? { name: payload.name.trim() } : {}),
+    ...(payload.description !== undefined ? { description: payload.description?.trim() || null } : {}),
+    ...(payload.clientId !== undefined ? { clientId: payload.clientId } : {}),
+    ...(payload.status !== undefined ? { status: payload.status } : {}),
+    ...(payload.priority !== undefined ? { priority: payload.priority } : {}),
+    ...(payload.startDate !== undefined ? { startDate: payload.startDate ?? null } : {}),
+    ...(payload.endDate !== undefined ? { endDate: payload.endDate ?? null } : {}),
+    ...(payload.budget !== undefined ? { budget: payload.budget ?? null } : {}),
+    ...(payload.isActive !== undefined ? { isActive: payload.isActive } : {}),
+    updatedAt: new Date().toISOString(),
+  }).where(eq(projects.id, id)).returning();
+
+  return NextResponse.json(updated);
+}, { requireAuth: true, roles: ['Manager'] });
+
+export const DELETE = withApiHandler(async (request) => {
+  const id = Number(new URL(request.url).searchParams.get('id'));
+  if (!Number.isInteger(id) || id <= 0) throw new BadRequestError('Valid project id is required');
+
+  const [deleted] = await db.update(projects).set({
+    status: 'cancelled',
+    isActive: false,
+    updatedAt: new Date().toISOString(),
+  }).where(eq(projects.id, id)).returning();
+
+  if (!deleted) throw new NotFoundError('Project not found');
+
+  return NextResponse.json({
+    message: 'Project successfully cancelled',
+    project: deleted,
+  });
+}, { requireAuth: true, roles: ['Manager'] });
+

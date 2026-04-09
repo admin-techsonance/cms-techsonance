@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { User } from '@/lib/auth';
 import { useTheme } from 'next-themes';
+import { clearClientSession, getStoredSessionToken } from '@/lib/client-session';
 
 interface DashboardHeaderProps {
   user: User;
@@ -27,11 +28,15 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
   const handleLogout = async () => {
     setLoggingOut(true);
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      const token = getStoredSessionToken();
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      clearClientSession();
       router.push('/login');
       router.refresh();
-    } catch (error) {
-      console.error('Logout error:', error);
+    } catch {
       setLoggingOut(false);
     }
   };

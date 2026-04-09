@@ -1,28 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { asc, eq } from 'drizzle-orm';
 import { db } from '@/db';
 import { employees, users } from '@/db/schema';
-import { eq } from 'drizzle-orm';
-import { getCurrentUser } from '@/lib/auth';
+import { withApiHandler } from '@/server/http/handler';
+import { apiSuccess } from '@/server/http/response';
 
-export async function GET(request: NextRequest) {
-  try {
-    const user = await getCurrentUser(request);
-    if (!user) {
-      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
-    }
+export const GET = withApiHandler(async () => {
+  const employeeList = await db.select({
+    id: employees.id,
+    employeeId: employees.employeeId,
+    department: employees.department,
+    firstName: users.firstName,
+    lastName: users.lastName,
+  }).from(employees).innerJoin(users, eq(employees.userId, users.id)).orderBy(asc(users.firstName), asc(users.lastName));
 
-    const employeeList = await db.select({
-      id: employees.id,
-      employeeId: employees.employeeId,
-      department: employees.department,
-      firstName: users.firstName,
-      lastName: users.lastName
-    })
-    .from(employees)
-    .innerJoin(users, eq(employees.userId, users.id));
-
-    return NextResponse.json(employeeList, { status: 200 });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-}
+  return apiSuccess(employeeList, 'Attendance employee list fetched successfully');
+}, { requireAuth: true, roles: ['Employee'] });

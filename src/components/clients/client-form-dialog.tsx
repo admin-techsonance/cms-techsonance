@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -10,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -20,7 +23,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { clientFormSchema, clientStatusOptions, type ClientFormValues } from '@/lib/forms/schemas';
 import { Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface ClientFormDialogProps {
   open: boolean;
@@ -36,20 +41,23 @@ export function ClientFormDialog({
   client,
 }: ClientFormDialogProps) {
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({
-    companyName: '',
-    contactPerson: '',
-    email: '',
-    phone: '',
-    address: '',
-    industry: '',
-    status: 'active',
-    notes: '',
+  const form = useForm<ClientFormValues>({
+    resolver: zodResolver(clientFormSchema),
+    defaultValues: {
+      companyName: '',
+      contactPerson: '',
+      email: '',
+      phone: '',
+      address: '',
+      industry: '',
+      status: 'active',
+      notes: '',
+    },
   });
 
   useEffect(() => {
     if (client) {
-      setFormData({
+      form.reset({
         companyName: client.companyName || '',
         contactPerson: client.contactPerson || '',
         email: client.email || '',
@@ -60,7 +68,7 @@ export function ClientFormDialog({
         notes: client.notes || '',
       });
     } else {
-      setFormData({
+      form.reset({
         companyName: '',
         contactPerson: '',
         email: '',
@@ -71,40 +79,40 @@ export function ClientFormDialog({
         notes: '',
       });
     }
-  }, [client, open]);
+  }, [client, open, form]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (values: ClientFormValues) => {
     setLoading(true);
 
     try {
       const url = client ? `/api/clients?id=${client.id}` : '/api/clients';
       const method = client ? 'PUT' : 'POST';
 
-      const payload: any = {
-        ...formData,
-      };
-
-      if (!client) {
-        payload.createdBy = 1; // TODO: Get from current user
-      }
-
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          companyName: values.companyName.trim(),
+          contactPerson: values.contactPerson.trim(),
+          email: values.email.trim(),
+          phone: values.phone?.trim() || null,
+          address: values.address?.trim() || null,
+          industry: values.industry?.trim() || null,
+          status: values.status,
+          notes: values.notes?.trim() || null,
+        }),
       });
 
       if (response.ok) {
         onSuccess();
         onOpenChange(false);
+        toast.success(client ? 'Client updated successfully' : 'Client added successfully');
       } else {
         const error = await response.json();
-        alert(error.error || 'Failed to save client');
+        toast.error(error.error || 'Failed to save client');
       }
-    } catch (error) {
-      console.error('Error saving client:', error);
-      alert('An error occurred');
+    } catch {
+      toast.error('An error occurred while saving the client');
     } finally {
       setLoading(false);
     }
@@ -120,95 +128,160 @@ export function ClientFormDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <Form {...form}>
+        <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="companyName"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="companyName">Company Name *</Label>
+              <FormControl>
               <Input
                 id="companyName"
-                value={formData.companyName}
-                onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
-                required
+                {...field}
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="contactPerson"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="contactPerson">Contact Person *</Label>
+              <FormControl>
               <Input
                 id="contactPerson"
-                value={formData.contactPerson}
-                onChange={(e) => setFormData({ ...formData, contactPerson: e.target.value })}
-                required
+                {...field}
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="email"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="email">Email *</Label>
+              <FormControl>
               <Input
                 id="email"
                 type="email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                required
+                {...field}
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="phone"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="phone">Phone</Label>
+              <FormControl>
               <Input
                 id="phone"
                 type="tel"
-                value={formData.phone}
-                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                {...field}
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="industry"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="industry">Industry</Label>
+              <FormControl>
               <Input
                 id="industry"
-                value={formData.industry}
-                onChange={(e) => setFormData({ ...formData, industry: e.target.value })}
+                {...field}
               />
-            </div>
+              </FormControl>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
 
-            <div className="space-y-2">
+            <FormField
+              control={form.control}
+              name="status"
+              render={({ field }) => (
+            <FormItem className="space-y-2">
               <Label htmlFor="status">Status *</Label>
-              <Select value={formData.status} onValueChange={(value) => setFormData({ ...formData, status: value })}>
+              <Select value={field.value} onValueChange={field.onChange}>
+                <FormControl>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
+                </FormControl>
                 <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
-                  <SelectItem value="prospect">Prospect</SelectItem>
+                  {clientStatusOptions.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {status.charAt(0).toUpperCase() + status.slice(1)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-            </div>
+              <FormMessage className="text-xs" />
+            </FormItem>
+              )}
+            />
           </div>
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="address"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="address">Address</Label>
+            <FormControl>
             <Input
               id="address"
-              value={formData.address}
-              onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+              {...field}
             />
-          </div>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
-          <div className="space-y-2">
+          <FormField
+            control={form.control}
+            name="notes"
+            render={({ field }) => (
+          <FormItem className="space-y-2">
             <Label htmlFor="notes">Notes</Label>
+            <FormControl>
             <Textarea
               id="notes"
-              value={formData.notes}
-              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+              {...field}
               rows={3}
             />
-          </div>
+            </FormControl>
+            <FormMessage className="text-xs" />
+          </FormItem>
+            )}
+          />
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
@@ -226,6 +299,7 @@ export function ClientFormDialog({
             </Button>
           </DialogFooter>
         </form>
+        </Form>
       </DialogContent>
     </Dialog>
   );
