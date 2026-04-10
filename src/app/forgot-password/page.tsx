@@ -4,12 +4,12 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
 import { Label } from '@/components/ui/label';
-import { Loader2, Mail, KeyRound, Lock, CheckCircle2 } from 'lucide-react';
+import { Loader2, Mail, KeyRound, Lock } from 'lucide-react';
+import { toast } from 'sonner';
 
 type ResetStep = 1 | 2 | 3;
 
@@ -20,8 +20,6 @@ export default function ForgotPasswordPage() {
   const [otp, setOtp] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
 
   const stepItems = useMemo(() => ([
@@ -32,8 +30,6 @@ export default function ForgotPasswordPage() {
 
   const handleRequestOtp = async (event: React.FormEvent) => {
     event.preventDefault();
-    setError('');
-    setSuccess('');
     setLoading(true);
 
     try {
@@ -46,14 +42,14 @@ export default function ForgotPasswordPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        setError(data.error || data.message || 'Unable to send OTP');
+        toast.error('Unable to send the verification code right now. Please try again.');
         return;
       }
 
-      setSuccess(data.message || 'OTP sent successfully');
+      toast.success('If the email exists, a verification code has been sent.');
       setStep(2);
     } catch {
-      setError('Unable to send OTP right now. Please try again.');
+      toast.error('Unable to send the verification code right now. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -61,8 +57,6 @@ export default function ForgotPasswordPage() {
 
   const handleVerifyOtp = async (event: React.FormEvent) => {
     event.preventDefault();
-    setError('');
-    setSuccess('');
     setLoading(true);
 
     try {
@@ -75,14 +69,14 @@ export default function ForgotPasswordPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        setError(data.error || data.message || 'OTP verification failed');
+        toast.error('Unable to verify the code. Please try again.');
         return;
       }
 
-      setSuccess(data.message || 'OTP verified');
+      toast.success('Verification code accepted.');
       setStep(3);
     } catch {
-      setError('Unable to verify OTP right now. Please try again.');
+      toast.error('Unable to verify the code. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -90,8 +84,6 @@ export default function ForgotPasswordPage() {
 
   const handleResetPassword = async (event: React.FormEvent) => {
     event.preventDefault();
-    setError('');
-    setSuccess('');
     setLoading(true);
 
     try {
@@ -109,16 +101,16 @@ export default function ForgotPasswordPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        setError(data.error || data.message || 'Unable to reset password');
+        toast.error('Unable to reset your password right now. Please try again.');
         return;
       }
 
-      setSuccess('Password reset successful. Redirecting to login...');
+      toast.success('Password reset successful. Redirecting to login...');
       setTimeout(() => {
         router.push('/login');
       }, 1200);
     } catch {
-      setError('Unable to reset password right now. Please try again.');
+      toast.error('Unable to reset your password right now. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -211,21 +203,8 @@ export default function ForgotPasswordPage() {
             })}
           </div>
 
-          {error ? (
-            <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {success ? (
-            <Alert className="border-primary/20 bg-primary/5 text-foreground">
-              <CheckCircle2 className="h-4 w-4 text-primary" />
-              <AlertDescription>{success}</AlertDescription>
-            </Alert>
-          ) : null}
-
           {step === 1 ? (
-            <form onSubmit={handleRequestOtp} className="space-y-5">
+            <form onSubmit={handleRequestOtp} className="space-y-5" autoComplete="off">
               <div className="space-y-2">
                 <Label htmlFor="email">Email Address</Label>
                 <div className="relative group">
@@ -237,6 +216,10 @@ export default function ForgotPasswordPage() {
                     value={email}
                     onChange={(event) => setEmail(event.target.value)}
                     className="pl-10 h-12 border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 focus-visible:ring-primary"
+                    autoComplete="email"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     required
                     disabled={loading}
                   />
@@ -259,7 +242,7 @@ export default function ForgotPasswordPage() {
           ) : null}
 
           {step === 2 ? (
-            <form onSubmit={handleVerifyOtp} className="space-y-5">
+            <form onSubmit={handleVerifyOtp} className="space-y-5" autoComplete="off">
               <div className="space-y-2">
                 <Label>Enter 6-digit OTP</Label>
                 <InputOTP
@@ -291,8 +274,6 @@ export default function ForgotPasswordPage() {
                   onClick={() => {
                     setStep(1);
                     setOtp('');
-                    setSuccess('');
-                    setError('');
                   }}
                   disabled={loading}
                 >
@@ -315,7 +296,7 @@ export default function ForgotPasswordPage() {
           ) : null}
 
           {step === 3 ? (
-            <form onSubmit={handleResetPassword} className="space-y-5">
+            <form onSubmit={handleResetPassword} className="space-y-5" autoComplete="off">
               <div className="space-y-2">
                 <Label htmlFor="new-password">New Password</Label>
                 <div className="relative group">
@@ -327,6 +308,12 @@ export default function ForgotPasswordPage() {
                     value={newPassword}
                     onChange={(event) => setNewPassword(event.target.value)}
                     className="pl-10 h-12 border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 focus-visible:ring-primary"
+                    autoComplete="new-password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    data-lpignore="true"
+                    data-1p-ignore="true"
                     minLength={12}
                     required
                     disabled={loading}
@@ -345,6 +332,12 @@ export default function ForgotPasswordPage() {
                     value={confirmPassword}
                     onChange={(event) => setConfirmPassword(event.target.value)}
                     className="pl-10 h-12 border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 focus-visible:ring-primary"
+                    autoComplete="new-password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    data-lpignore="true"
+                    data-1p-ignore="true"
                     minLength={12}
                     required
                     disabled={loading}

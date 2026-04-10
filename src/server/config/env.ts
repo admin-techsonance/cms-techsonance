@@ -22,6 +22,8 @@ const envSchema = z.object({
   SMTP_PASSWORD: z.string().min(1).optional(),
   SMTP_FROM_EMAIL: z.string().email().optional(),
   SMTP_FROM_NAME: z.string().min(1).optional(),
+  MONGODB_URI: z.string().min(1).optional(),
+  MONGODB_DB_NAME: z.string().min(1).optional(),
   NEXT_PUBLIC_FIREBASE_API_KEY: z.string().min(1).optional(),
   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: z.string().min(1).optional(),
   NEXT_PUBLIC_FIREBASE_DATABASE_URL: z.string().url().optional(),

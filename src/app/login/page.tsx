@@ -1,15 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Loader2, Mail, Lock, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
+import { Loader2, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import Image from 'next/image';
 import { Checkbox } from '@/components/ui/checkbox';
-import { persistClientSession } from '@/lib/client-session';
+import { toast } from 'sonner';
+import {
+  clearClientSession,
+  getStoredSessionToken,
+  getStoredUser,
+  persistClientSession,
+  shouldRememberSession,
+} from '@/lib/client-session';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -17,12 +23,63 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+
+  useEffect(() => {
+    setRememberMe(shouldRememberSession());
+  }, []);
+
+  useEffect(() => {
+    async function restoreRememberedSession() {
+      const token = getStoredSessionToken();
+
+      if (!token) {
+        setCheckingSession(false);
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/auth/me', {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          clearClientSession();
+          setCheckingSession(false);
+          return;
+        }
+
+        const data = await response.json();
+        const user = data?.user ?? data?.data ?? getStoredUser();
+
+        if (!user) {
+          clearClientSession();
+          setCheckingSession(false);
+          return;
+        }
+
+        persistClientSession({
+          accessToken: token,
+          user,
+          rememberMe: shouldRememberSession(),
+        });
+
+        router.replace('/dashboard');
+        router.refresh();
+      } catch {
+        setCheckingSession(false);
+        return;
+      }
+    }
+
+    restoreRememberedSession();
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
     setLoading(true);
 
     try {
@@ -35,7 +92,7 @@ export default function LoginPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        setError(data.error || 'Login failed');
+        toast.error('Unable to sign in. Please check your credentials and try again.');
         setLoading(false);
         return;
       }
@@ -52,10 +109,21 @@ export default function LoginPage() {
       router.push('/dashboard');
       router.refresh();
     } catch (err) {
-      setError('An error occurred. Please try again.');
+      toast.error('Unable to sign in right now. Please try again.');
       setLoading(false);
     }
   };
+
+  if (checkingSession) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="flex items-center gap-3 text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span className="text-sm font-medium">Restoring your session...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-background overflow-hidden font-sans">
@@ -126,13 +194,7 @@ export default function LoginPage() {
           </div>
 
           <div className="mt-8">
-            <form onSubmit={handleSubmit} className="space-y-5">
-              {error && (
-                <Alert variant="destructive" className="animate-in head-shake duration-300">
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-
+            <form onSubmit={handleSubmit} className="space-y-5" autoComplete="off">
               <div className="space-y-2">
                 <Label htmlFor="email">Email / Username</Label>
                 <div className="relative group">
@@ -144,6 +206,10 @@ export default function LoginPage() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="pl-10 h-11 border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 focus-visible:ring-primary h-12"
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
                     required
                     disabled={loading}
                   />
@@ -163,6 +229,12 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="pl-10 pr-10 h-11 border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900 focus-visible:ring-primary h-12"
+                    autoComplete="new-password"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    data-lpignore="true"
+                    data-1p-ignore="true"
                     required
                     disabled={loading}
                   />

@@ -6,6 +6,7 @@ import { hashPassword } from '@/server/auth/password';
 import { env } from '@/server/config/env';
 import { BadRequestError, UnauthorizedError } from '@/server/http/errors';
 import { sendPasswordResetOtpEmail } from '@/server/mail/password-reset';
+import { logAuthEvent } from '@/server/logging/mongo-log';
 
 function generateOtp() {
   return String(crypto.randomInt(100000, 1000000));
@@ -49,6 +50,12 @@ export async function requestPasswordReset(email: string) {
     .limit(1);
 
   if (!user || !user.isActive) {
+    await logAuthEvent({
+      action: 'auth.password_reset.request',
+      email: normalizedEmail,
+      status: 'accepted',
+      details: { userExists: false },
+    });
     return {
       accepted: true,
       message: 'If the email exists, a password reset OTP has been sent.',
@@ -79,6 +86,14 @@ export async function requestPasswordReset(email: string) {
     otp,
   });
 
+  await logAuthEvent({
+    action: 'auth.password_reset.request',
+    userId: user.id,
+    email: normalizedEmail,
+    status: 'accepted',
+    details: { userExists: true },
+  });
+
   return {
     accepted: true,
     message: 'If the email exists, a password reset OTP has been sent.',
@@ -90,6 +105,13 @@ export async function verifyPasswordResetOtp(input: { email: string; otp: string
   const latest = await getLatestResetRequest(normalizedEmail);
 
   if (!latest || new Date(latest.expiresAt) <= new Date()) {
+    await logAuthEvent({
+      action: 'auth.password_reset.verify',
+      email: normalizedEmail,
+      userId: latest?.userId ?? null,
+      status: 'failed',
+      details: { reason: 'expired_or_missing' },
+    });
     throw new UnauthorizedError('OTP is invalid or expired');
   }
 
@@ -101,6 +123,14 @@ export async function verifyPasswordResetOtp(input: { email: string; otp: string
       .set({ attempts: (latest.attempts ?? 0) + 1 })
       .where(eq(passwordResetOtps.id, latest.id));
 
+    await logAuthEvent({
+      action: 'auth.password_reset.verify',
+      email: normalizedEmail,
+      userId: latest.userId,
+      status: 'failed',
+      details: { reason: 'invalid_otp' },
+    });
+
     throw new UnauthorizedError('OTP is invalid or expired');
   }
 
@@ -108,6 +138,13 @@ export async function verifyPasswordResetOtp(input: { email: string; otp: string
     .update(passwordResetOtps)
     .set({ verifiedAt: new Date().toISOString() })
     .where(eq(passwordResetOtps.id, latest.id));
+
+  await logAuthEvent({
+    action: 'auth.password_reset.verify',
+    email: normalizedEmail,
+    userId: latest.userId,
+    status: 'success',
+  });
 
   return {
     verified: true,
@@ -124,10 +161,24 @@ export async function resetPasswordWithOtp(input: {
   const latest = await getLatestResetRequest(normalizedEmail);
 
   if (!latest || new Date(latest.expiresAt) <= new Date() || !latest.verifiedAt) {
+    await logAuthEvent({
+      action: 'auth.password_reset.complete',
+      email: normalizedEmail,
+      userId: latest?.userId ?? null,
+      status: 'failed',
+      details: { reason: 'not_verified_or_expired' },
+    });
     throw new UnauthorizedError('OTP verification is required before resetting the password');
   }
 
   if (latest.otpHash !== hashOtp(normalizedEmail, input.otp)) {
+    await logAuthEvent({
+      action: 'auth.password_reset.complete',
+      email: normalizedEmail,
+      userId: latest.userId,
+      status: 'failed',
+      details: { reason: 'invalid_otp' },
+    });
     throw new UnauthorizedError('OTP is invalid or expired');
   }
 
@@ -163,6 +214,13 @@ export async function resetPasswordWithOtp(input: {
     .update(authRefreshSessions)
     .set({ revokedAt: new Date().toISOString() })
     .where(and(eq(authRefreshSessions.userId, user.id), isNull(authRefreshSessions.revokedAt)));
+
+  await logAuthEvent({
+    action: 'auth.password_reset.complete',
+    email: normalizedEmail,
+    userId: user.id,
+    status: 'success',
+  });
 
   return {
     success: true,

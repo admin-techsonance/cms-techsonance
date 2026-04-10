@@ -3,6 +3,7 @@ import { db } from '@/db';
 import { auditLogs, authRefreshSessions, users } from '@/db/schema';
 import { env } from '@/server/config/env';
 import { ConflictError, NotFoundError, UnauthorizedError } from '@/server/http/errors';
+import { logAuthEvent } from '@/server/logging/mongo-log';
 import { verifyPassword, hashPassword } from '@/server/auth/password';
 import {
   blacklistAccessToken,
@@ -29,6 +30,29 @@ function getRequestMetadata(request: Request) {
   };
 }
 
+async function writeAuthTelemetry(input: {
+  action: string;
+  request: Request;
+  requestId?: string;
+  userId?: number | null;
+  email?: string | null;
+  status?: string;
+  details?: Record<string, unknown>;
+}) {
+  const metadata = getRequestMetadata(input.request);
+  await logAuthEvent({
+    action: input.action,
+    requestId: input.requestId ?? null,
+    userId: input.userId ?? null,
+    email: input.email ?? null,
+    path: new URL(input.request.url).pathname,
+    status: input.status ?? 'unknown',
+    ipAddress: metadata.ipAddress,
+    userAgent: metadata.userAgent,
+    details: input.details ?? null,
+  });
+}
+
 export async function loginUser(input: {
   email: string;
   password: string;
@@ -40,14 +64,40 @@ export async function loginUser(input: {
   const [user] = await db.select().from(users).where(eq(users.email, normalizedEmail)).limit(1);
 
   if (!user) {
+    await writeAuthTelemetry({
+      action: 'auth.login',
+      request: input.request,
+      requestId: input.requestId,
+      email: normalizedEmail,
+      status: 'failed',
+      details: { reason: 'user_not_found' },
+    });
     throw new UnauthorizedError('Invalid email or password');
   }
 
   if (!user.isActive) {
+    await writeAuthTelemetry({
+      action: 'auth.login',
+      request: input.request,
+      requestId: input.requestId,
+      userId: user.id,
+      email: user.email,
+      status: 'failed',
+      details: { reason: 'inactive_account' },
+    });
     throw new UnauthorizedError('This account is inactive');
   }
 
   if (user.lockedUntil && new Date(user.lockedUntil) > new Date()) {
+    await writeAuthTelemetry({
+      action: 'auth.login',
+      request: input.request,
+      requestId: input.requestId,
+      userId: user.id,
+      email: user.email,
+      status: 'locked',
+      details: { lockedUntil: user.lockedUntil },
+    });
     throw new ConflictError('Account is temporarily locked due to repeated failed login attempts');
   }
 
@@ -65,6 +115,19 @@ export async function loginUser(input: {
         updatedAt: new Date().toISOString(),
       })
       .where(eq(users.id, user.id));
+
+    await writeAuthTelemetry({
+      action: 'auth.login',
+      request: input.request,
+      requestId: input.requestId,
+      userId: user.id,
+      email: user.email,
+      status: shouldLock ? 'locked' : 'failed',
+      details: {
+        failedAttempts,
+        lockedUntil: shouldLock ? getLockoutExpiryDate().toISOString() : null,
+      },
+    });
 
     throw new UnauthorizedError('Invalid email or password');
   }
@@ -98,6 +161,19 @@ export async function loginUser(input: {
     request: input.request,
     requestId: input.requestId,
     details: { email: user.email },
+  });
+
+  await writeAuthTelemetry({
+    action: 'auth.login',
+    request: input.request,
+    requestId: input.requestId,
+    userId: user.id,
+    email: user.email,
+    status: 'success',
+    details: {
+      rememberMe: input.rememberMe ?? false,
+      sessionId: refreshSession.sessionId,
+    },
   });
 
   return {
@@ -142,6 +218,18 @@ export async function refreshUserSession(request: Request, requestId?: string) {
     requestId,
   });
 
+  await writeAuthTelemetry({
+    action: 'auth.refresh',
+    request,
+    requestId,
+    userId: user.id,
+    email: user.email,
+    status: 'success',
+    details: {
+      sessionId: rotated.sessionId,
+    },
+  });
+
   return {
     accessToken: access.accessToken,
     user: {
@@ -184,6 +272,18 @@ export async function logoutUser(request: Request, requestId?: string) {
       resourceId: auth.sessionId,
       request,
       requestId,
+    });
+
+    await writeAuthTelemetry({
+      action: 'auth.logout',
+      request,
+      requestId,
+      userId: auth.user.id,
+      email: auth.user.email,
+      status: 'success',
+      details: {
+        sessionId: auth.sessionId,
+      },
     });
   }
 }
@@ -238,6 +338,15 @@ export async function changeUserPassword(input: {
     resourceId: String(user.id),
     request: input.request,
     requestId: input.requestId,
+  });
+
+  await writeAuthTelemetry({
+    action: 'auth.change_password',
+    request: input.request,
+    requestId: input.requestId,
+    userId: user.id,
+    email: user.email,
+    status: 'success',
   });
 }
 

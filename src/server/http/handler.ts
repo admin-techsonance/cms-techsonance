@@ -2,6 +2,7 @@ import { ZodError } from 'zod';
 import { apiError, type PaginationMeta } from '@/server/http/response';
 import { ApiError, ServiceUnavailableError } from '@/server/http/errors';
 import { logger } from '@/server/logging/logger';
+import { logApplicationError } from '@/server/logging/mongo-log';
 import { authenticateRequest } from '@/server/auth/session';
 import type { AppRole } from '@/server/auth/constants';
 
@@ -47,6 +48,34 @@ function isSchemaMismatchError(error: unknown) {
   );
 }
 
+function isAuthPath(pathname: string) {
+  return pathname.startsWith('/api/auth/') || pathname.startsWith('/api/v1/auth/');
+}
+
+function getSafeClientErrorMessage(pathname: string, error: ApiError) {
+  if (!isAuthPath(pathname)) {
+    return error.message;
+  }
+
+  if (pathname.includes('/forgot-password/')) {
+    return 'Unable to complete this request. Please try again.';
+  }
+
+  if (pathname.endsWith('/login')) {
+    return 'Unable to sign in. Please check your credentials and try again.';
+  }
+
+  if (pathname.endsWith('/refresh')) {
+    return 'Your session could not be refreshed. Please sign in again.';
+  }
+
+  if (pathname.endsWith('/logout')) {
+    return 'Unable to sign out right now. Please try again.';
+  }
+
+  return 'Unable to complete this authentication request.';
+}
+
 export function withApiHandler(
   handler: (request: Request, context: HandlerContext) => Promise<Response>,
   options?: HandlerOptions
@@ -54,6 +83,7 @@ export function withApiHandler(
   return async function wrappedHandler(request: Request) {
     const requestId = request.headers.get('x-correlation-id') ?? crypto.randomUUID();
     const startedAt = performance.now();
+    const pathname = new URL(request.url).pathname;
 
     try {
       const auth = await authenticateRequest(request, {
@@ -68,7 +98,7 @@ export function withApiHandler(
       logger.http('api_request_completed', {
         requestId,
         method: request.method,
-        path: new URL(request.url).pathname,
+        path: pathname,
         status: response.status,
         durationMs,
         userId: auth?.user.id ?? null,
@@ -82,7 +112,7 @@ export function withApiHandler(
         logger.warn('api_validation_failed', {
           requestId,
           method: request.method,
-          path: new URL(request.url).pathname,
+          path: pathname,
           durationMs,
           issues: error.issues,
         });
@@ -98,14 +128,26 @@ export function withApiHandler(
         logger.warn('api_request_failed', {
           requestId,
           method: request.method,
-          path: new URL(request.url).pathname,
+          path: pathname,
           durationMs,
           status: error.statusCode,
           code: error.code,
           details: error.details,
         });
 
-        return apiError(error.message, {
+        void logApplicationError({
+          requestId,
+          path: pathname,
+          method: request.method,
+          category: 'api_error',
+          message: error.message,
+          details: {
+            statusCode: error.statusCode,
+            code: error.code,
+          },
+        });
+
+        return apiError(getSafeClientErrorMessage(pathname, error), {
           status: error.statusCode,
           errors: error.details,
           headers: { 'x-correlation-id': requestId },
@@ -120,9 +162,17 @@ export function withApiHandler(
         logger.error('api_request_schema_mismatch', {
           requestId,
           method: request.method,
-          path: new URL(request.url).pathname,
+          path: pathname,
           durationMs,
           error: extractErrorMessages(error).join(' | ') || 'Unknown schema mismatch',
+        });
+
+        void logApplicationError({
+          requestId,
+          path: pathname,
+          method: request.method,
+          category: 'schema_mismatch',
+          message: extractErrorMessages(error).join(' | ') || 'Unknown schema mismatch',
         });
 
         return apiError(schemaError.message, {
@@ -134,9 +184,17 @@ export function withApiHandler(
       logger.error('api_request_crashed', {
         requestId,
         method: request.method,
-        path: new URL(request.url).pathname,
+        path: pathname,
         durationMs,
         error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      void logApplicationError({
+        requestId,
+        path: pathname,
+        method: request.method,
+        category: 'unhandled_error',
+        message: error instanceof Error ? error.message : 'Unknown error',
       });
 
       return apiError('Internal server error', {

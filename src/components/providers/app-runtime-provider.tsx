@@ -139,6 +139,7 @@ export function AppRuntimeProvider({ children }: Props) {
       const isSameApiRoute = isApiRoute(url);
       const isAuthRefresh = url.pathname === '/api/auth/refresh';
       const isAuthLogin = url.pathname === '/api/auth/login';
+      const isForgotPasswordFlow = url.pathname.startsWith('/api/auth/forgot-password/');
       const isAuthMe = url.pathname === '/api/auth/me' && request.method.toUpperCase() === 'GET';
       const token = getStoredSessionToken();
 
@@ -217,14 +218,20 @@ export function AppRuntimeProvider({ children }: Props) {
                   ? normalized.message
                   : 'Request failed';
 
+              const safeMessage = isAuthLogin
+                ? 'Unable to sign in. Please check your credentials and try again.'
+                : isForgotPasswordFlow
+                  ? 'Unable to complete this request right now. Please try again.'
+                  : message;
+
               if (!isAuthRefresh && !isAuthLogin) {
-                toast.error(message);
+                toast.error(safeMessage);
               }
 
               logClientEvent('warn', 'api_request_failed', {
                 status: response.status,
                 path: url.pathname,
-                message,
+                message: safeMessage,
               });
             })
             .catch(() => undefined);
