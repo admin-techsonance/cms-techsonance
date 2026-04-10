@@ -1,8 +1,6 @@
 import { NextRequest } from 'next/server';
-import { db } from '@/db';
-import { employees, users } from '@/db/schema';
-import { eq } from 'drizzle-orm';
 import { authenticateRequest } from '@/server/auth/session';
+import { getRouteSupabase } from '@/server/supabase/route-helpers';
 
 export interface User {
   id: number;
@@ -26,42 +24,40 @@ export interface User {
 export async function getCurrentUser(request: NextRequest): Promise<User | null> {
   try {
     const auth = await authenticateRequest(request, { required: false });
+    if (!auth) return null;
 
-    if (!auth) {
-      return null;
+    const supabase = getRouteSupabase(auth.accessToken);
+    const providerUserId = auth.user.providerUserId ?? null;
+    let employee: Record<string, any> | null = null;
+
+    if (providerUserId) {
+      const { data } = await supabase
+        .from('employees')
+        .select('*')
+        .eq('user_id', providerUserId)
+        .is('deleted_at', null)
+        .maybeSingle();
+      employee = data;
     }
 
-    const [user] = await db
-      .select({
-        id: users.id,
-        email: users.email,
-        firstName: users.firstName,
-        lastName: users.lastName,
-        role: users.role,
-        avatarUrl: users.avatarUrl,
-        phone: users.phone,
-        isActive: users.isActive,
-        employeeRecordId: employees.id,
-        employeeId: employees.employeeId,
-        department: employees.department,
-        designation: employees.designation,
-        dateOfJoining: employees.dateOfJoining,
-        dateOfBirth: employees.dateOfBirth,
-        skills: employees.skills,
-        salary: employees.salary,
-        status: employees.status,
-      })
-      .from(users)
-      .leftJoin(employees, eq(users.id, employees.userId))
-      .where(eq(users.id, auth.user.id))
-      .limit(1);
-
-    if (!user || !user.isActive) {
-      return null;
-    }
-
-    const { isActive, ...rest } = user;
-    return rest;
+    return {
+      id: auth.user.id,
+      email: auth.user.email,
+      firstName: auth.user.firstName,
+      lastName: auth.user.lastName,
+      role: auth.user.role,
+      avatarUrl: auth.user.avatarUrl,
+      phone: auth.user.phone,
+      employeeRecordId: employee ? Number(employee.id) : null,
+      employeeId: employee?.employee_id ?? null,
+      department: employee?.department ?? null,
+      designation: employee?.designation ?? null,
+      dateOfJoining: employee?.date_of_joining ?? null,
+      dateOfBirth: employee?.date_of_birth ?? null,
+      skills: employee?.skills ?? null,
+      salary: employee?.salary === null || employee?.salary === undefined ? null : Number(employee.salary),
+      status: employee?.status ?? null,
+    };
   } catch {
     return null;
   }
@@ -70,4 +66,3 @@ export async function getCurrentUser(request: NextRequest): Promise<User | null>
 export async function getServerUser(): Promise<User | null> {
   return null;
 }
-

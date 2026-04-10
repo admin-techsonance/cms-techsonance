@@ -1,13 +1,11 @@
 import { getApp, getApps, initializeApp } from 'firebase/app';
 import { get, getDatabase, ref } from 'firebase/database';
-import { eq } from 'drizzle-orm';
-import { db } from '@/db';
-import { attendanceRecords, employees, nfcTags } from '@/db/schema';
 import { authenticateRequest } from '@/server/auth/session';
 import { env } from '@/server/config/env';
 import { apiError, apiSuccess } from '@/server/http/response';
 import { ApiError, BadRequestError, UnauthorizedError } from '@/server/http/errors';
 import { logger } from '@/server/logging/logger';
+import { getSupabaseAdminClient } from '@/server/supabase/admin';
 
 function getFirebaseDb() {
   if (
@@ -72,39 +70,40 @@ function calculateDuration(dateStr: string, timeIn: string, timeOut: string) {
 async function resolveEmployeeId(
   tagUid: string,
   entry: Record<string, unknown>,
-  allEmployees: Array<{
-    id: number;
-    employeeId: string;
-    nfcCardId: string | null;
-  }>
+  allEmployees: Array<Record<string, any>>,
+  allTags: Array<Record<string, any>>,
 ) {
   let employeeId: number | null = null;
   const normalizedUid = tagUid.replace(/[:\s]/g, '').toLowerCase();
-  const tagRows = await db.select().from(nfcTags);
-  const matchingTag = tagRows.find((tag) => tag.tagUid.replace(/[:\s]/g, '').toLowerCase() === normalizedUid);
-  if (matchingTag?.employeeId) return matchingTag.employeeId;
+  const matchingTag = allTags.find((tag) => tag.tag_uid.replace(/[:\s]/g, '').toLowerCase() === normalizedUid);
+  if (matchingTag?.employee_id) return Number(matchingTag.employee_id);
 
   const inlineEmployeeId = entry.employee_id ?? entry.employeeId ?? entry.emp_id;
   if (inlineEmployeeId !== undefined) {
-    const match = allEmployees.find((employee: any) => String(employee.id) === String(inlineEmployeeId) || employee.employeeId === String(inlineEmployeeId));
-    if (match) employeeId = match.id;
+    const match = allEmployees.find((employee) => String(employee.id) === String(inlineEmployeeId) || employee.employee_id === String(inlineEmployeeId));
+    if (match) employeeId = Number(match.id);
   }
 
   if (!employeeId) {
-    const match = allEmployees.find((employee: any) =>
+    const match = allEmployees.find((employee) =>
       String(employee.id) === normalizedUid ||
-      employee.nfcCardId?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid ||
-      employee.employeeId?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid
+      employee.nfc_card_id?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid ||
+      employee.employee_id?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid
     );
-    if (match) employeeId = match.id;
+    if (match) employeeId = Number(match.id);
   }
 
   return employeeId;
 }
 
-async function processAttendanceData(tagUid: string, rawData: Record<string, Record<string, unknown>>) {
+async function processAttendanceData(
+  tagUid: string,
+  rawData: Record<string, Record<string, unknown>>,
+  allEmployees: Array<Record<string, any>>,
+  allTags: Array<Record<string, any>>,
+) {
+  const supabase = getSupabaseAdminClient() as any;
   const result = { created: 0, updated: 0, skipped: 0, errors: [] as string[] };
-  const allEmployees = await db.select().from(employees);
 
   for (const dateKey of Object.keys(rawData)) {
     const entry = rawData[dateKey];
@@ -112,21 +111,28 @@ async function processAttendanceData(tagUid: string, rawData: Record<string, Rec
     const logKey = `${tagUid}_${dateKey}_${entry.check_in}`;
 
     try {
-      const [existingRecord] = await db.select().from(attendanceRecords).where(eq(attendanceRecords.idempotencyKey, logKey)).limit(1);
+      const { data: existingRecord, error: existingError } = await supabase
+        .from('attendance_records')
+        .select('*')
+        .eq('idempotency_key', logKey)
+        .maybeSingle();
+      if (existingError) throw existingError;
+
       if (existingRecord) {
-        const isoIn = formatToISO(dateKey, entry.check_in);
+        const isoIn = formatToISO(dateKey, String(entry.check_in));
         const isoOut = typeof entry.check_out === 'string' ? formatToISO(dateKey, entry.check_out) : null;
         const updates: Record<string, unknown> = {};
-        if (existingRecord.timeIn !== isoIn && isoIn) updates.timeIn = isoIn;
-        if (existingRecord.timeOut !== isoOut && isoOut) {
-          updates.timeOut = isoOut;
-          updates.duration = calculateDuration(dateKey, entry.check_in, entry.check_out as string);
+        if (existingRecord.time_in !== isoIn && isoIn) updates.time_in = isoIn;
+        if (existingRecord.time_out !== isoOut && isoOut) {
+          updates.time_out = isoOut;
+          updates.duration = calculateDuration(dateKey, String(entry.check_in), String(entry.check_out));
         }
-        if (existingRecord.checkInMethod !== 'rfid' && existingRecord.checkInMethod !== 'nfc') {
-          updates.checkInMethod = 'rfid';
+        if (existingRecord.check_in_method !== 'rfid' && existingRecord.check_in_method !== 'nfc') {
+          updates.check_in_method = 'rfid';
         }
         if (Object.keys(updates).length) {
-          await db.update(attendanceRecords).set(updates).where(eq(attendanceRecords.id, existingRecord.id));
+          const { error } = await supabase.from('attendance_records').update(updates).eq('id', existingRecord.id);
+          if (error) throw error;
           result.updated += 1;
         } else {
           result.skipped += 1;
@@ -134,25 +140,34 @@ async function processAttendanceData(tagUid: string, rawData: Record<string, Rec
         continue;
       }
 
-      const employeeId = await resolveEmployeeId(tagUid, entry, allEmployees);
+      const employeeId = await resolveEmployeeId(tagUid, entry, allEmployees, allTags);
       if (!employeeId) {
         result.errors.push(`Unknown tag/id: ${tagUid}`);
         continue;
       }
 
-      await db.insert(attendanceRecords).values({
-        employeeId,
+      const employee = allEmployees.find((row) => Number(row.id) === employeeId);
+      if (!employee?.tenant_id) {
+        result.errors.push(`Tenant not found for employee: ${employeeId}`);
+        continue;
+      }
+
+      const { error } = await supabase.from('attendance_records').insert({
+        tenant_id: employee.tenant_id,
+        employee_id: employeeId,
         date: dateKey,
-        timeIn: formatToISO(dateKey, entry.check_in) ?? entry.check_in,
-        timeOut: typeof entry.check_out === 'string' ? formatToISO(dateKey, entry.check_out) : null,
-        duration: typeof entry.check_out === 'string' ? calculateDuration(dateKey, entry.check_in, entry.check_out) : null,
+        time_in: formatToISO(dateKey, String(entry.check_in)) ?? entry.check_in,
+        time_out: typeof entry.check_out === 'string' ? formatToISO(dateKey, entry.check_out) : null,
+        duration: typeof entry.check_out === 'string' ? calculateDuration(dateKey, String(entry.check_in), entry.check_out) : null,
         status: 'present',
-        checkInMethod: 'rfid',
-        tagUid,
-        idempotencyKey: logKey,
-        metadata: JSON.stringify(entry),
-        createdAt: new Date().toISOString(),
+        check_in_method: 'rfid',
+        tag_uid: tagUid,
+        idempotency_key: logKey,
+        metadata: entry,
+        created_at: new Date().toISOString(),
       });
+      if (error) throw error;
+
       result.created += 1;
     } catch (error) {
       result.errors.push(`${logKey}: ${String(error)}`);
@@ -191,6 +206,14 @@ export async function GET(request: Request) {
     const source = await authorizePollRequest(request);
     logger.info('firebase_poll_started', { source });
 
+    const supabase = getSupabaseAdminClient() as any;
+    const [{ data: allEmployees, error: employeeError }, { data: allTags, error: tagError }] = await Promise.all([
+      supabase.from('employees').select('id, tenant_id, employee_id, nfc_card_id'),
+      supabase.from('nfc_tags').select('tag_uid, employee_id'),
+    ]);
+    if (employeeError) throw employeeError;
+    if (tagError) throw tagError;
+
     const database = getFirebaseDb();
     const snapshot = await get(ref(database, 'attendance'));
     if (!snapshot.exists()) {
@@ -210,7 +233,7 @@ export async function GET(request: Request) {
     const errors: string[] = [];
 
     for (const tagUid of Object.keys(data)) {
-      const result = await processAttendanceData(tagUid, data[tagUid]);
+      const result = await processAttendanceData(tagUid, data[tagUid], allEmployees ?? [], allTags ?? []);
       created += result.created;
       updated += result.updated;
       skipped += result.skipped;

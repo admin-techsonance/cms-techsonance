@@ -1,5 +1,3 @@
-import { db } from '@/db';
-import { companySettings } from '@/db/schema';
 import { env } from '@/server/config/env';
 import { logger } from '@/server/logging/logger';
 
@@ -12,12 +10,11 @@ function getFromAddress(settings?: {
 }
 
 async function createTransporter() {
-  const [settings] = await db.select().from(companySettings).limit(1);
-
-  const host = env.SMTP_HOST ?? settings?.smtpHost ?? null;
-  const port = env.SMTP_PORT ?? settings?.smtpPort ?? 587;
-  const user = env.SMTP_USER ?? settings?.smtpUser ?? null;
-  const password = env.SMTP_PASSWORD ?? settings?.smtpPassword ?? null;
+  const settings = { email: env.SMTP_FROM_EMAIL ?? null };
+  const host = env.SMTP_HOST ?? null;
+  const port = env.SMTP_PORT ?? 587;
+  const user = env.SMTP_USER ?? null;
+  const password = env.SMTP_PASSWORD ?? null;
 
   const nodemailer = await import('nodemailer');
 

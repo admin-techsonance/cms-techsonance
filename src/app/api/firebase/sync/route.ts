@@ -1,10 +1,8 @@
-import { and, eq } from 'drizzle-orm';
-import { db } from '@/db';
-import { attendanceRecords, employees, nfcTags } from '@/db/schema';
 import { env } from '@/server/config/env';
 import { ApiError, BadRequestError, UnauthorizedError } from '@/server/http/errors';
 import { apiError, apiSuccess } from '@/server/http/response';
 import { logger } from '@/server/logging/logger';
+import { getSupabaseAdminClient } from '@/server/supabase/admin';
 import { firebaseSyncBodySchema } from '@/server/validation/firebase';
 
 function formatToISO(dateStr: string, timeStr: string) {
@@ -38,56 +36,68 @@ function calculateDuration(dateStr: string, timeIn: string, timeOut: string) {
   return diffMins > 0 ? diffMins : 0;
 }
 
-async function resolveEmployeeId(tagUid: string, entry: Record<string, unknown>) {
+async function resolveEmployee(tagUid: string, entry: Record<string, unknown>) {
+  const supabase = getSupabaseAdminClient() as any;
   const normalizedUid = tagUid.replace(/[:\s]/g, '').toLowerCase();
-  const [allEmployees, allTags] = await Promise.all([
-    db.select().from(employees),
-    db.select().from(nfcTags),
-  ]);
 
-  const matchingTag = allTags.find((tag) => tag.tagUid.replace(/[:\s]/g, '').toLowerCase() === normalizedUid);
-  if (matchingTag?.employeeId) return matchingTag.employeeId;
+  const [{ data: allEmployees, error: employeeError }, { data: allTags, error: tagError }] = await Promise.all([
+    supabase.from('employees').select('id, tenant_id, employee_id, nfc_card_id'),
+    supabase.from('nfc_tags').select('tag_uid, employee_id'),
+  ]);
+  if (employeeError) throw employeeError;
+  if (tagError) throw tagError;
+
+  const matchingTag = (allTags ?? []).find((tag: any) => tag.tag_uid.replace(/[:\s]/g, '').toLowerCase() === normalizedUid);
+  if (matchingTag?.employee_id) {
+    return (allEmployees ?? []).find((employee: any) => Number(employee.id) === Number(matchingTag.employee_id)) ?? null;
+  }
 
   const inlineEmployeeId = entry.employee_id ?? entry.employeeId ?? entry.emp_id;
   if (inlineEmployeeId !== undefined) {
-    const match = allEmployees.find((employee) => String(employee.id) === String(inlineEmployeeId) || employee.employeeId === String(inlineEmployeeId));
-    if (match) return match.id;
+    const match = (allEmployees ?? []).find((employee: any) => String(employee.id) === String(inlineEmployeeId) || employee.employee_id === String(inlineEmployeeId));
+    if (match) return match;
   }
 
-  const employeeMatch = allEmployees.find((employee) =>
+  const employeeMatch = (allEmployees ?? []).find((employee: any) =>
     String(employee.id) === normalizedUid ||
-    employee.nfcCardId?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid ||
-    employee.employeeId?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid
+    employee.nfc_card_id?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid ||
+    employee.employee_id?.replace(/[:\s]/g, '').toLowerCase() === normalizedUid
   );
-  return employeeMatch?.id ?? null;
+  return employeeMatch ?? null;
 }
 
 async function processAttendanceRecord(tagUid: string, dateKey: string, entry: Record<string, unknown>) {
+  const supabase = getSupabaseAdminClient() as any;
   if (typeof entry.check_in !== 'string') {
     return { success: false, error: 'Invalid data' };
   }
 
   const logKey = `${tagUid}_${dateKey}_${entry.check_in}`;
   try {
-    const employeeId = await resolveEmployeeId(tagUid, entry);
-    if (!employeeId) {
+    const employee = await resolveEmployee(tagUid, entry);
+    if (!employee) {
       return { success: false, error: `Unknown Tag UID or Employee ID: ${tagUid}`, logKey };
     }
 
-    const [existingRecord] = await db.select().from(attendanceRecords).where(and(
-      eq(attendanceRecords.employeeId, employeeId),
-      eq(attendanceRecords.date, dateKey),
-    )).limit(1);
+    const { data: existingRecord, error: existingError } = await supabase
+      .from('attendance_records')
+      .select('*')
+      .eq('tenant_id', employee.tenant_id)
+      .eq('employee_id', employee.id)
+      .eq('date', dateKey)
+      .maybeSingle();
+    if (existingError) throw existingError;
 
     if (existingRecord) {
       const isoOut = typeof entry.check_out === 'string' ? formatToISO(dateKey, entry.check_out) : null;
       const updates: Record<string, unknown> = {};
-      if (isoOut && (!existingRecord.timeOut || existingRecord.timeOut !== isoOut)) {
-        updates.timeOut = isoOut;
-        updates.duration = calculateDuration(dateKey, existingRecord.timeIn, entry.check_out as string);
+      if (isoOut && (!existingRecord.time_out || existingRecord.time_out !== isoOut)) {
+        updates.time_out = isoOut;
+        updates.duration = calculateDuration(dateKey, existingRecord.time_in, String(entry.check_out));
       }
       if (Object.keys(updates).length) {
-        await db.update(attendanceRecords).set(updates).where(eq(attendanceRecords.id, existingRecord.id));
+        const { error } = await supabase.from('attendance_records').update(updates).eq('id', existingRecord.id);
+        if (error) throw error;
         return { success: true, action: 'updated', logKey };
       }
       return { success: true, action: 'skipped', logKey };
@@ -95,19 +105,22 @@ async function processAttendanceRecord(tagUid: string, dateKey: string, entry: R
 
     const isoIn = formatToISO(dateKey, entry.check_in) ?? entry.check_in;
     const isoOut = typeof entry.check_out === 'string' ? formatToISO(dateKey, entry.check_out) : null;
-    await db.insert(attendanceRecords).values({
-      employeeId,
+    const { error } = await supabase.from('attendance_records').insert({
+      tenant_id: employee.tenant_id,
+      employee_id: employee.id,
       date: dateKey,
-      timeIn: isoIn,
-      timeOut: isoOut,
+      time_in: isoIn,
+      time_out: isoOut,
       duration: typeof entry.check_out === 'string' ? calculateDuration(dateKey, entry.check_in, entry.check_out) : null,
       status: 'present',
-      checkInMethod: 'rfid',
-      tagUid,
-      idempotencyKey: logKey,
-      metadata: JSON.stringify(entry),
-      createdAt: new Date().toISOString(),
+      check_in_method: 'rfid',
+      tag_uid: tagUid,
+      idempotency_key: logKey,
+      metadata: entry,
+      created_at: new Date().toISOString(),
     });
+    if (error) throw error;
+
     return { success: true, action: 'created', logKey };
   } catch (error) {
     logger.error('firebase_sync_record_failed', {

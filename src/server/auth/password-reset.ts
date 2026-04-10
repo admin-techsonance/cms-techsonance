@@ -1,12 +1,9 @@
 import crypto from 'node:crypto';
-import { and, desc, eq, isNull } from 'drizzle-orm';
-import { db } from '@/db';
-import { authRefreshSessions, passwordResetOtps, users } from '@/db/schema';
-import { hashPassword } from '@/server/auth/password';
 import { env } from '@/server/config/env';
 import { BadRequestError, UnauthorizedError } from '@/server/http/errors';
 import { sendPasswordResetOtpEmail } from '@/server/mail/password-reset';
 import { logAuthEvent } from '@/server/logging/mongo-log';
+import { getSupabaseAdminClient } from '@/server/supabase/admin';
 
 function generateOtp() {
   return String(crypto.randomInt(100000, 1000000));
@@ -24,32 +21,34 @@ function getOtpExpiryDate() {
 
 async function getLatestResetRequest(email: string) {
   const normalizedEmail = email.toLowerCase().trim();
+  const supabase = getSupabaseAdminClient() as any;
+  const { data, error } = await supabase
+    .from('password_reset_otps')
+    .select('*')
+    .eq('email', normalizedEmail)
+    .is('consumed_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  const [record] = await db
-    .select()
-    .from(passwordResetOtps)
-    .where(and(eq(passwordResetOtps.email, normalizedEmail), isNull(passwordResetOtps.consumedAt)))
-    .orderBy(desc(passwordResetOtps.createdAt))
-    .limit(1);
+  if (error) {
+    throw error;
+  }
 
-  return record ?? null;
+  return data ?? null;
 }
 
 export async function requestPasswordReset(email: string) {
   const normalizedEmail = email.toLowerCase().trim();
+  const supabase = getSupabaseAdminClient() as any;
 
-  const [user] = await db
-    .select({
-      id: users.id,
-      email: users.email,
-      firstName: users.firstName,
-      isActive: users.isActive,
-    })
-    .from(users)
-    .where(eq(users.email, normalizedEmail))
-    .limit(1);
+  const { data: user } = await supabase
+    .from('users')
+    .select('id, tenant_id, legacy_user_id, email, first_name, is_active')
+    .eq('email', normalizedEmail)
+    .maybeSingle();
 
-  if (!user || !user.isActive) {
+  if (!user || !user.is_active) {
     await logAuthEvent({
       action: 'auth.password_reset.request',
       email: normalizedEmail,
@@ -62,33 +61,35 @@ export async function requestPasswordReset(email: string) {
     };
   }
 
-  await db
-    .update(passwordResetOtps)
-    .set({ consumedAt: new Date().toISOString() })
-    .where(and(eq(passwordResetOtps.userId, user.id), isNull(passwordResetOtps.consumedAt)));
+  await supabase
+    .from('password_reset_otps')
+    .update({ consumed_at: new Date().toISOString() })
+    .eq('user_id', user.id)
+    .is('consumed_at', null);
 
   const otp = generateOtp();
   const now = new Date().toISOString();
 
-  await db.insert(passwordResetOtps).values({
-    id: crypto.randomUUID(),
-    userId: user.id,
+  const { error: insertError } = await supabase.from('password_reset_otps').insert({
+    tenant_id: user.tenant_id,
+    user_id: user.id,
     email: normalizedEmail,
-    otpHash: hashOtp(normalizedEmail, otp),
-    expiresAt: getOtpExpiryDate().toISOString(),
-    createdAt: now,
+    otp_hash: hashOtp(normalizedEmail, otp),
+    expires_at: getOtpExpiryDate().toISOString(),
+    created_at: now,
     attempts: 0,
   });
+  if (insertError) throw insertError;
 
   await sendPasswordResetOtpEmail({
     email: normalizedEmail,
-    firstName: user.firstName,
+    firstName: user.first_name,
     otp,
   });
 
   await logAuthEvent({
     action: 'auth.password_reset.request',
-    userId: user.id,
+    userId: user.legacy_user_id,
     email: normalizedEmail,
     status: 'accepted',
     details: { userExists: true },
@@ -103,12 +104,13 @@ export async function requestPasswordReset(email: string) {
 export async function verifyPasswordResetOtp(input: { email: string; otp: string }) {
   const normalizedEmail = input.email.toLowerCase().trim();
   const latest = await getLatestResetRequest(normalizedEmail);
+  const supabase = getSupabaseAdminClient() as any;
 
-  if (!latest || new Date(latest.expiresAt) <= new Date()) {
+  if (!latest || new Date(latest.expires_at) <= new Date()) {
     await logAuthEvent({
       action: 'auth.password_reset.verify',
       email: normalizedEmail,
-      userId: latest?.userId ?? null,
+      userId: null,
       status: 'failed',
       details: { reason: 'expired_or_missing' },
     });
@@ -116,17 +118,16 @@ export async function verifyPasswordResetOtp(input: { email: string; otp: string
   }
 
   const expectedHash = hashOtp(normalizedEmail, input.otp);
-
-  if (latest.otpHash !== expectedHash) {
-    await db
-      .update(passwordResetOtps)
-      .set({ attempts: (latest.attempts ?? 0) + 1 })
-      .where(eq(passwordResetOtps.id, latest.id));
+  if (latest.otp_hash !== expectedHash) {
+    await supabase
+      .from('password_reset_otps')
+      .update({ attempts: Number(latest.attempts ?? 0) + 1 })
+      .eq('id', latest.id);
 
     await logAuthEvent({
       action: 'auth.password_reset.verify',
       email: normalizedEmail,
-      userId: latest.userId,
+      userId: null,
       status: 'failed',
       details: { reason: 'invalid_otp' },
     });
@@ -134,15 +135,15 @@ export async function verifyPasswordResetOtp(input: { email: string; otp: string
     throw new UnauthorizedError('OTP is invalid or expired');
   }
 
-  await db
-    .update(passwordResetOtps)
-    .set({ verifiedAt: new Date().toISOString() })
-    .where(eq(passwordResetOtps.id, latest.id));
+  await supabase
+    .from('password_reset_otps')
+    .update({ verified_at: new Date().toISOString() })
+    .eq('id', latest.id);
 
   await logAuthEvent({
     action: 'auth.password_reset.verify',
     email: normalizedEmail,
-    userId: latest.userId,
+    userId: null,
     status: 'success',
   });
 
@@ -159,66 +160,69 @@ export async function resetPasswordWithOtp(input: {
 }) {
   const normalizedEmail = input.email.toLowerCase().trim();
   const latest = await getLatestResetRequest(normalizedEmail);
+  const supabase = getSupabaseAdminClient() as any;
 
-  if (!latest || new Date(latest.expiresAt) <= new Date() || !latest.verifiedAt) {
+  if (!latest || new Date(latest.expires_at) <= new Date() || !latest.verified_at) {
     await logAuthEvent({
       action: 'auth.password_reset.complete',
       email: normalizedEmail,
-      userId: latest?.userId ?? null,
+      userId: null,
       status: 'failed',
       details: { reason: 'not_verified_or_expired' },
     });
     throw new UnauthorizedError('OTP verification is required before resetting the password');
   }
 
-  if (latest.otpHash !== hashOtp(normalizedEmail, input.otp)) {
+  if (latest.otp_hash !== hashOtp(normalizedEmail, input.otp)) {
     await logAuthEvent({
       action: 'auth.password_reset.complete',
       email: normalizedEmail,
-      userId: latest.userId,
+      userId: null,
       status: 'failed',
       details: { reason: 'invalid_otp' },
     });
     throw new UnauthorizedError('OTP is invalid or expired');
   }
 
-  const [user] = await db
-    .select({
-      id: users.id,
-      email: users.email,
-    })
-    .from(users)
-    .where(eq(users.id, latest.userId))
-    .limit(1);
-
+  const { data: user, error: userError } = await supabase
+    .from('users')
+    .select('id, tenant_id, legacy_user_id, email')
+    .eq('id', latest.user_id)
+    .maybeSingle();
+  if (userError) throw userError;
   if (!user) {
     throw new BadRequestError('User account not found');
   }
 
-  await db
-    .update(users)
-    .set({
-      password: await hashPassword(input.newPassword),
-      updatedAt: new Date().toISOString(),
-      failedLoginAttempts: 0,
-      lockedUntil: null,
+  const { error: authError } = await supabase.auth.admin.updateUserById(user.id, {
+    password: input.newPassword,
+    app_metadata: undefined,
+    user_metadata: undefined,
+  });
+  if (authError) {
+    throw authError;
+  }
+
+  const { error: profileError } = await supabase
+    .from('users')
+    .update({
+      failed_login_attempts: 0,
+      locked_until: null,
+      updated_at: new Date().toISOString(),
     })
-    .where(eq(users.id, user.id));
+    .eq('id', user.id);
+  if (profileError) throw profileError;
 
-  await db
-    .update(passwordResetOtps)
-    .set({ consumedAt: new Date().toISOString() })
-    .where(and(eq(passwordResetOtps.userId, user.id), isNull(passwordResetOtps.consumedAt)));
-
-  await db
-    .update(authRefreshSessions)
-    .set({ revokedAt: new Date().toISOString() })
-    .where(and(eq(authRefreshSessions.userId, user.id), isNull(authRefreshSessions.revokedAt)));
+  await supabase
+    .from('password_reset_otps')
+    .update({ consumed_at: new Date().toISOString() })
+    .eq('user_id', user.id)
+    .is('consumed_at', null);
 
   await logAuthEvent({
     action: 'auth.password_reset.complete',
     email: normalizedEmail,
-    userId: user.id,
+    userId: user.legacy_user_id,
     status: 'success',
   });
 
