@@ -43,7 +43,7 @@ export async function authenticateRequest(request: Request, options?: { required
   }
 
   const supabaseUser = await getSupabaseUserFromAccessToken(bearerToken);
-  const profile = await getSupabaseProfileByAuthUserId(supabaseUser.id, bearerToken);
+  const profile = await getSupabaseProfileByAuthUserId(supabaseUser.id, { useAdmin: true });
 
   if (!profile.is_active || profile.legacy_user_id === null) {
     throw new UnauthorizedError();

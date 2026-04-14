@@ -661,6 +661,117 @@ paths:
           $ref: "#/components/responses/UnprocessableResponse"
         500:
           $ref: "#/components/responses/InternalErrorResponse"
+  /api/auth/forgot-password/request:
+    post:
+      tags:
+        - auth
+      summary: "Create resource for /api/auth/forgot-password/request"
+      description: "Auto-generated documentation for POST /api/auth/forgot-password/request."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "POST request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+  /api/auth/forgot-password/reset:
+    post:
+      tags:
+        - auth
+      summary: "Create resource for /api/auth/forgot-password/reset"
+      description: "Auto-generated documentation for POST /api/auth/forgot-password/reset."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "POST request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+  /api/auth/forgot-password/verify:
+    post:
+      tags:
+        - auth
+      summary: "Create resource for /api/auth/forgot-password/verify"
+      description: "Auto-generated documentation for POST /api/auth/forgot-password/verify."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "POST request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
   /api/auth/login:
     post:
       tags:
@@ -6187,6 +6298,43 @@ paths:
           $ref: "#/components/responses/UnprocessableResponse"
         500:
           $ref: "#/components/responses/InternalErrorResponse"
+  /api/tenants/register:
+    post:
+      tags:
+        - tenants
+      summary: "Create resource for /api/tenants/register"
+      description: "Auto-generated documentation for POST /api/tenants/register."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "POST request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
   /api/ticket-responses:
     get:
       tags:
@@ -6614,6 +6762,49 @@ paths:
         500:
           $ref: "#/components/responses/InternalErrorResponse"
   /api/upload:
+    get:
+      tags:
+        - upload
+      summary: "Retrieve resource for /api/upload"
+      description: "Auto-generated documentation for GET /api/upload."
+      security:
+        - 
+          bearerAuth: []
+      parameters:
+        - 
+          name: "limit"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+          example: 10
+        - 
+          name: "offset"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 0
+          example: 0
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
     post:
       tags:
         - upload
@@ -6817,6 +7008,117 @@ paths:
       responses:
         200:
           $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+  /api/v1/auth/forgot-password/request:
+    post:
+      tags:
+        - v1
+      summary: "Create resource for /api/v1/auth/forgot-password/request"
+      description: "Auto-generated documentation for POST /api/v1/auth/forgot-password/request."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "POST request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+  /api/v1/auth/forgot-password/reset:
+    post:
+      tags:
+        - v1
+      summary: "Create resource for /api/v1/auth/forgot-password/reset"
+      description: "Auto-generated documentation for POST /api/v1/auth/forgot-password/reset."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "POST request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+  /api/v1/auth/forgot-password/verify:
+    post:
+      tags:
+        - v1
+      summary: "Create resource for /api/v1/auth/forgot-password/verify"
+      description: "Auto-generated documentation for POST /api/v1/auth/forgot-password/verify."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "POST request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
         201:
           $ref: "#/components/responses/CreatedResponse"
         400:

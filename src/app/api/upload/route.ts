@@ -1,7 +1,4 @@
-import { mkdir, writeFile } from 'fs/promises';
-import { join } from 'path';
 import { NextResponse } from 'next/server';
-import { isSupabaseDatabaseEnabled } from '@/server/auth/provider';
 import { withApiHandler } from '@/server/http/handler';
 import { BadRequestError } from '@/server/http/errors';
 import { apiSuccess } from '@/server/http/response';
@@ -31,10 +28,6 @@ function assertSafeStoragePath(path: string) {
 }
 
 export const GET = withApiHandler(async (request, context) => {
-  if (!isSupabaseDatabaseEnabled()) {
-    throw new BadRequestError('File proxy is only available with Supabase storage');
-  }
-
   const accessToken = context.auth?.accessToken;
   if (!accessToken) throw new BadRequestError('Authorization token is required');
   const actor = await getCurrentSupabaseActor(accessToken);
@@ -74,44 +67,30 @@ export const POST = withApiHandler(async (request, context) => {
     throw new BadRequestError('File size must be between 1 byte and 10 MB');
   }
 
-  if (isSupabaseDatabaseEnabled()) {
-    const accessToken = context.auth?.accessToken;
-    if (!accessToken) throw new BadRequestError('Authorization token is required');
-    const actor = await getCurrentSupabaseActor(accessToken);
-    const bytes = await file.arrayBuffer();
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const kind = getUploadKind(data.get('kind'));
-    const storagePath = `${kind}/${uniqueSuffix}-${safeName}`;
-
-    await uploadTenantFile({
-      tenantId: actor.tenantId,
-      kind,
-      path: storagePath,
-      contentType: file.type,
-      data: new Uint8Array(bytes),
-      upsert: false,
-    });
-
-    return apiSuccess({
-      url: `/api/upload?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(storagePath)}`,
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      kind,
-      storagePath,
-    }, 'File uploaded successfully', { status: 201 });
-  }
-
+  const accessToken = context.auth?.accessToken;
+  if (!accessToken) throw new BadRequestError('Authorization token is required');
+  const actor = await getCurrentSupabaseActor(accessToken);
   const bytes = await file.arrayBuffer();
-  const buffer = Buffer.from(bytes);
   const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
   const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-  const filename = `${uniqueSuffix}-${safeName}`;
-  const uploadDir = join(process.cwd(), 'public', 'uploads');
+  const kind = getUploadKind(data.get('kind'));
+  const storagePath = `${kind}/${uniqueSuffix}-${safeName}`;
 
-  await mkdir(uploadDir, { recursive: true });
-  await writeFile(join(uploadDir, filename), buffer);
+  await uploadTenantFile({
+    tenantId: actor.tenantId,
+    kind,
+    path: storagePath,
+    contentType: file.type,
+    data: new Uint8Array(bytes),
+    upsert: false,
+  });
 
-  return apiSuccess({ url: `/uploads/${filename}`, name: file.name, type: file.type, size: file.size }, 'File uploaded successfully', { status: 201 });
+  return apiSuccess({
+    url: `/api/upload?kind=${encodeURIComponent(kind)}&path=${encodeURIComponent(storagePath)}`,
+    name: file.name,
+    type: file.type,
+    size: file.size,
+    kind,
+    storagePath,
+  }, 'File uploaded successfully', { status: 201 });
 }, { requireAuth: true, roles: ['Employee'] });

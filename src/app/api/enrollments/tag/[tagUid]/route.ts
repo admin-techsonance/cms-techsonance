@@ -1,20 +1,21 @@
-import { eq } from 'drizzle-orm';
 import { NextRequest } from 'next/server';
-import { db } from '@/db';
-import { employees, nfcTags, users } from '@/db/schema';
-import { isSupabaseDatabaseEnabled } from '@/server/auth/provider';
 import { authenticateRequest } from '@/server/auth/session';
 import { apiError, apiSuccess } from '@/server/http/response';
 import { ApiError, BadRequestError, NotFoundError } from '@/server/http/errors';
-import { buildLegacyUserIdMap, getRouteSupabase } from '@/server/supabase/route-helpers';
+import { buildLegacyUserIdMap, getAdminRouteSupabase } from '@/server/supabase/route-helpers';
 import { listSupabaseProfilesByAuthIds } from '@/server/supabase/users';
 
-async function buildSupabaseEmployeeRecord(accessToken: string, employeeId: number | null) {
+async function buildSupabaseEmployeeRecord(tenantId: string, employeeId: number | null) {
   if (!employeeId) return null;
-  const supabase = getRouteSupabase(accessToken);
-  const { data: employee } = await supabase.from('employees').select('id,user_id,department,status').eq('id', employeeId).single();
+  const supabase = getAdminRouteSupabase();
+  const { data: employee } = await supabase
+    .from('employees')
+    .select('id,user_id,department,status')
+    .eq('id', employeeId)
+    .eq('tenant_id', tenantId)
+    .single();
   if (!employee) return null;
-  const profiles = await listSupabaseProfilesByAuthIds([String(employee.user_id)], accessToken);
+  const profiles = await listSupabaseProfilesByAuthIds([String(employee.user_id)], { useAdmin: true, tenantId });
   const profile = profiles.get(String(employee.user_id));
   return {
     id: Number(employee.id),
@@ -55,40 +56,20 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       throw new BadRequestError('Tag UID is required');
     }
 
-    if (isSupabaseDatabaseEnabled()) {
-      const accessToken = auth?.accessToken;
-      if (!accessToken) throw new BadRequestError('Authorization token is required');
-      const supabase = getRouteSupabase(accessToken);
-      const { data: enrollment, error } = await supabase.from('nfc_tags').select('*').eq('tag_uid', tagUid.trim()).single();
-      if (error || !enrollment) throw new NotFoundError('NFC tag not found');
-      const enrolledByMap = await buildLegacyUserIdMap(accessToken, [String(enrollment.enrolled_by)].filter(Boolean));
-      const employee = await buildSupabaseEmployeeRecord(accessToken, enrollment.employee_id === null ? null : Number(enrollment.employee_id));
-      return apiSuccess(normalizeSupabaseEnrollment(enrollment, enrolledByMap, employee), 'Enrollment fetched successfully');
-    }
-
-    const [enrollment] = await db.select({
-      id: nfcTags.id,
-      tagUid: nfcTags.tagUid,
-      employeeId: nfcTags.employeeId,
-      status: nfcTags.status,
-      enrolledAt: nfcTags.enrolledAt,
-      enrolledBy: nfcTags.enrolledBy,
-      lastUsedAt: nfcTags.lastUsedAt,
-      readerId: nfcTags.readerId,
-      createdAt: nfcTags.createdAt,
-      employee: {
-        id: employees.id,
-        firstName: users.firstName,
-        lastName: users.lastName,
-        email: users.email,
-        department: employees.department,
-        status: employees.status,
-        photoUrl: users.avatarUrl,
-      },
-    }).from(nfcTags).leftJoin(employees, eq(nfcTags.employeeId, employees.id)).leftJoin(users, eq(employees.userId, users.id)).where(eq(nfcTags.tagUid, tagUid.trim())).limit(1);
-
-    if (!enrollment) throw new NotFoundError('NFC tag not found');
-    return apiSuccess(enrollment, 'Enrollment fetched successfully');
+    const accessToken = auth?.accessToken;
+    const tenantId = auth?.user.tenantId;
+    if (!accessToken || !tenantId) throw new BadRequestError('Authorization and tenant info required');
+    const supabase = getAdminRouteSupabase();
+    const { data: enrollment, error } = await supabase
+      .from('nfc_tags')
+      .select('*')
+      .eq('tag_uid', tagUid.trim())
+      .eq('tenant_id', tenantId)
+      .single();
+    if (error || !enrollment) throw new NotFoundError('NFC tag not found');
+    const enrolledByMap = await buildLegacyUserIdMap(accessToken, [String(enrollment.enrolled_by)].filter(Boolean), tenantId);
+    const employee = await buildSupabaseEmployeeRecord(tenantId, enrollment.employee_id === null ? null : Number(enrollment.employee_id));
+    return apiSuccess(normalizeSupabaseEnrollment(enrollment, enrolledByMap, employee), 'Enrollment fetched successfully');
   } catch (error) {
     if (error instanceof ApiError) {
       return apiError(error.message, { status: error.statusCode, errors: error.details });

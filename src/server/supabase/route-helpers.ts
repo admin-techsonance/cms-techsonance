@@ -1,4 +1,5 @@
 import { getSupabaseServerClient } from '@/server/supabase/client';
+import { getSupabaseAdminClient } from '@/server/supabase/admin';
 import {
   getCurrentSupabaseProfile,
   getSupabaseProfileByLegacyUserId,
@@ -9,17 +10,27 @@ export function getRouteSupabase(accessToken: string) {
   return getSupabaseServerClient(accessToken) as any;
 }
 
+export function getAdminRouteSupabase() {
+  return getSupabaseAdminClient() as any;
+}
+
 export async function getCurrentSupabaseActor(accessToken: string) {
   return getCurrentSupabaseProfile(accessToken);
 }
 
-export async function resolveAuthUserIdFromLegacyUserId(accessToken: string, legacyUserId: number) {
-  const profile = await getSupabaseProfileByLegacyUserId(legacyUserId, accessToken);
+export async function resolveAuthUserIdFromLegacyUserId(accessToken: string, legacyUserId: number, tenantId?: string) {
+  const profile = await getSupabaseProfileByLegacyUserId(legacyUserId, { 
+    useAdmin: true,
+    tenantId
+  });
   return profile.id;
 }
 
-export async function buildLegacyUserIdMap(accessToken: string, authUserIds: string[]) {
-  const profiles = await listSupabaseProfilesByAuthIds(authUserIds, accessToken);
+export async function buildLegacyUserIdMap(accessToken: string, authUserIds: string[], tenantId?: string) {
+  const profiles = await listSupabaseProfilesByAuthIds(authUserIds, { 
+    useAdmin: true,
+    tenantId
+  });
   return new Map<string, number | null>(
     Array.from(profiles.entries()).map(([authUserId, profile]) => [authUserId, profile.legacy_user_id])
   );

@@ -20,7 +20,12 @@ export async function signInWithSupabasePassword(input: {
     password: input.password,
   });
 
-  if (error || !data.session || !data.user) {
+  if (error) {
+    console.error('Supabase auth.signInWithPassword error:', error);
+    throw new UnauthorizedError('Invalid email or password');
+  }
+
+  if (!data.session || !data.user) {
     throw new UnauthorizedError('Invalid email or password');
   }
 

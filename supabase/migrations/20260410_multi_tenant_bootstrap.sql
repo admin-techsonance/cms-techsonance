@@ -293,8 +293,7 @@ create table if not exists public.employees (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   deleted_at timestamptz,
-  unique (tenant_id, employee_id),
-  unique nulls not distinct (tenant_id, nfc_card_id)
+  unique (tenant_id, employee_id)
 );
 
 create table if not exists public.attendance (
@@ -862,6 +861,7 @@ end $$;
 create index if not exists tenant_users_user_idx on public.tenant_users(user_id);
 create index if not exists users_tenant_email_idx on public.users(tenant_id, email);
 create index if not exists employees_tenant_user_idx on public.employees(tenant_id, user_id);
+create unique index if not exists employees_tenant_nfc_card_unique_idx on public.employees(tenant_id, nfc_card_id) where nfc_card_id is not null;
 create index if not exists clients_tenant_status_idx on public.clients(tenant_id, status);
 create index if not exists projects_tenant_status_idx on public.projects(tenant_id, status, priority);
 create index if not exists tasks_tenant_status_idx on public.tasks(tenant_id, status, sprint_id);

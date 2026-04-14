@@ -2,10 +2,6 @@ import { z } from 'zod';
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  DATABASE_PROVIDER: z.enum(['turso', 'supabase']).default('supabase'),
-  AUTH_PROVIDER: z.enum(['legacy', 'supabase']).default('supabase'),
-  TURSO_CONNECTION_URL: z.string().min(1, 'TURSO_CONNECTION_URL is required').optional(),
-  TURSO_AUTH_TOKEN: z.string().min(1, 'TURSO_AUTH_TOKEN is required').optional(),
   JWT_ACCESS_SECRET: z.string().optional(),
   AUTH_ACCESS_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().default(15),
   AUTH_REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(7),
@@ -69,8 +65,6 @@ const envSchema = z.object({
 type Env = z.infer<typeof envSchema>;
 
 const buildPlaceholderEnv = {
-  TURSO_CONNECTION_URL: 'file:build.db',
-  TURSO_AUTH_TOKEN: 'build-token',
   JWT_ACCESS_SECRET: 'build-placeholder-jwt-access-secret-1234567890',
 } satisfies Partial<Record<keyof Env, string>>;
 

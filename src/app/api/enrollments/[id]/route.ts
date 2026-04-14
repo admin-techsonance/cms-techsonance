@@ -1,13 +1,9 @@
-import { eq } from 'drizzle-orm';
 import { NextRequest } from 'next/server';
-import { db } from '@/db';
-import { nfcTags } from '@/db/schema';
-import { isSupabaseDatabaseEnabled } from '@/server/auth/provider';
 import { authenticateRequest } from '@/server/auth/session';
 import { apiError, apiSuccess } from '@/server/http/response';
 import { ApiError, BadRequestError, NotFoundError } from '@/server/http/errors';
 import { updateEnrollmentSchema } from '@/server/validation/devices';
-import { buildLegacyUserIdMap, getRouteSupabase } from '@/server/supabase/route-helpers';
+import { buildLegacyUserIdMap, getAdminRouteSupabase } from '@/server/supabase/route-helpers';
 
 function normalizeSupabaseEnrollmentRow(row: Record<string, unknown>, enrolledByMap: Map<string, number | null>) {
   const enrolledBy = typeof row.enrolled_by === 'string' ? enrolledByMap.get(row.enrolled_by) ?? null : null;
@@ -39,28 +35,27 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const enrollmentId = parseEnrollmentId(id);
     const payload = updateEnrollmentSchema.parse(await request.json());
 
-    if (isSupabaseDatabaseEnabled()) {
-      const accessToken = auth?.accessToken;
-      if (!accessToken) throw new BadRequestError('Authorization token is required');
-      const supabase = getRouteSupabase(accessToken);
-      const { data: existing } = await supabase.from('nfc_tags').select('*').eq('id', enrollmentId).single();
-      if (!existing) throw new NotFoundError('Enrollment not found');
-      const { data: updated, error } = await supabase.from('nfc_tags').update({
-        status: payload.status,
-      }).eq('id', enrollmentId).select('*').single();
-      if (error || !updated) throw error ?? new Error('Failed to update enrollment');
-      const enrolledByMap = await buildLegacyUserIdMap(accessToken, [String(updated.enrolled_by)].filter(Boolean));
-      return apiSuccess(normalizeSupabaseEnrollmentRow(updated, enrolledByMap), 'Enrollment updated successfully');
-    }
-
-    const [existing] = await db.select().from(nfcTags).where(eq(nfcTags.id, enrollmentId)).limit(1);
+    const accessToken = auth?.accessToken;
+    const tenantId = auth?.user.tenantId;
+    if (!accessToken || !tenantId) throw new BadRequestError('Authorization and tenant info required');
+    const supabase = getAdminRouteSupabase();
+    const { data: existing } = await supabase
+      .from('nfc_tags')
+      .select('*')
+      .eq('id', enrollmentId)
+      .eq('tenant_id', tenantId)
+      .single();
     if (!existing) throw new NotFoundError('Enrollment not found');
-
-    const [updated] = await db.update(nfcTags).set({
+    const { data: updated, error } = await supabase.from('nfc_tags').update({
       status: payload.status,
-    }).where(eq(nfcTags.id, enrollmentId)).returning();
-
-    return apiSuccess(updated, 'Enrollment updated successfully');
+    })
+    .eq('id', enrollmentId)
+    .eq('tenant_id', tenantId)
+    .select('*')
+    .single();
+    if (error || !updated) throw error ?? new Error('Failed to update enrollment');
+    const enrolledByMap = await buildLegacyUserIdMap(accessToken, [String(updated.enrolled_by)].filter(Boolean), tenantId);
+    return apiSuccess(normalizeSupabaseEnrollmentRow(updated, enrolledByMap), 'Enrollment updated successfully');
   } catch (error) {
     if (error instanceof ApiError) {
       return apiError(error.message, { status: error.statusCode, errors: error.details });
@@ -75,28 +70,27 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     const { id } = await params;
     const enrollmentId = parseEnrollmentId(id);
 
-    if (isSupabaseDatabaseEnabled()) {
-      const accessToken = auth?.accessToken;
-      if (!accessToken) throw new BadRequestError('Authorization token is required');
-      const supabase = getRouteSupabase(accessToken);
-      const { data: existing } = await supabase.from('nfc_tags').select('*').eq('id', enrollmentId).single();
-      if (!existing) throw new NotFoundError('Enrollment not found');
-      const { data: updated, error } = await supabase.from('nfc_tags').update({
-        status: 'inactive',
-      }).eq('id', enrollmentId).select('*').single();
-      if (error || !updated) throw error ?? new Error('Failed to deactivate enrollment');
-      const enrolledByMap = await buildLegacyUserIdMap(accessToken, [String(updated.enrolled_by)].filter(Boolean));
-      return apiSuccess(normalizeSupabaseEnrollmentRow(updated, enrolledByMap), 'Enrollment deactivated successfully');
-    }
-
-    const [existing] = await db.select().from(nfcTags).where(eq(nfcTags.id, enrollmentId)).limit(1);
+    const accessToken = auth?.accessToken;
+    const tenantId = auth?.user.tenantId;
+    if (!accessToken || !tenantId) throw new BadRequestError('Authorization and tenant info required');
+    const supabase = getAdminRouteSupabase();
+    const { data: existing } = await supabase
+      .from('nfc_tags')
+      .select('*')
+      .eq('id', enrollmentId)
+      .eq('tenant_id', tenantId)
+      .single();
     if (!existing) throw new NotFoundError('Enrollment not found');
-
-    const [updated] = await db.update(nfcTags).set({
+    const { data: updated, error } = await supabase.from('nfc_tags').update({
       status: 'inactive',
-    }).where(eq(nfcTags.id, enrollmentId)).returning();
-
-    return apiSuccess(updated, 'Enrollment deactivated successfully');
+    })
+    .eq('id', enrollmentId)
+    .eq('tenant_id', tenantId)
+    .select('*')
+    .single();
+    if (error || !updated) throw error ?? new Error('Failed to deactivate enrollment');
+    const enrolledByMap = await buildLegacyUserIdMap(accessToken, [String(updated.enrolled_by)].filter(Boolean), tenantId);
+    return apiSuccess(normalizeSupabaseEnrollmentRow(updated, enrolledByMap), 'Enrollment deactivated successfully');
   } catch (error) {
     if (error instanceof ApiError) {
       return apiError(error.message, { status: error.statusCode, errors: error.details });

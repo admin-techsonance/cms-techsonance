@@ -105,7 +105,7 @@ export async function loginUser(input: {
   requestId?: string;
 }) {
   const normalizedEmail = input.email.toLowerCase().trim();
-  const user = await getSupabaseProfileByEmail(normalizedEmail).catch(() => null);
+  const user = await getSupabaseProfileByEmail(normalizedEmail, { useAdmin: true }).catch(() => null);
 
   if (!user) {
     await writeAuthTelemetry({
@@ -158,7 +158,19 @@ export async function loginUser(input: {
       locked_until: null,
       last_login: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    });
+    }, { useAdmin: true });
+
+    // Ensure tenant linkage for RLS
+    const admin = getSupabaseAdminClient();
+    await admin.from('tenant_users').upsert({
+      tenant_id: user.tenant_id,
+      user_id: authData.user.id,
+      email: user.email,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      role: user.role,
+      status: 'active',
+    }, { onConflict: 'tenant_id,user_id' });
 
     await writeRefreshTokenCookie(authData.session.refresh_token, {
       persistent: input.rememberMe ?? false,
@@ -325,7 +337,7 @@ export async function changeUserPassword(input: {
     throw new UnauthorizedError();
   }
 
-  const user = await getSupabaseProfileByLegacyUserId(auth.user.id).catch(() => null);
+  const user = await getSupabaseProfileByLegacyUserId(auth.user.id, { useAdmin: true }).catch(() => null);
   if (!user) {
     throw new NotFoundError('User not found');
   }

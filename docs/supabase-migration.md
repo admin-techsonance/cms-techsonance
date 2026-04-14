@@ -25,8 +25,8 @@ SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_JWT_SECRET=
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
-DATABASE_PROVIDER=turso
-AUTH_PROVIDER=legacy
+DATABASE_PROVIDER=supabase
+AUTH_PROVIDER=supabase
 SUPABASE_STORAGE_BUCKET_AVATARS=avatars
 SUPABASE_STORAGE_BUCKET_PAYROLL=payroll
 SUPABASE_STORAGE_BUCKET_EXPENSES=expenses
@@ -47,6 +47,12 @@ Run the SQL in Supabase:
 node ./scripts/migrate-sqlite-to-supabase.mjs
 ```
 
+## Verify migrated data
+
+```bash
+node ./scripts/verify-supabase-migration.mjs
+```
+
 This script:
 
 - reads all current SQLite/Turso data
@@ -54,6 +60,9 @@ This script:
 - migrates users into Supabase Auth
 - writes tenant membership and user profile rows
 - migrates application tables under the target `tenant_id`
+- migrates auth/session/audit support tables that still matter operationally
+- merges legacy `company_settings` into Supabase `business_settings`
+- remaps legacy payroll job queue states onto the Supabase enum-safe values
 
 ## Important
 

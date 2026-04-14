@@ -196,8 +196,6 @@ export async function resetPasswordWithOtp(input: {
 
   const { error: authError } = await supabase.auth.admin.updateUserById(user.id, {
     password: input.newPassword,
-    app_metadata: undefined,
-    user_metadata: undefined,
   });
   if (authError) {
     throw authError;

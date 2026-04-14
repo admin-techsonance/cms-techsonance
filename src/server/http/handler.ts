@@ -5,6 +5,7 @@ import { logger } from '@/server/logging/logger';
 import { logApplicationError } from '@/server/logging/mongo-log';
 import { authenticateRequest } from '@/server/auth/session';
 import type { AppRole } from '@/server/auth/constants';
+import { env } from '@/server/config/env';
 
 interface HandlerOptions {
   requireAuth?: boolean;
@@ -16,21 +17,34 @@ interface HandlerContext {
   auth: Awaited<ReturnType<typeof authenticateRequest>>;
 }
 
-function extractErrorMessages(error: unknown): string[] {
-  if (!(error instanceof Error)) {
-    return [];
+function extractErrorMessages(error: unknown, seen = new Set()): string[] {
+  if (seen.has(error)) return [];
+  if (error !== null) seen.add(error);
+
+  if (error instanceof Error) {
+    const messages = [error.message];
+    const cause = (error as Error & { cause?: unknown }).cause;
+
+    if (cause instanceof Error) {
+      messages.push(...extractErrorMessages(cause, seen));
+    } else if (typeof cause === 'string' && cause.trim().length > 0) {
+      messages.push(cause);
+    }
+    return messages;
   }
 
-  const messages = [error.message];
-  const cause = (error as Error & { cause?: unknown }).cause;
-
-  if (cause instanceof Error) {
-    messages.push(...extractErrorMessages(cause));
-  } else if (typeof cause === 'string' && cause.trim().length > 0) {
-    messages.push(cause);
+  if (typeof error === 'object' && error !== null) {
+    const errObj = error as Record<string, unknown>;
+    if (typeof errObj.message === 'string') return [errObj.message];
+    if (typeof errObj.error_description === 'string') return [errObj.error_description];
+    if (typeof errObj.code === 'string') return [`Error code: ${errObj.code}`];
   }
 
-  return messages.filter((message) => typeof message === 'string' && message.trim().length > 0);
+  if (typeof error === 'string') {
+    return [error];
+  }
+
+  return [];
 }
 
 function isSchemaMismatchError(error: unknown) {
@@ -181,12 +195,14 @@ export function withApiHandler(
         });
       }
 
+      const crashMessage = extractErrorMessages(error).join(' | ') || 'Unknown error';
+
       logger.error('api_request_crashed', {
         requestId,
         method: request.method,
         path: pathname,
         durationMs,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: crashMessage,
       });
 
       void logApplicationError({
@@ -194,13 +210,16 @@ export function withApiHandler(
         path: pathname,
         method: request.method,
         category: 'unhandled_error',
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: crashMessage,
       });
 
-      return apiError('Internal server error', {
-        status: 500,
-        headers: { 'x-correlation-id': requestId },
-      });
+      return apiError(
+        env.NODE_ENV === 'development' ? `Internal Error: ${crashMessage}` : 'Internal server error',
+        {
+          status: 500,
+          headers: { 'x-correlation-id': requestId },
+        }
+      );
     }
   };
 }
