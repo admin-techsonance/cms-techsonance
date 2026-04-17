@@ -8,9 +8,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Form, FormControl, FormField, FormItem, FormMessage } from '@/components/ui/form';
-import { Plus, Loader2, DollarSign, TrendingUp, CreditCard, Eye, Download, Send, FileText, Users, ShoppingCart, Receipt, CheckCircle, Clock, AlertCircle, Trash2, Pencil, Printer } from 'lucide-react';
+import { Plus, Loader2, DollarSign, TrendingUp, CreditCard, Eye, Download, Send, FileText, Users, ShoppingCart, Receipt, CheckCircle, Clock, AlertCircle, Trash2, Pencil, Printer, ShieldAlert } from 'lucide-react';
 import { InlineTableSkeleton } from '@/components/ui/dashboard-skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { hasPermission, hasFullAccess, type UserRole } from '@/lib/permissions';
 import {
   Table,
   TableBody,
@@ -131,6 +132,7 @@ export default function FinancePage() {
   const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<{ id: number; role: string } | null>(null);
 
   // Form States
   const [isAddVendorOpen, setIsAddVendorOpen] = useState(false);
@@ -212,8 +214,24 @@ export default function FinancePage() {
   const pageSize = 10;
 
   useEffect(() => {
+    fetchCurrentUser();
     fetchFinanceData();
   }, []);
+
+  const fetchCurrentUser = async () => {
+    try {
+      const token = localStorage.getItem('session_token');
+      const response = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCurrentUser(data.user);
+      }
+    } catch (error) {
+      console.error('Error fetching current user:', error);
+    }
+  };
 
   const fetchFinanceData = async () => {
     setLoading(true);
@@ -770,6 +788,24 @@ export default function FinancePage() {
   const overduePayments = invoices.filter(inv => inv.status === 'overdue').reduce((sum, inv) => sum + inv.totalAmount, 0);
   const totalExpenses = expenses.filter(exp => exp.status === 'approved').reduce((sum, exp) => sum + exp.amount, 0);
   const netProfit = totalPaid - totalExpenses;
+
+  // Role-based access check
+  const canViewFinance = currentUser && hasPermission(currentUser.role as UserRole, 'finance', 'canView');
+  
+  if (loading && !currentUser) {
+    return <InlineTableSkeleton rows={10} columns={7} />;
+  }
+
+  if (currentUser && !canViewFinance) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] space-y-4">
+        <ShieldAlert className="h-16 w-16 text-destructive animate-pulse" />
+        <h2 className="text-2xl font-bold">Access Restricted</h2>
+        <p className="text-muted-foreground">You do not have permission to view the Finance module.</p>
+        <Button onClick={() => window.history.back()}>Go Back</Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

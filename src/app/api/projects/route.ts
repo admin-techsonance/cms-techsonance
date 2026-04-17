@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { withApiHandler } from '@/server/http/handler';
 import { BadRequestError, NotFoundError, UnprocessableEntityError } from '@/server/http/errors';
 import { projectPrioritySchema, projectStatusSchema, createProjectSchema, updateProjectSchema } from '@/server/validation/projects';
+import { enforceRBACPermission } from '@/server/rbac/auth-integration';
 import {
   buildLegacyUserIdMap,
   getAdminRouteSupabase,
@@ -11,6 +12,9 @@ import {
 } from '@/server/supabase/route-helpers';
 
 export const GET = withApiHandler(async (request, context) => {
+  // Allow authenticated users to read projects based on their role
+  // Admin-like roles can see all projects, employees can see assigned projects
+  
   const searchParams = new URL(request.url).searchParams;
   const id = searchParams.get('id');
 

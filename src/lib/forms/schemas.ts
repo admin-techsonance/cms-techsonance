@@ -2,7 +2,32 @@ import { z } from 'zod';
 
 const phonePattern = /^\+?[\d\s\-()]+$/;
 
-export const employeeRoleOptions = ['developer', 'project_manager', 'admin'] as const;
+export const employeeRoleOptions = [
+  'super_admin',
+  'admin',
+  'ceo',
+  'cto',
+  'director',
+  'hr_manager',
+  'accountant',
+  'cms_administrator',
+  'project_manager',
+  'business_development',
+  'developer',
+  'frontend_developer',
+  'backend_developer',
+  'fullstack_developer',
+  'mobile_developer',
+  'qa_engineer',
+  'devops_engineer',
+  'ui_ux_designer',
+  'digital_marketing',
+  'business_analyst',
+  'management',
+  'intern',
+  'architect',
+  'client',
+] as const;
 export const employeeDepartmentOptions = [
   'Engineering',
   'Design',
@@ -76,6 +101,17 @@ export const taskFormSchema = z.object({
     .optional()
     .or(z.literal(''))
     .refine((value) => !value || taskStoryPointOptions.includes(value as (typeof taskStoryPointOptions)[number]), 'Story points must be 1, 2, 3, 5, 8, 13, or 21'),
+  estimatedHours: z
+    .string()
+    .optional()
+    .or(z.literal(''))
+    .refine((value) => !value || (!Number.isNaN(Number(value)) && Number(value) >= 0), 'Estimated hours must be a valid positive number'),
+  loggedHours: z
+    .string()
+    .optional()
+    .or(z.literal(''))
+    .refine((value) => !value || (!Number.isNaN(Number(value)) && Number(value) >= 0), 'Logged hours must be a valid positive number'),
+  blockedById: z.string().optional().or(z.literal('')),
   dueDate: optionalDateField,
 });
 
@@ -154,6 +190,9 @@ export const leaveRequestFormSchema = z
     from: z.string().min(1, 'Please select a start date'),
     to: z.string().min(1, 'Please select an end date'),
     reason: z.string().trim().min(10, 'Reason must be at least 10 characters'),
+    attachmentUrl: z.string().optional().or(z.literal('')),
+    attachmentName: z.string().optional().or(z.literal('')),
+    actualHours: z.string().optional().or(z.literal('')),
   })
   .refine((values) => new Date(values.to) >= new Date(values.from), {
     message: 'End date must be on or after start date',
@@ -210,7 +249,7 @@ export const dailyProjectReportFormSchema = z.object({
   id: z.string(),
   projectId: z.number().int().positive('Please select a project'),
   description: z.string().trim().min(1, 'Please describe the work completed'),
-  trackerTime: z.number().int().positive('Tracker time must be greater than 0'),
+  trackerTime: z.number().int().nonnegative('Tracker time must be non-negative'),
   isCoveredWork: z.boolean(),
   isExtraWork: z.boolean(),
 });

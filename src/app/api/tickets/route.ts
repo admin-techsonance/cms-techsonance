@@ -20,6 +20,7 @@ function normalizeSupabaseTicketRow(row: Record<string, unknown>, userMap: Map<s
     description: row.description,
     priority: row.priority,
     status: row.status,
+    attachmentUrl: row.attachment_url ?? null,
     assignedTo,
     createdBy,
     createdAt: row.created_at ?? null,
@@ -117,6 +118,7 @@ export const POST = withApiHandler(async (request, context) => {
     description: payload.description,
     priority: payload.priority ?? 'medium',
     status: payload.status ?? 'open',
+    attachment_url: payload.attachmentUrl ?? null,
     assigned_to: assignedToAuthUserId,
     created_by: actor.authUserId,
     tenant_id: tenantId,
@@ -124,6 +126,22 @@ export const POST = withApiHandler(async (request, context) => {
     updated_at: now,
   }).select('*').single();
   if (error || !data) throw error ?? new Error('Failed to create ticket');
+
+  // Trigger Email API
+  try {
+     const { data: settings } = await supabase.from('helpdesk_settings').select('*').eq('tenant_id', tenantId).maybeSingle();
+     if (settings) {
+         const isIT = payload.subject.includes('[IT SUPPORT]');
+         const targetEmail = isIT ? settings.it_support_email : settings.hr_support_email;
+         if (targetEmail) {
+             // Example dispatch (Integrate with SendGrid/AWS SES here)
+             console.log(`[EMAIL DISPATCH] -> To: ${targetEmail} | Subject: New Ticket ${payload.ticketNumber} | Priority: ${payload.priority}`);
+         }
+     }
+  } catch (e) {
+      console.warn('Failed to route email notification for ticket', e);
+  }
+
   const userMap = await buildLegacyUserIdMap(accessToken, [String(assignedToAuthUserId), actor.authUserId].filter(Boolean));
   return NextResponse.json(normalizeSupabaseTicketRow(data, userMap), { status: 201 });
 }, { requireAuth: true, roles: ['Employee'] });

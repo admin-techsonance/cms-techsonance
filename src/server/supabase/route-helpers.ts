@@ -27,7 +27,13 @@ export async function resolveAuthUserIdFromLegacyUserId(accessToken: string, leg
 }
 
 export async function buildLegacyUserIdMap(accessToken: string, authUserIds: string[], tenantId?: string) {
-  const profiles = await listSupabaseProfilesByAuthIds(authUserIds, { 
+  const sanitizedAuthUserIds = authUserIds.filter(
+    (id) => typeof id === 'string' && id.trim() !== '' && id !== 'null' && id !== 'undefined'
+  );
+  if (!sanitizedAuthUserIds.length) {
+    return new Map<string, number | null>();
+  }
+  const profiles = await listSupabaseProfilesByAuthIds(sanitizedAuthUserIds, { 
     useAdmin: true,
     tenantId
   });
@@ -101,6 +107,9 @@ export function normalizeSupabaseTaskRecord(
     status: row.status,
     priority: row.priority,
     storyPoints: row.story_points ?? null,
+    estimatedHours: row.estimated_hours ?? 0,
+    loggedHours: row.logged_hours ?? 0,
+    blockedById: row.blocked_by_id === null ? null : Number(row.blocked_by_id),
     dueDate: row.due_date ?? null,
     version: row.version ?? 1,
     createdAt: row.created_at,

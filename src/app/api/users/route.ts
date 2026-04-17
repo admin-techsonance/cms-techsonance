@@ -93,7 +93,7 @@ export const GET = withApiHandler(async (request, context) => {
       total: Number(count ?? 0),
     },
   });
-}, { requireAuth: true, roles: ['Admin'] });
+}, { requireAuth: true, roles: ['Employee'] });
 
 export const POST = withApiHandler(async (request, context) => {
   const payload = createUserSchema.parse(await request.json());

@@ -5,9 +5,12 @@ import { taskPrioritySchema, taskStatusSchema, createTaskSchema, updateTaskSchem
 import {
   buildLegacyUserIdMap,
   getAdminRouteSupabase,
+  getCurrentSupabaseActor,
   normalizeSupabaseTaskRecord,
   resolveAuthUserIdFromLegacyUserId,
 } from '@/server/supabase/route-helpers';
+import { ForbiddenError } from '@/server/http/errors';
+import { hasFullAccess, UserRole } from '@/lib/permissions';
 
 const allowedTransitions: Record<string, string[]> = {
   todo: ['in_progress'],
@@ -23,15 +26,28 @@ async function assertSupabaseTaskRelations(tenantId: string, accessToken: string
   sprintId?: number | null;
 }) {
   const supabase = getAdminRouteSupabase();
+  const actor = await getCurrentSupabaseActor(accessToken);
 
   if (input.projectId !== undefined) {
-    const { data } = await supabase
+    const { data: project } = await supabase
       .from('projects')
       .select('id')
       .eq('id', input.projectId)
       .eq('tenant_id', tenantId)
       .single();
-    if (!data) throw new NotFoundError('Project not found');
+    if (!project) throw new NotFoundError('Project not found');
+
+    // Security Guard: Check project membership for non-admins
+    if (!hasFullAccess(actor.role as UserRole)) {
+      const { data: membership } = await supabase
+        .from('project_members')
+        .select('id')
+        .eq('project_id', input.projectId)
+        .eq('user_id', actor.authUserId)
+        .single();
+      
+      if (!membership) throw new ForbiddenError('You are not a member of this project');
+    }
   }
 
   if (input.assignedTo !== undefined) {
@@ -150,6 +166,17 @@ export const POST = withApiHandler(async (request, context) => {
   const supabase = getAdminRouteSupabase();
   const assignedToAuthUserId = await resolveAuthUserIdFromLegacyUserId(accessToken, payload.assignedTo, tenantId);
 
+  if (payload.blockedById) {
+    const { data: blockedTask } = await supabase
+      .from('tasks')
+      .select('id')
+      .eq('id', payload.blockedById)
+      .eq('project_id', payload.projectId)
+      .eq('tenant_id', tenantId)
+      .single();
+    if (!blockedTask) throw new NotFoundError('Dependency task not found or belongs to a different project');
+  }
+
   const { data, error } = await supabase.from('tasks').insert({
     project_id: payload.projectId,
     title: payload.title.trim(),
@@ -158,6 +185,9 @@ export const POST = withApiHandler(async (request, context) => {
     milestone_id: payload.milestoneId ?? null,
     sprint_id: payload.sprintId ?? null,
     story_points: payload.storyPoints ?? null,
+    estimated_hours: payload.estimatedHours ?? 0,
+    logged_hours: payload.loggedHours ?? 0,
+    blocked_by_id: payload.blockedById ?? null,
     due_date: payload.dueDate ?? null,
     status: payload.status ?? 'todo',
     priority: payload.priority ?? 'medium',
@@ -197,6 +227,24 @@ export const PUT = withApiHandler(async (request, context) => {
     sprintId: payload.sprintId,
   });
 
+  if (payload.blockedById) {
+    const { data: blockedTask } = await supabase
+      .from('tasks')
+      .select('id')
+      .eq('id', payload.blockedById)
+      .eq('project_id', existingTask.project_id)
+      .eq('tenant_id', tenantId)
+      .single();
+    if (!blockedTask) throw new NotFoundError('Dependency task not found or belongs to a different project');
+  }
+
+  const finalStatus = payload.status || existingTask.status;
+  const finalLoggedHours = payload.loggedHours ?? existingTask.logged_hours;
+
+  if (finalStatus === 'done' && (!finalLoggedHours || finalLoggedHours <= 0)) {
+    throw new BadRequestError('Mandatory: Please log hours before marking this task as done');
+  }
+
   if (payload.status && payload.status !== existingTask.status) {
     const nextStates = allowedTransitions[existingTask.status] ?? [];
     if (!nextStates.includes(payload.status)) {
@@ -214,7 +262,10 @@ export const PUT = withApiHandler(async (request, context) => {
     ...(assignedToAuthUserId !== undefined ? { assigned_to: assignedToAuthUserId } : {}),
     ...(payload.milestoneId !== undefined ? { milestone_id: payload.milestoneId ?? null } : {}),
     ...(payload.sprintId !== undefined ? { sprint_id: payload.sprintId ?? null } : {}),
+    ...(payload.blockedById !== undefined ? { blocked_by_id: payload.blockedById ?? null } : {}),
     ...(payload.storyPoints !== undefined ? { story_points: payload.storyPoints ?? null } : {}),
+    ...(payload.estimatedHours !== undefined ? { estimated_hours: payload.estimatedHours ?? 0 } : {}),
+    ...(payload.loggedHours !== undefined ? { logged_hours: payload.loggedHours ?? 0 } : {}),
     ...(payload.status !== undefined ? { status: payload.status } : {}),
     ...(payload.priority !== undefined ? { priority: payload.priority } : {}),
     ...(payload.dueDate !== undefined ? { due_date: payload.dueDate ?? null } : {}),

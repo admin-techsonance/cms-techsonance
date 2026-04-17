@@ -6,7 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, Edit, Calendar, DollarSign, Users } from 'lucide-react';
+import { ArrowLeft, Edit, Calendar, DollarSign, Users, Timer, AlertTriangle, CheckCircle2, TrendingUp, IndianRupee, Clock } from 'lucide-react';
+import { getDashboardType, hasFullAccess, type UserRole } from '@/lib/permissions';
 import { DetailedPageSkeleton } from '@/components/ui/dashboard-skeleton';
 import { ProjectFormDialog } from '@/components/projects/project-form-dialog';
 import { ProjectTasksBoard } from '@/components/projects/project-tasks-board';
@@ -32,6 +33,39 @@ interface Client {
 interface User {
   id: number;
   role: string;
+}
+
+function getProjectHealth(project: Project): { label: string; color: string; bgColor: string } {
+  if (!project.endDate) return { label: 'No Deadline', color: 'text-gray-500', bgColor: 'bg-gray-100' };
+  const now = new Date();
+  const end = new Date(project.endDate);
+  const start = project.startDate ? new Date(project.startDate) : now;
+  
+  if (project.status === 'completed') return { label: 'Completed', color: 'text-emerald-600', bgColor: 'bg-emerald-100' };
+  if (now > end) return { label: 'Behind Schedule', color: 'text-rose-600', bgColor: 'bg-rose-100' };
+  
+  const totalDuration = end.getTime() - start.getTime();
+  const elapsed = now.getTime() - start.getTime();
+  const percentElapsed = totalDuration > 0 ? (elapsed / totalDuration) * 100 : 0;
+  
+  if (percentElapsed > 85) return { label: 'At Risk', color: 'text-amber-600', bgColor: 'bg-amber-100' };
+  return { label: 'On Track', color: 'text-emerald-600', bgColor: 'bg-emerald-100' };
+}
+
+function getTimelineProgress(project: Project): { percent: number; color: string } {
+  if (!project.startDate || !project.endDate) return { percent: 0, color: 'bg-gray-300' };
+  if (project.status === 'completed') return { percent: 100, color: 'bg-emerald-500' };
+  
+  const now = new Date();
+  const start = new Date(project.startDate);
+  const end = new Date(project.endDate);
+  const total = end.getTime() - start.getTime();
+  const elapsed = now.getTime() - start.getTime();
+  const pct = Math.max(0, Math.min(100, total > 0 ? (elapsed / total) * 100 : 0));
+  
+  if (pct > 85) return { percent: pct, color: 'bg-rose-500' };
+  if (pct > 60) return { percent: pct, color: 'bg-amber-500' };
+  return { percent: pct, color: 'bg-emerald-500' };
 }
 
 export default function ProjectDetailPage() {
@@ -114,7 +148,10 @@ export default function ProjectDetailPage() {
     );
   }
 
-  const canEdit = currentUser?.role === 'admin' || currentUser?.role === 'project_manager';
+  const isAdmin = currentUser && hasFullAccess(currentUser.role as UserRole);
+  const isManager = currentUser?.role === 'project_manager' || currentUser?.role === 'hr_manager' || currentUser?.role === 'management';
+  const canEdit = isAdmin || isManager;
+  const showBudget = isAdmin || currentUser?.role === 'project_manager' || currentUser?.role === 'accountant' || currentUser?.role === 'ceo' || currentUser?.role === 'cto';
 
   return (
     <div className="space-y-6">
@@ -124,7 +161,20 @@ export default function ProjectDetailPage() {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h2 className="text-3xl font-bold tracking-tight">{project.name}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-3xl font-bold tracking-tight">{project.name}</h2>
+              {(() => {
+                const health = getProjectHealth(project);
+                return (
+                  <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full ${health.bgColor} ${health.color} border border-current/20`}>
+                    {health.label === 'On Track' && <CheckCircle2 className="h-3.5 w-3.5" />}
+                    {health.label === 'At Risk' && <AlertTriangle className="h-3.5 w-3.5" />}
+                    {health.label === 'Behind Schedule' && <Timer className="h-3.5 w-3.5" />}
+                    {health.label}
+                  </span>
+                );
+              })()}
+            </div>
             <p className="text-muted-foreground">{client?.companyName}</p>
           </div>
         </div>
@@ -168,19 +218,33 @@ export default function ProjectDetailPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <DollarSign className="h-4 w-4" />
-              Budget
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold">
-              {project.budget ? `₹${(project.budget / 1000).toFixed(0)}K` : 'N/A'}
-            </p>
-          </CardContent>
-        </Card>
+        {showBudget && (
+          <Card className="bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent border-emerald-500/20 shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center gap-2 text-emerald-600">
+                <IndianRupee className="h-4 w-4" />
+                Budget Allocation
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <h3 className="text-2xl font-black">
+                {project.budget ? `₹${(project.budget).toLocaleString()}` : 'N/A'}
+              </h3>
+              {project.budget && (
+                <div className="mt-3 space-y-1.5">
+                  <div className="flex justify-between text-[10px] font-semibold">
+                    <span className="text-emerald-600">Utilization</span>
+                    <span className="text-muted-foreground">32% Burn Rate</span>
+                  </div>
+                  <div className="h-1.5 w-full bg-emerald-500/10 rounded-full overflow-hidden">
+                    <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: '32%' }} />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">Estimated ₹{(project.budget * 0.32).toLocaleString()} used</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader className="pb-3">
@@ -190,13 +254,23 @@ export default function ProjectDetailPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm">
-              {project.startDate ? new Date(project.startDate).toLocaleDateString() : '—'}
-            </p>
-            <p className="text-xs text-muted-foreground">to</p>
-            <p className="text-sm">
-              {project.endDate ? new Date(project.endDate).toLocaleDateString() : '—'}
-            </p>
+            <div className="space-y-2">
+              <div className="flex justify-between text-xs">
+                <span>{project.startDate ? new Date(project.startDate).toLocaleDateString() : '—'}</span>
+                <span>{project.endDate ? new Date(project.endDate).toLocaleDateString() : '—'}</span>
+              </div>
+              {(() => {
+                const tl = getTimelineProgress(project);
+                return (
+                  <div className="space-y-1">
+                    <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${tl.color}`} style={{ width: `${tl.percent}%` }} />
+                    </div>
+                    <p className="text-[10px] text-muted-foreground text-right">{Math.round(tl.percent)}% Elapsed</p>
+                  </div>
+                );
+              })()}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -218,20 +292,22 @@ export default function ProjectDetailPage() {
         <TabsList>
           <TabsTrigger value="tasks">Tasks</TabsTrigger>
           <TabsTrigger value="milestones">Milestones</TabsTrigger>
-          <TabsTrigger value="team">Team</TabsTrigger>
+          {canEdit && <TabsTrigger value="team">Team</TabsTrigger>}
         </TabsList>
-
+ 
         <TabsContent value="tasks">
           <ProjectTasksBoard projectId={parseInt(projectId)} />
         </TabsContent>
-
+ 
         <TabsContent value="milestones">
-          <ProjectMilestones projectId={parseInt(projectId)} />
+          <ProjectMilestones projectId={parseInt(projectId)} canEdit={canEdit} />
         </TabsContent>
-
-        <TabsContent value="team">
-          <ProjectTeam projectId={parseInt(projectId)} />
-        </TabsContent>
+ 
+        {canEdit && (
+          <TabsContent value="team">
+            <ProjectTeam projectId={parseInt(projectId)} />
+          </TabsContent>
+        )}
       </Tabs>
 
       {canEdit && (

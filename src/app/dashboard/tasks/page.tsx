@@ -5,13 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Calendar, Target, TrendingUp } from 'lucide-react';
-import { StatsSkeleton, KanbanSkeleton } from '@/components/ui/dashboard-skeleton';
+import { Plus, Calendar, Target, TrendingUp, Sparkles, Clock, CheckCircle2, AlertCircle, BarChart3 } from 'lucide-react';
+import { StatsSkeleton, KanbanSkeleton, PageHeaderSkeleton } from '@/components/ui/dashboard-skeleton';
 import { Skeleton } from '@/components/ui/skeleton';
 import { KanbanBoard } from '@/components/tasks/kanban-board';
 import { SprintPlanningDialog } from '@/components/tasks/sprint-planning-dialog';
 import { TaskDialog } from '@/components/tasks/task-dialog';
-import { isDeveloperRole, type UserRole } from '@/lib/permissions';
+import { isEmployeeRole, hasFullAccess, type UserRole } from '@/lib/permissions';
 
 interface Sprint {
   id: number;
@@ -107,7 +107,7 @@ export default function TasksPage() {
         const data = await response.json();
         
         // Filter projects for developers
-        if (currentUser && isDeveloperRole(currentUser.role as UserRole)) {
+        if (currentUser && isEmployeeRole(currentUser.role as UserRole)) {
           const memberResponse = await fetch(`/api/project-members?limit=1000`, {
             headers: {
               'Authorization': `Bearer ${token}`
@@ -225,32 +225,33 @@ export default function TasksPage() {
     ? Math.ceil((new Date(currentSprint.endDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
     : 0;
 
-  const isDeveloper = currentUser && isDeveloperRole(currentUser.role as UserRole);
+  const isEmployee = currentUser && isEmployeeRole(currentUser.role as UserRole);
 
-  if (loading) {
+  if (!currentUser || loading) {
     return (
       <div className="space-y-6">
-        <div className="space-y-2">
-          <Skeleton className="h-8 w-1/4" />
-          <Skeleton className="h-4 w-1/3" />
+        <PageHeaderSkeleton />
+        <div className="flex gap-4">
+          <Skeleton className="h-10 flex-1" animation="pulse" />
+          <Skeleton className="h-10 flex-1" animation="pulse" />
         </div>
-        <StatsSkeleton />
-        <KanbanSkeleton />
+        <StatsSkeleton count={4} />
+        <KanbanSkeleton columns={4} />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <header className="flex justify-between items-center">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Task Board</h2>
+          <h2 className="text-3xl font-bold tracking-tight">Task Workspace</h2>
           <p className="text-muted-foreground">
-            {isDeveloper ? 'View and manage your assigned tasks' : 'Manage tasks with Kanban board and sprint planning'}
+            {isEmployee ? 'Review and manage your assigned responsibilities' : 'System-wide pipeline and sprint coordination'}
           </p>
         </div>
         <div className="flex gap-2">
-          {!isDeveloper && (
+          {!isEmployee && (
             <Button onClick={() => setSprintDialogOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               New Sprint
@@ -261,7 +262,7 @@ export default function TasksPage() {
             New Task
           </Button>
         </div>
-      </div>
+      </header>
 
       <div className="flex gap-4">
         <div className="flex-1">
@@ -269,7 +270,7 @@ export default function TasksPage() {
             value={selectedProject?.toString() || ''}
             onValueChange={(value) => setSelectedProject(parseInt(value))}
           >
-            <SelectTrigger>
+            <SelectTrigger className="bg-card/50 backdrop-blur-sm border-muted/60 h-10">
               <SelectValue placeholder="Select project" />
             </SelectTrigger>
             <SelectContent>
@@ -288,14 +289,14 @@ export default function TasksPage() {
             onValueChange={(value) => setSelectedSprint(value === 'none' ? null : parseInt(value))}
             disabled={!selectedProject || sprints.length === 0}
           >
-            <SelectTrigger>
+            <SelectTrigger className="bg-card/50 backdrop-blur-sm border-muted/60 h-10">
               <SelectValue placeholder={sprints.length === 0 ? 'No sprints available' : 'Select sprint'} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="none">All Tasks (No Sprint)</SelectItem>
+              <SelectItem value="none">Backlog (No Sprint)</SelectItem>
               {sprints.map((sprint) => (
                 <SelectItem key={sprint.id} value={sprint.id.toString()}>
-                  {sprint.name} ({sprint.status})
+                  {sprint.name} ({sprint.status === 'active' ? 'Current' : sprint.status})
                 </SelectItem>
               ))}
             </SelectContent>
@@ -304,95 +305,88 @@ export default function TasksPage() {
       </div>
 
       {currentSprint && (
-        <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <Target className="h-4 w-4" />
-                Sprint Goal
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                {currentSprint.goal || 'No goal set'}
-              </p>
-            </CardContent>
-          </Card>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between px-1">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-amber-500" />
+              Sprint Health & Velocity
+            </h3>
+            <div className="flex items-center gap-4 text-[10px] font-medium text-muted-foreground">
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> {stats.completedTasks} Done</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-500" /> {stats.totalTasks - stats.completedTasks} Pending</span>
+            </div>
+          </div>
+          
+          <div className="grid gap-4 md:grid-cols-4">
+            <Card className="bg-gradient-to-br from-indigo-500/10 via-indigo-500/5 to-transparent border-indigo-500/20 shadow-sm relative overflow-hidden group">
+              <CardContent className="p-5">
+                <div className="flex justify-between items-start">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Sprint Goal</p>
+                    <h4 className="text-sm font-bold truncate max-w-[150px]">{currentSprint.goal || 'No goal set'}</h4>
+                  </div>
+                  <div className="p-2 rounded-lg bg-indigo-500/10 text-indigo-600">
+                    <Target className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-4 h-1 w-full bg-indigo-500/10 rounded-full overflow-hidden">
+                  <div className="h-full bg-indigo-500 rounded-full w-1/3 group-hover:w-1/2 transition-all duration-500" />
+                </div>
+              </CardContent>
+            </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <Calendar className="h-4 w-4" />
-                Duration
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-1">
-                <p className="text-2xl font-bold">
-                  {daysRemaining > 0 ? `${daysRemaining}d` : 'Ended'}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {new Date(currentSprint.startDate).toLocaleDateString()} - {new Date(currentSprint.endDate).toLocaleDateString()}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+            <Card className="bg-gradient-to-br from-rose-500/10 via-rose-500/5 to-transparent border-rose-500/20 shadow-sm relative overflow-hidden group">
+              <CardContent className="p-5">
+                <div className="flex justify-between items-start">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-rose-600">Time Linear</p>
+                    <h4 className="text-2xl font-black">{daysRemaining > 0 ? `${daysRemaining}d` : 'Ended'}</h4>
+                  </div>
+                  <div className="p-2 rounded-lg bg-rose-500/10 text-rose-600">
+                    <Clock className="h-4 w-4" />
+                  </div>
+                </div>
+                <p className="text-[9px] text-muted-foreground mt-1 font-medium italic">Ends {new Date(currentSprint.endDate).toLocaleDateString()}</p>
+              </CardContent>
+            </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <TrendingUp className="h-4 w-4" />
-                Progress
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-1">
-                <p className="text-2xl font-bold">
-                  {stats.totalTasks > 0 ? Math.round((stats.completedTasks / stats.totalTasks) * 100) : 0}%
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {stats.completedTasks} of {stats.totalTasks} tasks
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+            <Card className="bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent border-emerald-500/20 shadow-sm relative overflow-hidden group">
+              <CardContent className="p-5">
+                <div className="flex justify-between items-start">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Task Velocity</p>
+                    <h4 className="text-2xl font-black">{stats.totalTasks > 0 ? Math.round((stats.completedTasks / stats.totalTasks) * 100) : 0}%</h4>
+                  </div>
+                  <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600">
+                    <BarChart3 className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center justify-between text-[10px] font-bold">
+                  <span className="text-emerald-600">{stats.completedTasks} Closed</span>
+                  <span className="text-muted-foreground">/ {stats.totalTasks} Total</span>
+                </div>
+              </CardContent>
+            </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Story Points</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-1">
-                <p className="text-2xl font-bold">
-                  {stats.completedPoints} / {stats.totalPoints}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {stats.totalPoints > 0 ? Math.round((stats.completedPoints / stats.totalPoints) * 100) : 0}% completed
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+            <Card className="bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent border-amber-500/20 shadow-sm relative overflow-hidden group">
+              <CardContent className="p-5">
+                <div className="flex justify-between items-start">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-amber-600">Capacity Load</p>
+                    <h4 className="text-2xl font-black">{stats.completedPoints} / {stats.totalPoints}</h4>
+                  </div>
+                  <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600">
+                    <TrendingUp className="h-4 w-4" />
+                  </div>
+                </div>
+                <p className="text-[9px] text-muted-foreground mt-1 font-medium">{stats.totalPoints > 0 ? Math.round((stats.completedPoints / stats.totalPoints) * 100) : 0}% Delivered</p>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       )}
 
-      {!currentSprint && selectedProject && !isDeveloper && (
-        <Card>
-          <CardHeader>
-            <CardTitle>No Sprint Selected</CardTitle>
-            <CardDescription>
-              Create a new sprint or select an existing one to start managing tasks.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button onClick={() => setSprintDialogOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Create First Sprint
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {selectedProject && (
+      {selectedProject ? (
         <KanbanBoard
           key={refreshKey}
           sprintId={selectedSprint}
@@ -400,20 +394,19 @@ export default function TasksPage() {
           onTaskClick={handleTaskClick}
           onCreateTask={handleCreateTask}
         />
-      )}
-
-      {!selectedProject && (
-        <Card>
-          <CardHeader>
-            <CardTitle>No Project Selected</CardTitle>
+      ) : (
+        <Card className="border-dashed bg-card/30">
+          <CardHeader className="flex flex-col items-center justify-center py-12 text-center">
+            <Target className="h-12 w-12 text-muted-foreground opacity-20 mb-4" />
+            <CardTitle>Welcome to the Task Workspace</CardTitle>
             <CardDescription>
-              {isDeveloper ? 'No projects assigned to you yet.' : 'Please select a project to view and manage tasks.'}
+              {isEmployee ? 'Select an assigned project above to start tracking your tasks.' : 'Please select a project to manage sprints and development tasks.'}
             </CardDescription>
           </CardHeader>
         </Card>
       )}
 
-      {!isDeveloper && (
+      {!isEmployee && (
         <SprintPlanningDialog
           open={sprintDialogOpen}
           onOpenChange={setSprintDialogOpen}

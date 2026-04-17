@@ -4,8 +4,10 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Plus, Loader2 } from 'lucide-react';
+import { Plus, Loader2, Calendar as CalendarIcon, Clock, ChevronRight, AlertCircle, Timer, BarChart } from 'lucide-react';
+import { isEmployeeRole, type UserRole } from '@/lib/permissions';
 import { toast } from 'sonner';
+import { KanbanSkeleton } from '@/components/ui/dashboard-skeleton';
 
 interface Task {
   id: number;
@@ -18,6 +20,9 @@ interface Task {
   priority: 'low' | 'medium' | 'high';
   storyPoints: number | null;
   dueDate: string | null;
+  estimatedHours: number;
+  loggedHours: number;
+  blockedById: number | null;
 }
 
 interface User {
@@ -34,16 +39,36 @@ interface KanbanBoardProps {
 }
 
 const STATUS_COLUMNS = [
-  { id: 'todo', title: 'To Do', color: 'bg-slate-100 dark:bg-slate-800' },
-  { id: 'in_progress', title: 'In Progress', color: 'bg-blue-50 dark:bg-blue-950' },
-  { id: 'review', title: 'Review', color: 'bg-purple-50 dark:bg-purple-950' },
-  { id: 'done', title: 'Done', color: 'bg-green-50 dark:bg-green-950' },
+  { id: 'todo', title: 'To Do', color: 'bg-slate-500/5', borderColor: 'border-slate-200' },
+  { id: 'in_progress', title: 'In Progress', color: 'bg-blue-500/5', borderColor: 'border-blue-200' },
+  { id: 'review', title: 'Review', color: 'bg-purple-500/5', borderColor: 'border-purple-200' },
+  { id: 'done', title: 'Done', color: 'bg-emerald-500/5', borderColor: 'border-emerald-200' },
 ] as const;
 
 export function KanbanBoard({ sprintId, projectId, onTaskClick, onCreateTask }: KanbanBoardProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [draggedTask, setDraggedTask] = useState<Task | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ id: number; role: string } | null>(null);
+
+  useEffect(() => {
+    fetchCurrentUser();
+  }, []);
+
+  const fetchCurrentUser = async () => {
+    try {
+      const token = localStorage.getItem('session_token');
+      const response = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCurrentUser(data.user);
+      }
+    } catch (error) {
+      console.error('Error fetching current user:', error);
+    }
+  };
 
   useEffect(() => {
     fetchTasks();
@@ -73,7 +98,14 @@ export function KanbanBoard({ sprintId, projectId, onTaskClick, onCreateTask }: 
 
       if (response.ok) {
         const data = await response.json();
-        setTasks(data);
+        const apiTasks = Array.isArray(data) ? data : data.data || [];
+        
+        // Scope tasks for employees
+        if (currentUser && isEmployeeRole(currentUser.role as UserRole)) {
+          setTasks(apiTasks.filter((t: any) => t.assignedTo === currentUser.id));
+        } else {
+          setTasks(apiTasks);
+        }
       }
     } catch (error) {
       console.error('Error fetching tasks:', error);
@@ -141,11 +173,7 @@ export function KanbanBoard({ sprintId, projectId, onTaskClick, onCreateTask }: 
   };
 
   if (loading) {
-    return (
-      <div className="flex justify-center items-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <KanbanSkeleton />;
   }
 
   return (
@@ -161,7 +189,7 @@ export function KanbanBoard({ sprintId, projectId, onTaskClick, onCreateTask }: 
             onDragOver={handleDragOver}
             onDrop={() => handleDrop(column.id)}
           >
-            <Card className={`${column.color} flex-1`}>
+            <Card className={`${column.color} border-dashed ${column.borderColor} flex-1 min-h-[500px]`}>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-medium">
@@ -191,7 +219,7 @@ export function KanbanBoard({ sprintId, projectId, onTaskClick, onCreateTask }: 
                         draggable
                         onDragStart={() => handleDragStart(task)}
                         onClick={() => onTaskClick?.(task)}
-                        className={`cursor-move hover:shadow-md transition-shadow ${getPriorityColor(task.priority)}`}
+                        className={`cursor-move hover:shadow-lg transition-all border-none bg-card/60 backdrop-blur-sm group ${getPriorityColor(task.priority)}`}
                       >
                         <CardContent className="p-4 space-y-2">
                           <div className="flex items-start justify-between gap-2">
@@ -212,15 +240,29 @@ export function KanbanBoard({ sprintId, projectId, onTaskClick, onCreateTask }: 
                           )}
 
                           <div className="flex items-center justify-between gap-2 pt-2">
-                            {task.dueDate && (
-                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                <Plus className="h-3 w-3" />
-                                {new Date(task.dueDate).toLocaleDateString('en-US', {
-                                  month: 'short',
-                                  day: 'numeric',
-                                })}
-                              </div>
-                            )}
+                            <div className="flex flex-wrap gap-2">
+                              {task.dueDate && (
+                                <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                                  <CalendarIcon className="h-3 w-3" />
+                                  {new Date(task.dueDate).toLocaleDateString('en-US', {
+                                    month: 'short',
+                                    day: 'numeric',
+                                  })}
+                                </div>
+                              )}
+                              {(task.estimatedHours > 0 || task.loggedHours > 0) && (
+                                <div className="flex items-center gap-1 text-[10px] text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">
+                                  <Timer className="h-3 w-3" />
+                                  <span>{task.loggedHours}/{task.estimatedHours}h</span>
+                                </div>
+                              )}
+                              {task.blockedById && (
+                                <div className="flex items-center gap-1 text-[10px] text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded font-bold">
+                                  <AlertCircle className="h-3 w-3" />
+                                  <span>Blocked</span>
+                                </div>
+                              )}
+                            </div>
                           </div>
 
                           <Badge

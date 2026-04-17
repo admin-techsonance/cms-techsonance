@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { getSupabaseBrowserClient } from '@/lib/supabase/client';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Plus, Loader2, MessageSquare, X, AlertCircle, CheckCircle2, Clock, Eye, Edit, Trash2, Users, Search } from 'lucide-react';
-import { StatsSkeleton, TableSkeleton } from '@/components/ui/dashboard-skeleton';
+import { StatsSkeleton, TableSkeleton, PageHeaderSkeleton, MetricCardGridSkeleton } from '@/components/ui/dashboard-skeleton';
 import { toast } from 'sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -52,10 +53,10 @@ interface Ticket {
   subject: string;
   description: string;
   priority: string;
-  status: string;
   createdAt: string;
   updatedAt: string;
   clientId: number;
+  attachmentUrl?: string | null;
 }
 
 interface Employee {
@@ -92,9 +93,59 @@ export default function HelpDeskPage() {
   const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(0);
   const pageSize = 10;
-  
+
   const [editingTicket, setEditingTicket] = useState<Ticket | null>(null);
   const [deletingTicket, setDeletingTicket] = useState<Ticket | null>(null);
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
+  
+  // Chat / Comments State
+  const [ticketComments, setTicketComments] = useState<any[]>([]);
+  const [newCommentMessage, setNewCommentMessage] = useState('');
+  const [loadingComments, setLoadingComments] = useState(false);
+  const [submittingComment, setSubmittingComment] = useState(false);
+  const [hrSupportEmail, setHrSupportEmail] = useState('');
+  const [itSupportEmail, setItSupportEmail] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
+
+  const fetchSettings = async () => {
+    try {
+      const token = localStorage.getItem('session_token');
+      const res = await fetch('/api/tickets/settings', { headers: { 'Authorization': `Bearer ${token}` } });
+      if (res.ok) {
+        const data = await res.json();
+        setItSupportEmail(data.it_support_email || '');
+        setHrSupportEmail(data.hr_support_email || '');
+      }
+    } catch (e) {
+      console.error('Failed to fetch helpdesk settings:', e);
+    }
+  };
+
+  const saveSettings = async () => {
+    setSavingSettings(true);
+    try {
+      const token = localStorage.getItem('session_token');
+      const res = await fetch('/api/tickets/settings', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ it_support_email: itSupportEmail, hr_support_email: hrSupportEmail })
+      });
+      if (res.ok) toast.success('Routing settings saved successfully');
+      else toast.error('Failed to save settings');
+    } catch {
+       toast.error('An error occurred while saving routing settings');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  // Run fetchSettings if Admin
+  useEffect(() => {
+    if (currentUser && hasFullAccess(currentUser.role as UserRole)) {
+      fetchSettings();
+    }
+  }, [currentUser]);
+
   const createTicketForm = useForm<HelpDeskTicketFormValues>({
     resolver: zodResolver(helpDeskTicketFormSchema),
     defaultValues: {
@@ -295,9 +346,55 @@ export default function HelpDeskPage() {
     toast.success('Filters applied successfully');
   };
 
+  const fetchComments = async (ticketId: number) => {
+    setLoadingComments(true);
+    try {
+      const token = localStorage.getItem('session_token');
+      const res = await fetch(`/api/tickets/comments?ticketId=${ticketId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTicketComments(data.comments || []);
+      }
+    } catch (e) {
+      console.error('Failed to fetch comments', e);
+    } finally {
+      setLoadingComments(false);
+    }
+  };
+
+  const handlePostComment = async () => {
+    if (!newCommentMessage.trim() || !selectedTicket) return;
+    setSubmittingComment(true);
+    try {
+      const token = localStorage.getItem('session_token');
+      const res = await fetch(`/api/tickets/comments`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ ticketId: selectedTicket.id, message: newCommentMessage })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTicketComments([...ticketComments, data.comment]);
+        setNewCommentMessage('');
+      } else {
+        toast.error('Failed to post comment');
+      }
+    } catch (e) {
+      toast.error('An error occurred');
+    } finally {
+      setSubmittingComment(false);
+    }
+  };
+
   const handleViewTicket = (ticket: Ticket) => {
     setSelectedTicket(ticket);
     setShowViewDialog(true);
+    fetchComments(ticket.id);
   };
 
   const handleEditTicket = (ticket: Ticket) => {
@@ -398,7 +495,36 @@ export default function HelpDeskPage() {
         return;
       }
 
-      const ticketNumber = generateTicketNumber();
+      let uploadedAttachmentUrl: string | null = null;
+      if (attachmentFile) {
+         try {
+            const supabase = getSupabaseBrowserClient();
+            const fileExt = attachmentFile.name.split('.').pop();
+            const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+            
+            const { data: uploadData, error: uploadError } = await supabase.storage
+               .from('helpdesk_attachments')
+               .upload(`tickets/${fileName}`, attachmentFile, {
+                  cacheControl: '3600',
+                  upsert: false
+               });
+               
+            if (uploadError) {
+               console.error('Storage Upload Error:', uploadError);
+               toast.error('Failed to upload file attachment.');
+               setLoading(false);
+               return;
+            }
+            
+            const { data: publicUrlData } = supabase.storage
+               .from('helpdesk_attachments')
+               .getPublicUrl(`tickets/${fileName}`);
+               
+            uploadedAttachmentUrl = publicUrlData.publicUrl;
+         } catch (e) {
+            console.error('Failed to process attachment', e);
+         }
+      }
 
       const response = await fetch('/api/tickets', {
         method: 'POST',
@@ -412,6 +538,7 @@ export default function HelpDeskPage() {
           description: values.description.trim(),
           priority: values.priority,
           status: 'open',
+          attachmentUrl: uploadedAttachmentUrl,
         }),
       });
 
@@ -469,18 +596,20 @@ export default function HelpDeskPage() {
 
   const isAdmin = currentUser && hasFullAccess(currentUser.role as UserRole);
 
+  if (loading || !user) {
+    return (
+      <div className="space-y-6">
+        <PageHeaderSkeleton />
+        <MetricCardGridSkeleton count={4} />
+        <div className="mt-8">
+          <TableSkeleton columns={6} rows={8} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-3xl font-bold tracking-tight">
-          {isAdmin ? 'Help Desk Management' : 'Help Desk'}
-        </h2>
-        <p className="text-muted-foreground">
-          {isAdmin 
-            ? 'Manage all employee support tickets and track resolution progress'
-            : 'Submit and track your support requests'}
-        </p>
-      </div>
 
       {/* Statistics Cards */}
       <div className="grid gap-4 md:grid-cols-4">
@@ -548,8 +677,17 @@ export default function HelpDeskPage() {
         )}
       </div>
 
-      <Card>
-        <CardHeader>
+      <Tabs defaultValue="tickets" className="space-y-4">
+        {isAdmin && (
+          <TabsList>
+            <TabsTrigger value="tickets">All Tickets</TabsTrigger>
+            <TabsTrigger value="settings">Support Routing Settings</TabsTrigger>
+          </TabsList>
+        )}
+        
+        <TabsContent value="tickets" className="space-y-4 mt-0">
+             <Card>
+               <CardHeader>
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>Support Tickets</CardTitle>
@@ -564,7 +702,7 @@ export default function HelpDeskPage() {
                   New Ticket
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-2xl">
+              <DialogContent className="sm:max-w-[800px] md:max-w-[4xl] max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Create Support Ticket</DialogTitle>
                   <DialogDescription>
@@ -664,6 +802,31 @@ export default function HelpDeskPage() {
                   </FormItem>
                     )}
                   />
+                  <div className="space-y-2">
+                    <Label>Screenshot / Attachment (Optional)</Label>
+                    <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-6 flex flex-col items-center justify-center text-center">
+                       <Input 
+                          type="file" 
+                          accept=".jpg,.jpeg,.png"
+                          className="max-w-xs cursor-pointer"
+                          onChange={(e) => {
+                             const file = e.target.files?.[0];
+                             if (!file) {
+                                setAttachmentFile(null);
+                                return;
+                             }
+                             if (file.size > 1048576) {
+                                toast.error('File must be smaller than 1MB');
+                                e.target.value = '';
+                                setAttachmentFile(null);
+                                return;
+                             }
+                             setAttachmentFile(file);
+                          }}
+                       />
+                       <p className="text-xs text-muted-foreground mt-2">JPEG or PNG only. Max 1MB.</p>
+                    </div>
+                  </div>
                 </div>
 
                 <DialogFooter>
@@ -856,11 +1019,48 @@ export default function HelpDeskPage() {
           </div>
         </CardContent>
       </Card>
+        </TabsContent>
+
+        {isAdmin && (
+          <TabsContent value="settings" className="space-y-4 mt-0">
+            <Card>
+              <CardHeader>
+                <CardTitle>Email Routing Configuration</CardTitle>
+                <CardDescription>Configure which emails receive notifications for new IT or HR support tickets.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 max-w-xl">
+                <div className="space-y-2">
+                  <Label>IT Support Email</Label>
+                  <Input 
+                    placeholder="it@example.com" 
+                    value={itSupportEmail} 
+                    onChange={(e) => setItSupportEmail(e.target.value)} 
+                  />
+                  <p className="text-xs text-muted-foreground">Used for tickets created under 'IT Support' category.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>HR Support Email</Label>
+                  <Input 
+                    placeholder="hr@example.com" 
+                    value={hrSupportEmail} 
+                    onChange={(e) => setHrSupportEmail(e.target.value)} 
+                  />
+                  <p className="text-xs text-muted-foreground">Used for tickets created under 'HR Support' category.</p>
+                </div>
+                <Button onClick={saveSettings} disabled={savingSettings}>
+                  {savingSettings && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Settings
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
+      </Tabs>
 
       {/* View Ticket Dialog */}
       <Dialog open={showViewDialog} onOpenChange={setShowViewDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[90vw] md:max-w-[1100px] h-auto max-h-[95vh] overflow-hidden flex flex-col p-0">
+          <DialogHeader className="px-6 py-4 border-b">
             <DialogTitle>Ticket Details</DialogTitle>
             <DialogDescription>
               View complete information about this support ticket
@@ -868,54 +1068,112 @@ export default function HelpDeskPage() {
           </DialogHeader>
           
           {selectedTicket && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Ticket Number</Label>
-                  <p className="font-medium">{selectedTicket.ticketNumber}</p>
+            <div className="flex h-full flex-col md:flex-row overflow-hidden flex-1 border-t">
+              {/* LEFT PANE: Ticket Details */}
+              <div className="w-full md:w-1/2 p-6 border-r overflow-y-auto space-y-6 bg-muted/20">
+                <div className="flex items-center justify-between">
+                   <h3 className="text-xl font-bold">{selectedTicket.subject}</h3>
+                   <div className="flex gap-2">
+                       {getStatusBadge(selectedTicket.status)}
+                       {getPriorityBadge(selectedTicket.priority)}
+                   </div>
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Status</Label>
-                  <div>{getStatusBadge(selectedTicket.status)}</div>
+
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="space-y-1">
+                    <span className="text-muted-foreground block text-xs">Ticket Number</span>
+                    <span className="font-medium">{selectedTicket.ticketNumber}</span>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-muted-foreground block text-xs">Created At</span>
+                    <span>{formatDateOrdinal(selectedTicket.createdAt)}</span>
+                  </div>
                 </div>
+
+                <div className="space-y-2">
+                  <span className="text-muted-foreground block text-xs font-medium uppercase">Description</span>
+                  <div className="p-4 bg-background border rounded-lg shadow-sm text-sm whitespace-pre-wrap">
+                    {selectedTicket.description}
+                  </div>
+                </div>
+
+                {selectedTicket.attachmentUrl && (
+                  <div className="space-y-2">
+                    <span className="text-muted-foreground block text-xs font-medium uppercase">Attachment</span>
+                    <div className="border rounded-lg overflow-hidden bg-background">
+                       <a href={selectedTicket.attachmentUrl} target="_blank" rel="noopener noreferrer">
+                         <img src={selectedTicket.attachmentUrl} alt="Ticket Attachment" className="max-w-full h-auto object-cover max-h-[300px] w-full hover:opacity-90 transition-opacity" />
+                       </a>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Priority</Label>
-                  <div>{getPriorityBadge(selectedTicket.priority)}</div>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-muted-foreground">Created</Label>
-                  <p>{formatDateOrdinal(selectedTicket.createdAt)}</p>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-muted-foreground">Subject</Label>
-                <p className="font-medium">{selectedTicket.subject}</p>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-muted-foreground">Description</Label>
-                <div className="p-4 bg-muted rounded-lg">
-                  <p className="whitespace-pre-wrap">{selectedTicket.description}</p>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label className="text-muted-foreground">Last Updated</Label>
-                <p>{formatDateOrdinal(selectedTicket.updatedAt)}</p>
+              {/* RIGHT PANE: Chat Interface */}
+              <div className="w-full md:w-1/2 flex flex-col h-full bg-background relative">
+                 <div className="p-4 border-b bg-muted/40 font-medium flex items-center">
+                    <MessageSquare className="w-4 h-4 mr-2" />
+                    Ticket Comments
+                 </div>
+                 
+                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {loadingComments ? (
+                       <div className="flex justify-center items-center h-full">
+                          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                       </div>
+                    ) : ticketComments.length === 0 ? (
+                       <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                          <MessageSquare className="w-12 h-12 mb-2 opacity-20" />
+                          <p>No comments yet.</p>
+                       </div>
+                    ) : (
+                       ticketComments.map((comment) => {
+                          const isOwn = comment.legacy_user_id === userId;
+                          return (
+                             <div key={comment.id} className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
+                                <div className="flex items-center gap-2 mb-1">
+                                   <span className="text-xs font-medium text-foreground">
+                                      {isOwn ? 'You' : `${comment.users?.first_name} ${comment.users?.last_name}`}
+                                   </span>
+                                   {!isOwn && comment.users?.role !== 'Employee' && (
+                                      <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">Support</Badge>
+                                   )}
+                                   <span className="text-[10px] text-muted-foreground">
+                                      {new Date(comment.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                   </span>
+                                </div>
+                                <div className={`relative px-4 py-2 rounded-2xl max-w-[85%] text-sm ${isOwn ? 'bg-primary text-primary-foreground rounded-br-sm' : 'bg-muted rounded-bl-sm'}`}>
+                                   <p className="whitespace-pre-wrap">{comment.message}</p>
+                                </div>
+                             </div>
+                          );
+                       })
+                    )}
+                 </div>
+                 
+                 <div className="p-4 border-t bg-background">
+                    <div className="flex space-x-2">
+                       <Input
+                         placeholder="Type a response..."
+                         value={newCommentMessage}
+                         onChange={(e) => setNewCommentMessage(e.target.value)}
+                         onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                               e.preventDefault();
+                               handlePostComment();
+                            }
+                         }}
+                       />
+                       <Button onClick={handlePostComment} disabled={submittingComment || !newCommentMessage.trim()}>
+                          {submittingComment ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Send'}
+                       </Button>
+                    </div>
+                 </div>
               </div>
             </div>
           )}
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowViewDialog(false)}>
-              <X className="mr-2 h-4 w-4" />
-              Close
-            </Button>
-          </DialogFooter>
+
         </DialogContent>
       </Dialog>
 

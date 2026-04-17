@@ -27,6 +27,7 @@ import { taskPriorityOptions, taskStatusOptions, type TaskFormValues } from '@/l
 import { Loader2 } from 'lucide-react';
 import { z } from 'zod';
 import { toast } from 'sonner';
+import { isEmployeeRole, type UserRole } from '@/lib/permissions';
 
 interface TaskFormDialogProps {
   open: boolean;
@@ -62,6 +63,8 @@ export function TaskFormDialog({
 }: TaskFormDialogProps) {
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<User[]>([]);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [projectMemberIds, setProjectMemberIds] = useState<number[]>([]);
   const form = useForm<ProjectTaskFormValues>({
     resolver: zodResolver(projectTaskFormSchema),
     defaultValues: {
@@ -104,11 +107,41 @@ export function TaskFormDialog({
 
   const fetchUsers = async () => {
     try {
-      const response = await fetch('/api/users?limit=100');
-      if (response.ok) {
-        const data = await response.json();
+      const token = localStorage.getItem('session_token');
+      const [usersRes, meRes] = await Promise.all([
+        fetch('/api/users?limit=100', {
+          headers: { Authorization: `Bearer ${token}` }
+        }),
+        fetch('/api/auth/me', {
+          headers: { Authorization: `Bearer ${token}` }
+        })
+      ]);
+
+      let availableUsers: User[] = [];
+      let user: any = null;
+
+      if (meRes.ok) {
+        const data = await meRes.json();
+        user = data.user;
+        setCurrentUser(user);
+      }
+
+      if (usersRes.ok) {
+        const data = await usersRes.json();
         const usersData = Array.isArray(data) ? data : data.data ?? [];
-        setUsers(usersData.filter((u: any) => u.role !== 'client'));
+        availableUsers = usersData.filter((u: any) => u.role !== 'client');
+        setUsers(availableUsers);
+
+        // If employee, also fetch members for this project to filter
+        if (user && isEmployeeRole(user.role as UserRole)) {
+          const membersRes = await fetch(`/api/project-members?projectId=${projectId}&limit=1000`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (membersRes.ok) {
+            const members = await membersRes.json();
+            setProjectMemberIds(members.map((m: any) => m.userId));
+          }
+        }
       }
     } catch {
       toast.error('Failed to load team members');
@@ -206,26 +239,33 @@ export function TaskFormDialog({
             <FormField
               control={form.control}
               name="assignedTo"
-              render={({ field }) => (
-            <FormItem className="space-y-2">
-              <Label htmlFor="assignedTo">Assign To *</Label>
-              <Select value={field.value} onValueChange={field.onChange}>
-                <FormControl>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select team member" />
-                </SelectTrigger>
-                </FormControl>
-                <SelectContent>
-                  {users.map((user) => (
-                    <SelectItem key={user.id} value={user.id.toString()}>
-                      {user.firstName} {user.lastName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FormMessage className="text-xs" />
-            </FormItem>
-              )}
+              render={({ field }) => {
+                const isEmployee = currentUser && isEmployeeRole(currentUser.role as UserRole);
+                const filteredUsers = isEmployee && projectMemberIds.length > 0
+                  ? users.filter(u => projectMemberIds.includes(u.id))
+                  : users;
+
+                return (
+                  <FormItem className="space-y-2">
+                    <Label htmlFor="assignedTo">Assign To *</Label>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select team member" />
+                      </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {filteredUsers.map((user) => (
+                          <SelectItem key={user.id} value={user.id.toString()}>
+                            {user.firstName} {user.lastName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage className="text-xs" />
+                  </FormItem>
+                );
+              }}
             />
 
             <FormField

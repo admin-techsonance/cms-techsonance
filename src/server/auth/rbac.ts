@@ -4,11 +4,16 @@ import { ROLE_HIERARCHY, type AppRole } from '@/server/auth/constants';
 export function normalizeAppRole(role: string | null | undefined): AppRole {
   switch ((role ?? '').toLowerCase()) {
     case 'superadmin':
+    case 'super_admin':
       return 'SuperAdmin';
     case 'admin':
     case 'hr_manager':
     case 'cms_administrator':
     case 'management':
+    case 'ceo':
+    case 'cto':
+    case 'director':
+    case 'accountant':
       return 'Admin';
     case 'manager':
     case 'project_manager':

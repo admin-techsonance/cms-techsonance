@@ -3,6 +3,7 @@ import { withApiHandler } from '@/server/http/handler';
 import { BadRequestError, ForbiddenError, NotFoundError } from '@/server/http/errors';
 import { createDailyReportProjectSchema, updateDailyReportProjectSchema } from '@/server/validation/reports';
 import { getCurrentSupabaseActor, getAdminRouteSupabase } from '@/server/supabase/route-helpers';
+import { enforceRBACPermission } from '@/server/rbac/auth-integration';
 
 async function assertSupabaseDailyReportAccess(dailyReportId: number, authUserId: string, isAdminLike: boolean, tenantId: string) {
   const supabase = getAdminRouteSupabase();
@@ -34,6 +35,9 @@ function normalizeSupabaseDailyReportProjectRow(row: Record<string, any>) {
 
 export const GET = withApiHandler(async (request, context) => {
   const user = context.auth!.user;
+  // Allow authenticated users to read daily report projects based on their role
+  // Admin-like roles can see all projects, employees can see their own
+  
   const isAdminLike = user.role === 'Admin' || user.role === 'SuperAdmin' || user.role === 'Manager';
   const searchParams = new URL(request.url).searchParams;
   const id = searchParams.get('id');
@@ -97,6 +101,9 @@ export const GET = withApiHandler(async (request, context) => {
 }, { requireAuth: true, roles: ['Employee'] });
 
 export const POST = withApiHandler(async (request, context) => {
+  // Allow authenticated users to create their own daily report projects
+  // RBAC permission check removed - employees can create their own report projects
+  
   const payload = createDailyReportProjectSchema.parse(await request.json());
 
   const accessToken = context.auth?.accessToken;
@@ -106,20 +113,20 @@ export const POST = withApiHandler(async (request, context) => {
   const { data: report } = await supabase
     .from('daily_reports')
     .select('id')
-    .eq('id', payload.reportId)
+    .eq('id', payload.dailyReportId)
     .eq('tenant_id', tenantId)
     .single();
   if (!report) throw new NotFoundError('Daily report not found');
   const now = new Date().toISOString();
   const { data: created, error } = await supabase.from('daily_report_projects').insert({
-    report_id: payload.reportId,
-    project_id: payload.projectId ?? null,
-    activity: payload.activity.trim(),
-    hours: payload.hours,
-    status: 'completed',
+    daily_report_id: payload.dailyReportId,
+    project_id: payload.projectId,
+    description: payload.description.trim(),
+    tracker_time: payload.trackerTime,
+    is_covered_work: payload.isCoveredWork ?? false,
+    is_extra_work: payload.isExtraWork ?? false,
     tenant_id: tenantId,
     created_at: now,
-    updated_at: now,
   }).select('*').single();
   if (error || !created) throw error ?? new Error('Failed to create daily report project entry');
   return NextResponse.json(normalizeSupabaseDailyReportProjectRow(created), { status: 201 });
@@ -143,10 +150,10 @@ export const PUT = withApiHandler(async (request, context) => {
   if (!existing) throw new NotFoundError('Daily report project entry not found');
   const { data: updated, error } = await supabase.from('daily_report_projects').update({
     ...(payload.projectId !== undefined ? { project_id: payload.projectId } : {}),
-    ...(payload.activity !== undefined ? { activity: payload.activity.trim() } : {}),
-    ...(payload.hours !== undefined ? { hours: payload.hours } : {}),
-    ...(payload.status !== undefined ? { status: payload.status } : {}),
-    updated_at: new Date().toISOString(),
+    ...(payload.description !== undefined ? { description: payload.description.trim() } : {}),
+    ...(payload.trackerTime !== undefined ? { tracker_time: payload.trackerTime } : {}),
+    ...(payload.isCoveredWork !== undefined ? { is_covered_work: payload.isCoveredWork } : {}),
+    ...(payload.isExtraWork !== undefined ? { is_extra_work: payload.isExtraWork } : {}),
   })
   .eq('id', id)
   .eq('tenant_id', tenantId)
@@ -155,6 +162,7 @@ export const PUT = withApiHandler(async (request, context) => {
   if (error || !updated) throw error ?? new Error('Failed to update daily report project entry');
   return NextResponse.json(normalizeSupabaseDailyReportProjectRow(updated));
 }, { requireAuth: true, roles: ['Employee'] });
+
 
 export const DELETE = withApiHandler(async (request, context) => {
   const id = Number(new URL(request.url).searchParams.get('id'));

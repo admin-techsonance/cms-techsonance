@@ -461,6 +461,88 @@ paths:
           $ref: "#/components/responses/UnprocessableResponse"
         500:
           $ref: "#/components/responses/InternalErrorResponse"
+  /api/attendance/requests:
+    get:
+      tags:
+        - attendance
+      summary: "Retrieve resource for /api/attendance/requests"
+      description: "Auto-generated documentation for GET /api/attendance/requests."
+      security:
+        - 
+          bearerAuth: []
+      parameters:
+        - 
+          name: "limit"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+          example: 10
+        - 
+          name: "offset"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 0
+          example: 0
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+    patch:
+      tags:
+        - attendance
+      summary: "Partially update resource for /api/attendance/requests"
+      description: "Auto-generated documentation for PATCH /api/attendance/requests."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "PATCH request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
   /api/attendance:
     get:
       tags:
@@ -510,6 +592,86 @@ paths:
         - attendance
       summary: "Create resource for /api/attendance"
       description: "Auto-generated documentation for POST /api/attendance."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "POST request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+  /api/attendance/settings:
+    get:
+      tags:
+        - attendance
+      summary: "Retrieve resource for /api/attendance/settings"
+      description: "Auto-generated documentation for GET /api/attendance/settings."
+      security:
+        - 
+          bearerAuth: []
+      parameters:
+        - 
+          name: "limit"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+          example: 10
+        - 
+          name: "offset"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 0
+          example: 0
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+    post:
+      tags:
+        - attendance
+      summary: "Create resource for /api/attendance/settings"
+      description: "Auto-generated documentation for POST /api/attendance/settings."
       security:
         - 
           bearerAuth: []
@@ -1471,6 +1633,57 @@ paths:
           $ref: "#/components/responses/UnprocessableResponse"
         500:
           $ref: "#/components/responses/InternalErrorResponse"
+  /api/clients/{id}/finance:
+    get:
+      tags:
+        - clients
+      summary: "Retrieve resource for /api/clients/{id}/finance"
+      description: "Auto-generated documentation for GET /api/clients/{id}/finance."
+      security:
+        - 
+          bearerAuth: []
+      parameters:
+        - 
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+          description: "Path parameter id"
+        - 
+          name: "limit"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+          example: 10
+        - 
+          name: "offset"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 0
+          example: 0
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
   /api/clients:
     get:
       tags:
@@ -2145,6 +2358,94 @@ paths:
       responses:
         200:
           $ref: "#/components/responses/SuccessResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+  /api/dashboard/stats/admin:
+    get:
+      tags:
+        - dashboard
+      summary: "Retrieve resource for /api/dashboard/stats/admin"
+      description: "Auto-generated documentation for GET /api/dashboard/stats/admin."
+      security:
+        - 
+          bearerAuth: []
+      parameters:
+        - 
+          name: "limit"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+          example: 10
+        - 
+          name: "offset"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 0
+          example: 0
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+  /api/dashboard/stats/employee:
+    get:
+      tags:
+        - dashboard
+      summary: "Retrieve resource for /api/dashboard/stats/employee"
+      description: "Auto-generated documentation for GET /api/dashboard/stats/employee."
+      security:
+        - 
+          bearerAuth: []
+      parameters:
+        - 
+          name: "limit"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+          example: 10
+        - 
+          name: "offset"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 0
+          example: 0
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
         400:
           $ref: "#/components/responses/ValidationErrorResponse"
         401:
@@ -3490,6 +3791,88 @@ paths:
           $ref: "#/components/responses/UnprocessableResponse"
         500:
           $ref: "#/components/responses/InternalErrorResponse"
+  /api/leave-policies:
+    get:
+      tags:
+        - leave-policies
+      summary: "Retrieve resource for /api/leave-policies"
+      description: "Auto-generated documentation for GET /api/leave-policies."
+      security:
+        - 
+          bearerAuth: []
+      parameters:
+        - 
+          name: "limit"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+          example: 10
+        - 
+          name: "offset"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 0
+          example: 0
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+    patch:
+      tags:
+        - leave-policies
+      summary: "Partially update resource for /api/leave-policies"
+      description: "Auto-generated documentation for PATCH /api/leave-policies."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "PATCH request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
   /api/leave-requests:
     get:
       tags:
@@ -3904,6 +4287,43 @@ paths:
       responses:
         200:
           $ref: "#/components/responses/SuccessResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+  /api/notifications/broadcast:
+    post:
+      tags:
+        - notifications
+      summary: "Create resource for /api/notifications/broadcast"
+      description: "Auto-generated documentation for POST /api/notifications/broadcast."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "POST request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
+        201:
+          $ref: "#/components/responses/CreatedResponse"
         400:
           $ref: "#/components/responses/ValidationErrorResponse"
         401:
@@ -5425,6 +5845,94 @@ paths:
           $ref: "#/components/responses/UnprocessableResponse"
         500:
           $ref: "#/components/responses/InternalErrorResponse"
+  /api/rbac/permissions:
+    get:
+      tags:
+        - rbac
+      summary: "Retrieve resource for /api/rbac/permissions"
+      description: "Auto-generated documentation for GET /api/rbac/permissions."
+      security:
+        - 
+          bearerAuth: []
+      parameters:
+        - 
+          name: "limit"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+          example: 10
+        - 
+          name: "offset"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 0
+          example: 0
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+  /api/rbac/roles:
+    get:
+      tags:
+        - rbac
+      summary: "Retrieve resource for /api/rbac/roles"
+      description: "Auto-generated documentation for GET /api/rbac/roles."
+      security:
+        - 
+          bearerAuth: []
+      parameters:
+        - 
+          name: "limit"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+          example: 10
+        - 
+          name: "offset"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 0
+          example: 0
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
   /api/readers/{id}/heartbeat:
     post:
       tags:
@@ -6477,6 +6985,86 @@ paths:
           $ref: "#/components/responses/UnprocessableResponse"
         500:
           $ref: "#/components/responses/InternalErrorResponse"
+  /api/tickets/comments:
+    get:
+      tags:
+        - tickets
+      summary: "Retrieve resource for /api/tickets/comments"
+      description: "Auto-generated documentation for GET /api/tickets/comments."
+      security:
+        - 
+          bearerAuth: []
+      parameters:
+        - 
+          name: "limit"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+          example: 10
+        - 
+          name: "offset"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 0
+          example: 0
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+    post:
+      tags:
+        - tickets
+      summary: "Create resource for /api/tickets/comments"
+      description: "Auto-generated documentation for POST /api/tickets/comments."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "POST request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
   /api/tickets:
     get:
       tags:
@@ -6607,6 +7195,86 @@ paths:
       responses:
         200:
           $ref: "#/components/responses/SuccessResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+  /api/tickets/settings:
+    get:
+      tags:
+        - tickets
+      summary: "Retrieve resource for /api/tickets/settings"
+      description: "Auto-generated documentation for GET /api/tickets/settings."
+      security:
+        - 
+          bearerAuth: []
+      parameters:
+        - 
+          name: "limit"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+          example: 10
+        - 
+          name: "offset"
+          in: "query"
+          required: false
+          schema:
+            type: "integer"
+            minimum: 0
+          example: 0
+      responses:
+        200:
+          $ref: "#/components/responses/SuccessResponse"
+        201:
+          $ref: "#/components/responses/CreatedResponse"
+        400:
+          $ref: "#/components/responses/ValidationErrorResponse"
+        401:
+          $ref: "#/components/responses/UnauthorizedResponse"
+        403:
+          $ref: "#/components/responses/ForbiddenResponse"
+        404:
+          $ref: "#/components/responses/NotFoundResponse"
+        422:
+          $ref: "#/components/responses/UnprocessableResponse"
+        500:
+          $ref: "#/components/responses/InternalErrorResponse"
+    post:
+      tags:
+        - tickets
+      summary: "Create resource for /api/tickets/settings"
+      description: "Auto-generated documentation for POST /api/tickets/settings."
+      security:
+        - 
+          bearerAuth: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenericPayload"
+            examples:
+              sample:
+                summary: "POST request payload"
+                value:
+                  name: "Example"
+                  status: "active"
+      responses:
+        201:
+          $ref: "#/components/responses/CreatedResponse"
         400:
           $ref: "#/components/responses/ValidationErrorResponse"
         401:

@@ -230,17 +230,143 @@ export const POST = withApiHandler(async (request, context) => {
   }
 
   const duration = payload.duration ?? (payload.timeOut ? Math.floor((new Date(payload.timeOut).getTime() - new Date(payload.timeIn).getTime()) / 60000) : null);
+
+  const targetDate = new Date(payload.date);
+  const isWeekend = targetDate.getUTCDay() === 0 || targetDate.getUTCDay() === 6;
+
+  // --- ADVANCED TRACKING: CONFIGURATION, GEOFENCING, IP, & OVERTIME ---
+  const clientIp = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip');
+  const { data: settings } = await supabase.from('tenant_attendance_settings').select('*').eq('tenant_id', tenantId).maybeSingle();
+  
+  let isOutOfBounds = false;
+  let violationFlags: any = null;
+  let computedOvertime: number | null = null;
+  const stdHours = settings?.standard_work_hours ? Number(settings.standard_work_hours) : 9.0;
+
+  if (settings) {
+    if (settings.allowed_ips && settings.allowed_ips.trim() !== '') {
+       const allowed = settings.allowed_ips.split(',').map((ip: string) => ip.trim());
+       if (clientIp && !allowed.includes(clientIp)) {
+          isOutOfBounds = true;
+          violationFlags = { ...violationFlags, ip_violation: clientIp };
+       }
+    }
+    
+    if (payload.locationLatitude && payload.locationLongitude && settings.office_latitude && settings.office_longitude) {
+       const { calculateDistanceMeters } = await import('@/server/utils/geolocation');
+       const distance = calculateDistanceMeters(
+          payload.locationLatitude, payload.locationLongitude,
+          settings.office_latitude, settings.office_longitude
+       );
+       if (distance > (settings.geofence_radius_meters || 500)) {
+          isOutOfBounds = true;
+          violationFlags = { ...violationFlags, location_violation: Math.round(distance) };
+       }
+    }
+  }
+
+  if (duration) {
+      const hours = duration / 60;
+      if (hours > stdHours) {
+          computedOvertime = Number((hours - stdHours).toFixed(2));
+      }
+  }
+  // -------------------------------------------------------------------
+
+  // Route to Approval Queue if it's a Weekend OR if it violated Geofencing/IP rules
+  if (isWeekend || isOutOfBounds) {
+    if (isWeekend && (!payload.notes || payload.notes.trim() === '')) {
+      throw new BadRequestError('Notes are strictly required for weekend attendance logging.');
+    }
+
+    // Insert into pending requests
+    const { data: requestRecord, error: requestError } = await supabase.from('attendance_requests').insert({
+      employee_id: payload.employeeId,
+      date: payload.date,
+      time_in: payload.timeIn,
+      time_out: payload.timeOut ?? null,
+      duration,
+      status: 'pending',
+      check_in_method: 'manual',
+      location: payload.location ?? null,
+      reader_id: payload.readerId ?? null,
+      notes: payload.notes,
+      tenant_id: tenantId,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      metadata: { createdBy: actor.legacyUserId },
+      violation_flags: violationFlags
+    }).select('*').single();
+
+    if (requestError || !requestRecord) throw requestError ?? new Error('Failed to create attendance request');
+
+    // Notify admins about the pending attendance
+    const { data: adminUsers } = await supabase
+      .from('users')
+      .select('id')
+      .in('role', ['Admin', 'SuperAdmin', 'Manager'])
+      .eq('tenant_id', tenantId);
+
+    if (adminUsers) {
+      const title = isWeekend ? 'Pending Weekend Attendance' : 'Out-of-Bounds Attendance Attempt';
+      let message = `Employee ID ${payload.employeeId} logged attendance for ${payload.date}. `;
+      if (violationFlags?.ip_violation) message += `(IP Mismatch: ${violationFlags.ip_violation}) `;
+      if (violationFlags?.location_violation) message += `(Geofence Exceeded: ${violationFlags.location_violation}m) `;
+
+      const notifications = adminUsers.map((admin) => ({
+        user_id: admin.id,
+        title: title,
+        message: message.trim(),
+        type: 'warning',
+        link: '/dashboard/attendance',
+        is_read: false,
+        tenant_id: tenantId,
+        created_at: new Date().toISOString(),
+      }));
+      await supabase.from('notifications').insert(notifications);
+    }
+
+    return NextResponse.json({
+      id: requestRecord.id,
+      employeeId: Number(requestRecord.employee_id),
+      date: requestRecord.date,
+      timeIn: requestRecord.time_in,
+      timeOut: requestRecord.time_out,
+      duration: requestRecord.duration,
+      status: 'pending_approval',
+      checkInMethod: requestRecord.check_in_method,
+      readerId: requestRecord.reader_id,
+      location: requestRecord.location,
+      metadata: requestRecord.metadata,
+      createdAt: requestRecord.created_at,
+    }, { status: 202 });
+  }
+
+  // STANDARD WEEKDAY INSERTION
+  // FETCH MAX ID TO BYPASS SEQUENCE INCONSISTENCIES
+  const { data: maxRecord } = await supabase
+    .from('attendance_records')
+    .select('id')
+    .order('id', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const nextId = (maxRecord?.id || 0) + 1;
+
   const { data, error } = await supabase.from('attendance_records').insert({
+    id: nextId,
     employee_id: payload.employeeId,
     date: payload.date,
     time_in: payload.timeIn,
     time_out: payload.timeOut ?? null,
     duration,
+    overtime_hours: computedOvertime,
     status: payload.status,
     check_in_method: 'manual',
     location: payload.location ?? null,
     reader_id: payload.readerId ?? null,
+    idempotency_key: crypto.randomUUID(),
     metadata: payload.notes ? { notes: payload.notes, createdBy: actor.legacyUserId } : { createdBy: actor.legacyUserId },
+    violation_flags: violationFlags,
     tenant_id: tenantId,
     created_at: new Date().toISOString(),
   }).select('*').single();

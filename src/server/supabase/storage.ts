@@ -1,7 +1,7 @@
 import { env } from '@/server/config/env';
 import { getSupabaseAdminClient } from '@/server/supabase/admin';
 
-function getBucketName(kind: 'avatar' | 'payroll' | 'expense' | 'project') {
+function getBucketName(kind: 'avatar' | 'payroll' | 'expense' | 'project' | 'leave_document') {
   switch (kind) {
     case 'avatar':
       return env.SUPABASE_STORAGE_BUCKET_AVATARS ?? 'avatars';
@@ -11,12 +11,14 @@ function getBucketName(kind: 'avatar' | 'payroll' | 'expense' | 'project') {
       return env.SUPABASE_STORAGE_BUCKET_EXPENSES ?? 'expenses';
     case 'project':
       return env.SUPABASE_STORAGE_BUCKET_PROJECTS ?? 'project-files';
+    case 'leave_document':
+      return 'leave-documents';
   }
 }
 
 export async function uploadTenantFile(input: {
   tenantId: string;
-  kind: 'avatar' | 'payroll' | 'expense' | 'project';
+  kind: 'avatar' | 'payroll' | 'expense' | 'project' | 'leave_document';
   path: string;
   contentType: string;
   data: ArrayBuffer | Uint8Array;
@@ -40,7 +42,7 @@ export async function uploadTenantFile(input: {
 
 export async function createSignedTenantFileUrl(input: {
   tenantId: string;
-  kind: 'avatar' | 'payroll' | 'expense' | 'project';
+  kind: 'avatar' | 'payroll' | 'expense' | 'project' | 'leave_document';
   path: string;
   expiresIn?: number;
 }) {

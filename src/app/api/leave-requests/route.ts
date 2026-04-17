@@ -69,7 +69,10 @@ export const GET = withApiHandler(async (request, context) => {
       const employee = await getCurrentSupabaseEmployee(tenantId, actor.authUserId);
       if (!employee || Number(employee.id) !== Number(leaveRequest.employee_id)) throw new ForbiddenError('Unauthorized');
     }
-    const userMap = await buildLegacyUserIdMap(accessToken, [String(leaveRequest.approved_by)].filter(Boolean), tenantId);
+    const approvedByIds = leaveRequest.approved_by && typeof leaveRequest.approved_by === 'string'
+      ? [leaveRequest.approved_by]
+      : [];
+    const userMap = await buildLegacyUserIdMap(accessToken, approvedByIds, tenantId);
     return NextResponse.json(normalizeSupabaseLeaveRequestRow(leaveRequest, userMap));
   }
   const limit = Math.min(Number(searchParams.get('limit') ?? '10'), 100);
@@ -99,7 +102,10 @@ export const GET = withApiHandler(async (request, context) => {
   const { data, count, error } = await query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
   if (error) throw error;
   const rows = (data as Record<string, unknown>[] | null) ?? [];
-  const userMap = await buildLegacyUserIdMap(accessToken, rows.map((row) => String(row.approved_by)).filter(Boolean), tenantId);
+  const approvedByIds = rows
+    .map((row) => row.approved_by)
+    .filter((approvedBy): approvedBy is string => typeof approvedBy === 'string' && approvedBy !== 'null' && approvedBy !== 'undefined');
+  const userMap = await buildLegacyUserIdMap(accessToken, approvedByIds, tenantId);
   return NextResponse.json({
     success: true,
     data: rows.map((row) => normalizeSupabaseLeaveRequestRow(row, userMap)),
@@ -195,7 +201,7 @@ export const PUT = withApiHandler(async (request, context) => {
   .select('*')
   .single();
   if (error || !updated) throw error ?? new Error('Failed to update leave request');
-  const userMap = await buildLegacyUserIdMap(accessToken, [String(updated.approved_by)].filter(Boolean), tenantId);
+  const userMap = await buildLegacyUserIdMap(accessToken, [updated.approved_by].filter(Boolean).map(String), tenantId);
   return NextResponse.json(normalizeSupabaseLeaveRequestRow(updated, userMap));
 }, { requireAuth: true, roles: ['Employee'] });
 
@@ -232,6 +238,6 @@ export const DELETE = withApiHandler(async (request, context) => {
     .select('*')
     .single();
   if (error || !deleted) throw error ?? new Error('Failed to delete leave request');
-  const userMap = await buildLegacyUserIdMap(accessToken, [String(deleted.approved_by)].filter(Boolean), tenantId);
+  const userMap = await buildLegacyUserIdMap(accessToken, [deleted.approved_by].filter(Boolean).map(String), tenantId);
   return NextResponse.json({ message: 'Leave request deleted successfully', leaveRequest: normalizeSupabaseLeaveRequestRow(deleted, userMap) });
 }, { requireAuth: true, roles: ['Employee'] });

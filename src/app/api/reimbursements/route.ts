@@ -33,6 +33,15 @@ function normalizeSupabaseReimbursementRow(row: Record<string, unknown>, userMap
     adminComments: row.admin_comments ?? null,
     createdAt: row.created_at ?? null,
     updatedAt: row.updated_at ?? null,
+    // New expense claim fields
+    billingStatus: row.billing_status ?? 'non_billable',
+    costCategory: row.cost_category ?? null,
+    qty: row.qty ?? 1,
+    unitCost: row.unit_cost ?? 0,
+    project: row.project ?? 'TechSonance Infotech',
+    forCompany: row.for_company ?? 'TechSonance Infotech',
+    division: row.division ?? 'IND',
+    reasonForClaim: row.reason_for_claim ?? null,
   };
 }
 
@@ -117,7 +126,7 @@ export const POST = withApiHandler(async (request, context) => {
     employee_id: employee.id,
     category_id: payload.categoryId,
     amount: payload.amount,
-    currency: 'INR',
+    currency: payload.currency ?? 'INR',
     expense_date: payload.expenseDate,
     description: payload.description,
     receipt_url: payload.receiptUrl ?? null,
@@ -126,6 +135,15 @@ export const POST = withApiHandler(async (request, context) => {
     submitted_at: (payload.status ?? 'draft') === 'submitted' ? now : null,
     created_at: now,
     updated_at: now,
+    // New expense claim fields
+    billing_status: payload.billingStatus ?? 'non_billable',
+    cost_category: payload.costCategory ?? null,
+    qty: payload.qty ?? 1,
+    unit_cost: payload.unitCost ?? 0,
+    project: payload.project ?? 'TechSonance Infotech',
+    for_company: payload.forCompany ?? 'TechSonance Infotech',
+    division: payload.division ?? 'IND',
+    reason_for_claim: payload.reasonForClaim ?? null,
   }).select('*').single();
   if (error || !data) throw error ?? new Error('Failed to create reimbursement');
   return NextResponse.json(normalizeSupabaseReimbursementRow(data, new Map()), { status: 201 });

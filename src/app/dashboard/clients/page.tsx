@@ -9,6 +9,8 @@ import { Plus, Search, Mail, Phone, Building2, Eye } from 'lucide-react';
 import { InlineTableSkeleton } from '@/components/ui/dashboard-skeleton';
 import { ClientFormDialog } from '@/components/clients/client-form-dialog';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { getDashboardType, type UserRole } from '@/lib/permissions';
 import {
   Table,
   TableBody,
@@ -35,19 +37,44 @@ export default function ClientsPage() {
   const [search, setSearch] = useState('');
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [currentPage, setCurrentPage] = useState(0);
+  const [authorized, setAuthorized] = useState(false);
+  const router = useRouter();
   const pageSize = 10;
 
   useEffect(() => {
-    fetchClients();
-  }, []);
+    const checkAuth = async () => {
+      const token = localStorage.getItem('session_token');
+      if (!token) return router.push('/login');
+      
+      try {
+        const res = await fetch('/api/auth/me', { headers: { 'Authorization': `Bearer ${token}` } });
+        if (res.ok) {
+          const data = await res.json();
+          if (getDashboardType(data.user.role as UserRole) !== 'admin') {
+            router.push('/dashboard');
+          } else {
+            setAuthorized(true);
+            fetchClients();
+          }
+        }
+      } catch (e) {
+        router.push('/dashboard');
+      }
+    };
+    checkAuth();
+  }, [router]);
 
   const fetchClients = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/clients?limit=100');
+      const token = localStorage.getItem('session_token');
+      const response = await fetch('/api/clients?limit=100', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       if (response.ok) {
-        const data = await response.json();
-        setClients(data);
+        const result = await response.json();
+        // API returns { success, data: [...], meta } for list endpoint
+        setClients(Array.isArray(result) ? result : (result.data || []));
       }
     } catch (error) {
       console.error('Error fetching clients:', error);
@@ -72,6 +99,8 @@ export default function ClientsPage() {
   useEffect(() => {
     setCurrentPage(0);
   }, [search]);
+
+  if (!authorized) return null;
 
   return (
     <div className="space-y-6">
@@ -121,82 +150,87 @@ export default function ClientsPage() {
                 </div>
               ) : (
                 <>
-                  <div className="rounded-md border max-h-[600px] overflow-y-auto">
-                    <Table>
-                      <TableHeader className="sticky top-0 bg-background z-10">
-                        <TableRow>
-                          <TableHead>Company</TableHead>
-                          <TableHead>Contact Person</TableHead>
-                          <TableHead>Email</TableHead>
-                          <TableHead>Phone</TableHead>
-                          <TableHead>Industry</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {paginatedClients.map((client) => (
-                          <TableRow key={client.id}>
-                            <TableCell className="font-medium">{client.companyName}</TableCell>
-                            <TableCell>{client.contactPerson}</TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                <Mail className="h-4 w-4 text-muted-foreground" />
-                                <span className="text-sm">{client.email}</span>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {paginatedClients.map((client) => (
+                      <Card key={client.id} className="group overflow-hidden bg-card/50 hover:bg-card/80 border-white/5 hover:border-emerald-500/30 transition-all shadow-sm hover:shadow-xl hover:-translate-y-1">
+                        <div className="h-2 w-full bg-gradient-to-r from-teal-500/50 to-emerald-400/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        <CardContent className="p-6">
+                          <div className="flex justify-between items-start mb-4">
+                            <div className="flex-1 overflow-hidden">
+                              <h3 className="text-xl font-bold truncate pr-4">{client.companyName}</h3>
+                              <p className="text-sm text-muted-foreground mt-1 flex items-center gap-1">
+                                <Building2 className="h-3 w-3" />
+                                {client.industry || 'General Sector'}
+                              </p>
+                            </div>
+                            <Badge className="shadow-xs capitalize" variant={
+                              client.status === 'active' ? 'default' :
+                              client.status === 'inactive' ? 'secondary' :
+                              'outline'
+                            }>
+                              {client.status}
+                            </Badge>
+                          </div>
+
+                          <div className="space-y-3 mb-6 bg-muted/20 p-3 rounded-lg border border-white/5">
+                            <div className="flex items-center gap-3">
+                              <div className="p-1.5 bg-emerald-500/10 rounded-md">
+                                <Mail className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                               </div>
-                            </TableCell>
-                            <TableCell>
-                              {client.phone ? (
-                                <div className="flex items-center gap-2">
-                                  <Phone className="h-4 w-4 text-muted-foreground" />
-                                  <span className="text-sm">{client.phone}</span>
+                              <div className="overflow-hidden">
+                                <p className="text-xs text-muted-foreground">Primary Contact</p>
+                                <p className="text-sm font-medium truncate">{client.contactPerson}</p>
+                                <p className="text-[10px] text-muted-foreground truncate">{client.email}</p>
+                              </div>
+                            </div>
+
+                            {client.phone && (
+                              <div className="flex items-center gap-3">
+                                <div className="p-1.5 bg-indigo-500/10 rounded-md">
+                                  <Phone className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
                                 </div>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
-                            </TableCell>
-                            <TableCell>{client.industry || '—'}</TableCell>
-                            <TableCell>
-                              <Badge variant={
-                                client.status === 'active' ? 'default' :
-                                client.status === 'inactive' ? 'secondary' :
-                                'outline'
-                              }>
-                                {client.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <Link href={`/dashboard/clients/${client.id}`}>
-                                <Button variant="ghost" size="sm">
-                                  <Eye className="h-4 w-4" />
-                                </Button>
-                              </Link>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Phone</p>
+                                  <p className="text-sm font-medium">{client.phone}</p>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <Link href={`/dashboard/clients/${client.id}`} className="block">
+                            <Button className="w-full bg-emerald-600 hover:bg-emerald-700 text-white" variant="default">
+                              <Eye className="mr-2 h-4 w-4" />
+                              Open Hub
+                            </Button>
+                          </Link>
+                        </CardContent>
+                      </Card>
+                    ))}
                   </div>
 
                   {/* Pagination */}
-                  <div className="flex items-center justify-end space-x-2 py-4">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
-                      disabled={currentPage === 0}
-                    >
-                      Previous
-                    </Button>
-                    <div className="text-sm font-medium">Page {currentPage + 1}</div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage(p => p + 1)}
-                      disabled={(currentPage + 1) * pageSize >= filteredClients.length}
-                    >
-                      Next
-                    </Button>
+                  <div className="flex items-center justify-between border-t border-white/10 pt-6 mt-6">
+                    <p className="text-sm text-muted-foreground">
+                      Showing {currentPage * pageSize + 1} to {Math.min((currentPage + 1) * pageSize, filteredClients.length)} of {filteredClients.length} clients
+                    </p>
+                    <div className="flex space-x-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+                        disabled={currentPage === 0}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(p => p + 1)}
+                        disabled={(currentPage + 1) * pageSize >= filteredClients.length}
+                      >
+                        Next
+                      </Button>
+                    </div>
                   </div>
                 </>
               )}

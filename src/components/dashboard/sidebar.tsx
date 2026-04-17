@@ -22,6 +22,8 @@ import {
   Receipt,
   Fingerprint,
   Wifi,
+  Calendar,
+  Clock,
 } from 'lucide-react';
 import { User } from '@/lib/auth';
 
@@ -61,7 +63,9 @@ const navigation = [
 
   // Admin gets full access to all pages
   { name: 'Daily Updates', href: '/dashboard/daily-update', icon: ClipboardList, roles: ['admin', 'project_manager', 'developer'] },
-  { name: 'My Account', href: '/dashboard/my-account', icon: UserCircle, roles: ['admin', 'project_manager', 'developer'] },
+  { name: 'Leaves', href: '/dashboard/leaves', icon: Calendar, roles: ['admin', 'project_manager', 'developer', 'client'] },
+  { name: 'Attendance', href: '/dashboard/attendance', icon: Clock, roles: ['admin', 'project_manager', 'developer', 'client'] },
+
   { name: 'Help Desk', href: '/dashboard/help-desk', icon: HelpCircle, roles: ['admin', 'project_manager', 'developer'] },
   { name: 'Inquiry', href: '/dashboard/inquiry', icon: Search, roles: ['admin', 'project_manager', 'business_development', 'developer', 'hr_manager', 'employee', 'cms_administrator', 'qa_engineer', 'devops_engineer', 'ui_ux_designer', 'digital_marketing', 'business_analyst'] },
   { name: 'Reimbursements', href: '/dashboard/reimbursements', icon: Receipt, roles: ['admin', 'hr_manager', 'cms_administrator', 'project_manager', 'business_development', 'developer', 'qa_engineer', 'devops_engineer', 'ui_ux_designer', 'digital_marketing', 'business_analyst'] },

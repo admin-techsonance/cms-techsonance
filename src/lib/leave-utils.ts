@@ -1,133 +1,236 @@
-import { differenceInMonths, differenceInYears, isWeekend, format, parseISO, startOfMonth, endOfMonth, isAfter, isBefore, addMonths } from 'date-fns';
+import { differenceInMonths, differenceInYears, isWeekend, format, parseISO, startOfMonth, isAfter, isBefore, addMonths } from 'date-fns';
 
-export const PUBLIC_HOLIDAYS_2026 = [
-  '2026-01-01', // New Year
-  '2026-01-26', // Republic Day
-  '2026-03-04', // Holi
-  '2026-03-19', // Gudi Padwa
-  '2026-05-01', // Labour Day
-  '2026-09-14', // Ganesh Chaturthi
-  '2026-10-02', // Gandhi Jayanti
-  '2026-10-20', // Dusshera
-  '2026-11-09', // Diwali
-  '2026-12-25', // Christmas
-];
+export const PUBLIC_HOLIDAYS_2026: Record<string, string> = {
+  '2026-01-01': "New Year's Day",
+  '2026-01-26': 'Republic Day',
+  '2026-03-04': 'Holi',
+  '2026-03-19': 'Gudi Padwa',
+  '2026-05-01': 'Labour Day',
+  '2026-09-14': 'Ganesh Chaturthi',
+  '2026-10-02': 'Gandhi Jayanti',
+  '2026-10-20': 'Dusshera',
+  '2026-11-09': 'Diwali',
+  '2026-12-25': 'Christmas',
+};
+
+/** Backwards compat: array of date strings */
+export const PUBLIC_HOLIDAYS_2026_LIST = Object.keys(PUBLIC_HOLIDAYS_2026);
 
 export interface LeaveEntitlement {
   annual: number;
   sick: number;
   family: number;
   study: number;
-  duvet: number;
+  maternity: number;
+  paternity: number;
+  unpaid: number;
+}
+
+export interface LeavePolicy {
+  leaveType: string;
+  tenure02Days: number;
+  tenure25Days: number;
+  tenure510Days: number;
+  tenure10PlusDays: number;
+  fixedDaysPerYear: number;
+  maxCarryForward: number;
+  requiresDocument: boolean;
+  internEligible: boolean;
+  isActive: boolean;
 }
 
 /**
- * Calculates current leave balances based on tenure and joining date
- * Following BBD India 2026 Policy
+ * Calculate entitlement for a specific leave type based on tenure and policy
  */
-export function calculateAccruedBalances(joiningDate: string, role: string, currentDate: Date = new Date()) {
-  const start = parseISO(joiningDate);
-  
-  // Interns get 0 paid leave
-  if (role.toLowerCase() === 'intern') {
-    return {
-      annual: 0,
-      sick: 0,
-      family: 0,
-      study: 0,
-      duvet: 0
-    };
+export function getEntitlementForType(
+  policy: LeavePolicy,
+  tenureYears: number
+): number {
+  if (policy.leaveType === 'annual') {
+    if (tenureYears >= 10) return policy.tenure10PlusDays;
+    if (tenureYears >= 5) return policy.tenure510Days;
+    if (tenureYears >= 2) return policy.tenure25Days;
+    return policy.tenure02Days;
+  }
+  return policy.fixedDaysPerYear;
+}
+
+/**
+ * Calculates accrued balances from DB-driven policies.
+ * Falls back to hardcoded defaults if no policies are passed.
+ */
+export function calculateAccruedBalances(
+  joiningDate: string,
+  role: string,
+  policies?: LeavePolicy[],
+  currentDate: Date = new Date()
+): LeaveEntitlement {
+  // Interns get 0 paid leave (only unpaid)
+  const isIntern = role.toLowerCase() === 'intern';
+
+  if (isIntern) {
+    return { annual: 0, sick: 0, family: 0, study: 0, maternity: 0, paternity: 0, unpaid: 365 };
   }
 
+  const start = parseISO(joiningDate);
   const tenureYears = differenceInYears(currentDate, start);
   const totalMonths = differenceInMonths(currentDate, start);
 
-  // 1. Annual Leave Calculation
-  // 0-2y: 1.5/mo, 2-5y: 1.67/mo, 5-10y: 1.83/mo, 10y+: 2.08/mo
-  let accruedAnnual = 0;
+  // If DB policies are provided, use them
+  if (policies && policies.length > 0) {
+    const result: Record<string, number> = {};
+    for (const policy of policies) {
+      if (!policy.isActive) continue;
+      if (isIntern && !policy.internEligible) {
+        result[policy.leaveType] = 0;
+        continue;
+      }
+
+      if (policy.leaveType === 'annual') {
+        // Accrue monthly based on tenure bracket
+        const annualEntitlement = getEntitlementForType(policy, tenureYears);
+        const monthlyRate = annualEntitlement / 12;
+        // Accrue for months worked (capped at annual entitlement)
+        const accrued = Math.min(totalMonths * monthlyRate, annualEntitlement);
+        result[policy.leaveType] = parseFloat(accrued.toFixed(3));
+      } else {
+        // Fixed entitlement per year
+        if (totalMonths < 12) {
+          // Pro-rate for first year
+          const monthlyRate = policy.fixedDaysPerYear / 12;
+          result[policy.leaveType] = parseFloat((totalMonths * monthlyRate).toFixed(3));
+        } else {
+          result[policy.leaveType] = policy.fixedDaysPerYear;
+        }
+      }
+    }
+
+    return {
+      annual: result.annual ?? 0,
+      sick: result.sick ?? 0,
+      family: result.family ?? 0,
+      study: result.study ?? 0,
+      maternity: result.maternity ?? 0,
+      paternity: result.paternity ?? 0,
+      unpaid: result.unpaid ?? 365,
+    };
+  }
+
+  // ---- Hardcoded Fallback (matches corrected rules) ----
+  let annualEntitlement = 12;
+  if (tenureYears >= 10) annualEntitlement = 23;
+  else if (tenureYears >= 5) annualEntitlement = 20;
+  else if (tenureYears >= 2) annualEntitlement = 18;
+
+  const monthlyAnnualRate = annualEntitlement / 12;
   let tempDate = startOfMonth(start);
   const end = startOfMonth(currentDate);
-
+  let accruedAnnual = 0;
   while (isBefore(tempDate, end) || tempDate.getTime() === end.getTime()) {
-    const monthsFromStart = differenceInMonths(tempDate, start);
-    const yearsAtPoint = Math.floor(monthsFromStart / 12);
-    
-    let rate = 1.50;
-    if (yearsAtPoint >= 10) rate = 2.08;
-    else if (yearsAtPoint >= 5) rate = 1.83;
-    else if (yearsAtPoint >= 2) rate = 1.67;
-
-    accruedAnnual += rate;
-
-    // TODO: Forfeiture Rule on March 31st
-    // "excess of your annual leave accumulation aligned to tenure, will be forfeited"
-    // This is complex for a simple client-side calc without historical tracking, 
-    // but for now we calculate total accrued since joining or last Mar 31.
-    
+    accruedAnnual += monthlyAnnualRate;
     tempDate = addMonths(tempDate, 1);
   }
+  accruedAnnual = Math.min(accruedAnnual, annualEntitlement);
 
-  // 2. Sick Leave
-  // 0.833/mo for first 6 months, then 10/year cycle
-  let accruedSick = 0;
-  if (totalMonths <= 6) {
-    accruedSick = totalMonths * 0.833;
-  } else {
-    accruedSick = 10; // Simple approximation for the current cycle
-  }
-
-  // 3. Family Leave
-  // 0.25/mo for first year, then 3 upfront
-  let accruedFamily = 0;
-  if (totalMonths <= 12) {
-    accruedFamily = totalMonths * 0.25;
-  } else {
-    accruedFamily = 3;
-  }
-
-  // 4. Study Leave
-  // 0.667/mo first year, then 8 upfront
-  let accruedStudy = 0;
-  if (totalMonths <= 12) {
-    accruedStudy = totalMonths * 0.667;
-  } else {
-    accruedStudy = 8;
-  }
+  const accruedSick = totalMonths < 12 ? totalMonths * (8 / 12) : 8;
+  const accruedFamily = totalMonths < 12 ? totalMonths * (3 / 12) : 3;
+  const accruedStudy = totalMonths < 12 ? totalMonths * (8 / 12) : 8;
 
   return {
     annual: parseFloat(accruedAnnual.toFixed(3)),
     sick: parseFloat(accruedSick.toFixed(3)),
     family: parseFloat(accruedFamily.toFixed(3)),
     study: parseFloat(accruedStudy.toFixed(3)),
-    duvet: 0 // Award based, manual entry needed
+    maternity: 0,
+    paternity: 0,
+    unpaid: 365,
+  };
+}
+
+export interface LeaveCalculationBreakdown {
+  totalDays: number;
+  workDays: number;
+  weekendDays: number;
+  publicHolidays: number;
+  publicHolidayDetails: { date: string; reason: string }[];
+  actualLeaveDays: number;
+}
+
+/**
+ * Calculates detailed leave breakdown between two dates,
+ * excluding weekends and public holidays from the leave count.
+ */
+export function calculateDetailedLeaveDays(
+  start: string,
+  end: string,
+  period: 'full_day' | 'half_day' | 'hourly' = 'full_day',
+  actualHoursFraction?: number,
+  companyHolidays?: Record<string, string>
+): LeaveCalculationBreakdown {
+  const empty: LeaveCalculationBreakdown = {
+    totalDays: 0,
+    workDays: 0,
+    weekendDays: 0,
+    publicHolidays: 0,
+    publicHolidayDetails: [],
+    actualLeaveDays: 0,
+  };
+
+  if (!start || !end) return empty;
+
+  const startDate = parseISO(start);
+  const endDate = parseISO(end);
+  if (isAfter(startDate, endDate)) return empty;
+
+  const holidays = companyHolidays ?? PUBLIC_HOLIDAYS_2026;
+
+  let totalDays = 0;
+  let workDays = 0;
+  let weekendDays = 0;
+  let publicHolidays = 0;
+  const publicHolidayDetails: { date: string; reason: string }[] = [];
+
+  const current = new Date(startDate);
+  while (isBefore(current, endDate) || current.getTime() === endDate.getTime()) {
+    totalDays++;
+    const dateStr = format(current, 'yyyy-MM-dd');
+    const isHoliday = dateStr in holidays;
+    const isWknd = isWeekend(current);
+
+    if (isHoliday) {
+      publicHolidays++;
+      publicHolidayDetails.push({ date: dateStr, reason: holidays[dateStr] });
+    } else if (isWknd) {
+      weekendDays++;
+    } else {
+      workDays++;
+    }
+
+    current.setDate(current.getDate() + 1);
+  }
+
+  let actualLeaveDays = workDays;
+
+  if (period === 'half_day') {
+    actualLeaveDays = 0.5;
+  } else if (period === 'hourly' && actualHoursFraction !== undefined) {
+    // Convert hours to fraction of a 9-hour working day
+    actualLeaveDays = parseFloat((actualHoursFraction / 9).toFixed(3));
+  }
+
+  return {
+    totalDays,
+    workDays,
+    weekendDays,
+    publicHolidays,
+    publicHolidayDetails,
+    actualLeaveDays,
   };
 }
 
 /**
- * Calculates actual work days between two dates, excluding weekends and public holidays
+ * Backwards-compatible wrapper: returns just the number of actual work days
  */
 export function calculateActualLeaveDays(start: string, end: string) {
-  if (!start || !end) return 0;
-  
-  const startDate = parseISO(start);
-  const endDate = parseISO(end);
-  
-  if (isAfter(startDate, endDate)) return 0;
-  
-  let count = 0;
-  let current = new Date(startDate);
-  
-  while (isBefore(current, endDate) || current.getTime() === endDate.getTime()) {
-    const dateStr = format(current, 'yyyy-MM-dd');
-    const isHoliday = PUBLIC_HOLIDAYS_2026.includes(dateStr);
-    const isWknd = isWeekend(current);
-    
-    if (!isHoliday && !isWknd) {
-      count++;
-    }
-    
-    current.setDate(current.getDate() + 1);
-  }
-  
-  return count;
+  return calculateDetailedLeaveDays(start, end).workDays;
 }

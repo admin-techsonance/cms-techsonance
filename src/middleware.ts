@@ -53,9 +53,20 @@ function applyRateLimit(request: NextRequest) {
 }
 
 export async function middleware(request: NextRequest) {
+  // ABSOLUTE BYPASS for file uploads to prevent multipart boundary stripping
+  if (request.nextUrl.pathname === '/api/upload') {
+    return NextResponse.next();
+  }
+
   const requestId = request.headers.get('x-correlation-id') ?? crypto.randomUUID();
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set('x-correlation-id', requestId);
+
+  // Skip header injection for multipart/form-data to preserve boundaries
+  const contentType = request.headers.get('content-type') || '';
+  if (contentType.includes('multipart/form-data')) {
+    return NextResponse.next();
+  }
 
   if (request.nextUrl.pathname.startsWith('/api/')) {
     const limited = applyRateLimit(request);
@@ -105,6 +116,6 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!api/upload|_next/static|_next/image|favicon.ico).*)'],
 };
 

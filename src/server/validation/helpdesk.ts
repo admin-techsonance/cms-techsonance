@@ -11,6 +11,7 @@ export const createTicketSchema = z.object({
   assignedTo: z.coerce.number().int().positive().optional().nullable(),
   priority: ticketPrioritySchema.optional(),
   status: ticketStatusSchema.optional(),
+  attachmentUrl: z.string().trim().max(2000).optional().nullable(),
 });
 
 export const updateTicketSchema = z.object({

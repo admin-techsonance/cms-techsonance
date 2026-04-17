@@ -16,7 +16,7 @@ interface Milestone {
   status: string;
 }
 
-export function ProjectMilestones({ projectId }: { projectId: number }) {
+export function ProjectMilestones({ projectId, canEdit = false }: { projectId: number, canEdit?: boolean }) {
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -61,10 +61,12 @@ export function ProjectMilestones({ projectId }: { projectId: number }) {
                 {completedCount} of {milestones.length} milestones completed
               </CardDescription>
             </div>
-            <Button size="sm">
-              <Plus className="mr-2 h-4 w-4" />
-              Add Milestone
-            </Button>
+            {canEdit && (
+              <Button size="sm">
+                <Plus className="mr-2 h-4 w-4" />
+                Add Milestone
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent className="space-y-6">

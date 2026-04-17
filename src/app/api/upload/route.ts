@@ -7,7 +7,7 @@ import { getCurrentSupabaseActor } from '@/server/supabase/route-helpers';
 
 const VALID_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf']);
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const VALID_KINDS = new Set(['avatar', 'payroll', 'expense', 'project']);
+const VALID_KINDS = new Set(['avatar', 'payroll', 'expense', 'project', 'leave_document']);
 
 function getUploadKind(value: FormDataEntryValue | null) {
   if (typeof value !== 'string') {
@@ -18,7 +18,7 @@ function getUploadKind(value: FormDataEntryValue | null) {
     throw new BadRequestError('Invalid upload kind');
   }
 
-  return value as 'avatar' | 'payroll' | 'expense' | 'project';
+  return value as 'avatar' | 'payroll' | 'expense' | 'project' | 'leave_document';
 }
 
 function assertSafeStoragePath(path: string) {
@@ -49,6 +49,10 @@ export const GET = withApiHandler(async (request, context) => {
     path,
     expiresIn: 60 * 10,
   });
+
+  if (request.headers.get('accept')?.includes('application/json')) {
+    return apiSuccess({ url: signedUrl }, 'Signed URL generated');
+  }
 
   return NextResponse.redirect(signedUrl, { status: 302 });
 }, { requireAuth: true, roles: ['Employee'] });

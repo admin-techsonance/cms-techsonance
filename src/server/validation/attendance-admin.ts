@@ -12,6 +12,8 @@ export const createAttendanceSchema = z.object({
   location: z.string().trim().max(255).optional().nullable(),
   readerId: z.string().trim().max(100).optional().nullable(),
   notes: z.string().trim().max(1000).optional().nullable(),
+  locationLatitude: z.coerce.number().optional().nullable(),
+  locationLongitude: z.coerce.number().optional().nullable(),
   status: attendanceStatusSchema,
 });
 

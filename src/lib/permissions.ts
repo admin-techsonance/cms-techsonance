@@ -4,12 +4,21 @@
  */
 
 export type UserRole =
+  | 'super_admin'
   | 'admin'
+  | 'ceo'
+  | 'cto'
+  | 'director'
   | 'hr_manager'
+  | 'accountant'
   | 'cms_administrator'
   | 'project_manager'
   | 'business_development'
   | 'developer'
+  | 'frontend_developer'
+  | 'backend_developer'
+  | 'fullstack_developer'
+  | 'mobile_developer'
   | 'qa_engineer'
   | 'devops_engineer'
   | 'ui_ux_designer'
@@ -88,6 +97,23 @@ const viewEditCreate: Permission = {
  * Role Permission Matrix
  */
 export const rolePermissions: Record<UserRole, RolePermissions> = {
+  // Super Admin - Ultimate access
+  super_admin: {
+    dashboard: fullAccess,
+    clients: fullAccess,
+    projects: fullAccess,
+    team: fullAccess,
+    finance: fullAccess,
+    content: fullAccess,
+    settings: fullAccess,
+    dailyUpdate: fullAccess,
+    myAccount: fullAccess,
+    helpDesk: fullAccess,
+    inquiry: fullAccess,
+    tasks: fullAccess,
+    reimbursements: fullAccess,
+  },
+
   // Admin - Full access to everything
   admin: {
     dashboard: fullAccess,
@@ -102,6 +128,74 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     helpDesk: fullAccess,
     inquiry: fullAccess,
     tasks: fullAccess,
+    reimbursements: fullAccess,
+  },
+
+  // CEO - Full access
+  ceo: {
+    dashboard: fullAccess,
+    clients: fullAccess,
+    projects: fullAccess,
+    team: fullAccess,
+    finance: fullAccess,
+    content: fullAccess,
+    settings: fullAccess,
+    dailyUpdate: fullAccess,
+    myAccount: fullAccess,
+    helpDesk: fullAccess,
+    inquiry: fullAccess,
+    tasks: fullAccess,
+    reimbursements: fullAccess,
+  },
+
+  // CTO - Full access
+  cto: {
+    dashboard: fullAccess,
+    clients: fullAccess,
+    projects: fullAccess,
+    team: fullAccess,
+    finance: fullAccess,
+    content: fullAccess,
+    settings: fullAccess,
+    dailyUpdate: fullAccess,
+    myAccount: fullAccess,
+    helpDesk: fullAccess,
+    inquiry: fullAccess,
+    tasks: fullAccess,
+    reimbursements: fullAccess,
+  },
+
+  // Director - Full access
+  director: {
+    dashboard: fullAccess,
+    clients: fullAccess,
+    projects: fullAccess,
+    team: fullAccess,
+    finance: fullAccess,
+    content: fullAccess,
+    settings: fullAccess,
+    dailyUpdate: fullAccess,
+    myAccount: fullAccess,
+    helpDesk: fullAccess,
+    inquiry: fullAccess,
+    tasks: fullAccess,
+    reimbursements: fullAccess,
+  },
+
+  // Accountant - Finance and admin access
+  accountant: {
+    dashboard: fullAccess,
+    clients: viewOnly,
+    projects: viewOnly,
+    team: viewOnly,
+    finance: fullAccess,
+    content: defaultPermission,
+    settings: viewOnly,
+    dailyUpdate: viewOnly,
+    myAccount: fullAccess,
+    helpDesk: viewOnly,
+    inquiry: defaultPermission,
+    tasks: viewOnly,
     reimbursements: fullAccess,
   },
 
@@ -258,6 +352,74 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     reimbursements: viewEditCreate,
   },
 
+  // Frontend Developer
+  frontend_developer: {
+    dashboard: viewOnly,
+    clients: viewOnly,
+    projects: viewOnly,
+    team: viewOnly,
+    finance: defaultPermission,
+    content: defaultPermission,
+    settings: defaultPermission,
+    dailyUpdate: viewEditCreate,
+    myAccount: { ...viewEditCreate, canApprove: false },
+    helpDesk: viewEditCreate,
+    inquiry: viewOnly,
+    tasks: fullAccess,
+    reimbursements: viewEditCreate,
+  },
+
+  // Backend Developer
+  backend_developer: {
+    dashboard: viewOnly,
+    clients: viewOnly,
+    projects: viewOnly,
+    team: viewOnly,
+    finance: defaultPermission,
+    content: defaultPermission,
+    settings: defaultPermission,
+    dailyUpdate: viewEditCreate,
+    myAccount: { ...viewEditCreate, canApprove: false },
+    helpDesk: viewEditCreate,
+    inquiry: viewOnly,
+    tasks: fullAccess,
+    reimbursements: viewEditCreate,
+  },
+
+  // Fullstack Developer
+  fullstack_developer: {
+    dashboard: viewOnly,
+    clients: viewOnly,
+    projects: viewOnly,
+    team: viewOnly,
+    finance: defaultPermission,
+    content: defaultPermission,
+    settings: defaultPermission,
+    dailyUpdate: viewEditCreate,
+    myAccount: { ...viewEditCreate, canApprove: false },
+    helpDesk: viewEditCreate,
+    inquiry: viewOnly,
+    tasks: fullAccess,
+    reimbursements: viewEditCreate,
+  },
+
+  // Mobile Developer
+  mobile_developer: {
+    dashboard: viewOnly,
+    clients: viewOnly,
+    projects: viewOnly,
+    team: viewOnly,
+    finance: defaultPermission,
+    content: defaultPermission,
+    settings: defaultPermission,
+    dailyUpdate: viewEditCreate,
+    myAccount: { ...viewEditCreate, canApprove: false },
+    helpDesk: viewEditCreate,
+    inquiry: viewOnly,
+    tasks: fullAccess,
+    reimbursements: viewEditCreate,
+  },
+
   // Digital Marketing - Content and marketing access
   digital_marketing: {
     dashboard: viewOnly,
@@ -306,7 +468,7 @@ export const rolePermissions: Record<UserRole, RolePermissions> = {
     helpDesk: viewAndCreate,
     inquiry: viewOnly,
     tasks: viewAndCreate,
-    reimbursements: defaultPermission,
+    reimbursements: viewEditCreate,
   },
 
   // Architect Role
@@ -352,7 +514,14 @@ export function hasPermission(
   module: keyof RolePermissions,
   action: keyof Permission
 ): boolean {
-  const permissions = rolePermissions[role];
+  let permissions = rolePermissions[role];
+
+  // Case-insensitive fallback for safety
+  if (!permissions) {
+    const normalizedRole = role.toLowerCase() as UserRole;
+    permissions = rolePermissions[normalizedRole];
+  }
+
   if (!permissions) return false;
 
   const modulePermission = permissions[module];
@@ -372,32 +541,57 @@ export function getRolePermissions(role: UserRole): RolePermissions | null {
  * Check if user has full access (admin-like roles)
  */
 export function hasFullAccess(role: UserRole): boolean {
-  return role === 'admin' || role === 'hr_manager' || role === 'cms_administrator' || role === 'project_manager' || role === 'management';
+  const normalizedRole = String(role).toLowerCase() as UserRole;
+  return [
+    'super_admin',
+    'admin',
+    'ceo',
+    'cto',
+    'director',
+    'hr_manager',
+    'accountant',
+    'cms_administrator',
+    'management'
+  ].includes(normalizedRole);
 }
 
 /**
- * Check if user is a developer-like role (can submit daily updates, etc.)
+ * Identify which dashboard layout to display
  */
-export function isDeveloperRole(role: UserRole): boolean {
-  return [
-    'developer',
-    'qa_engineer',
-    'devops_engineer',
-    'ui_ux_designer',
-  ].includes(role);
+export function getDashboardType(role: UserRole): 'admin' | 'employee' {
+  if (hasFullAccess(role)) return 'admin';
+  return 'employee';
 }
+
+/**
+ * Check if user is an employee-level role for analytics scoping
+ */
+export function isEmployeeRole(role: UserRole): boolean {
+  return getDashboardType(role) === 'employee';
+}
+
+
 
 /**
  * Get user-friendly role name
  */
 export function getRoleName(role: UserRole): string {
   const roleNames: Record<UserRole, string> = {
+    super_admin: 'Super Administrator',
     admin: 'Administrator',
+    ceo: 'CEO',
+    cto: 'CTO',
+    director: 'Director',
     hr_manager: 'HR Manager',
+    accountant: 'Accountant',
     cms_administrator: 'CMS Administrator',
     project_manager: 'Project Manager',
     business_development: 'Business Development',
     developer: 'Developer',
+    frontend_developer: 'Frontend Developer',
+    backend_developer: 'Backend Developer',
+    fullstack_developer: 'Fullstack Developer',
+    mobile_developer: 'Mobile Developer',
     qa_engineer: 'QA Engineer',
     devops_engineer: 'DevOps Engineer',
     ui_ux_designer: 'UI/UX Designer',

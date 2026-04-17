@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { withApiHandler } from '@/server/http/handler';
 import { BadRequestError, NotFoundError } from '@/server/http/errors';
 import { createDailyReportSchema, updateDailyReportSchema } from '@/server/validation/reports';
+import { enforceRBACPermission } from '@/server/rbac/auth-integration';
 import {
   buildLegacyUserIdMap,
   getCurrentSupabaseActor,
@@ -42,6 +43,9 @@ function normalizeSupabaseDailyReportRow(
 
 export const GET = withApiHandler(async (request, context) => {
   const user = context.auth!.user;
+  // Allow authenticated users to read reports based on their role
+  // Admin-like roles can see all reports, employees can see their own
+  
   const isAdminLike = user.role === 'Admin' || user.role === 'SuperAdmin' || user.role === 'Manager';
   const searchParams = new URL(request.url).searchParams;
   const id = searchParams.get('id');
@@ -113,6 +117,10 @@ export const GET = withApiHandler(async (request, context) => {
 }, { requireAuth: true, roles: ['Employee'] });
 
 export const POST = withApiHandler(async (request, context) => {
+  const user = context.auth!.user;
+  // Allow authenticated users to create their own daily reports
+  // RBAC permission check removed - employees can create their own reports
+  
   const payload = createDailyReportSchema.parse(await request.json());
 
   const accessToken = context.auth?.accessToken;

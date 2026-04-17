@@ -47,14 +47,6 @@ export function DashboardHeader({ user }: DashboardHeaderProps) {
         <Button variant="ghost" size="icon" className="lg:hidden">
           <Menu className="h-5 w-5" />
         </Button>
-        <div>
-          <h1 className="text-xl font-semibold">
-            Welcome back, {user.firstName}!
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Manage your projects and team efficiently
-          </p>
-        </div>
       </div>
 
       <div className="flex items-center gap-2">

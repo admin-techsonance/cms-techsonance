@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, Trash2, Loader2, Calendar, Clock, Edit, Eye, Users } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { StatsSkeleton, TableSkeleton } from '@/components/ui/dashboard-skeleton';
+import { StatsSkeleton, TableSkeleton, PageHeaderSkeleton, TabsSkeleton } from '@/components/ui/dashboard-skeleton';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -34,7 +34,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { dailyReportSubmissionSchema } from '@/lib/forms/schemas';
-import { hasFullAccess, type UserRole } from '@/lib/permissions';
+import { enforceRBACPermission, hasRBACPermission } from '@/server/rbac/auth-integration';
 
 interface Project {
   id: number;
@@ -95,7 +95,7 @@ export default function DailyUpdatePage() {
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [availableStatus, setAvailableStatus] = useState('present');
   const [projectReports, setProjectReports] = useState<ProjectReport[]>([{
-    id: '1',
+    id: 'temp_1',
     projectId: 0,
     description: '',
     trackerTime: 0,
@@ -169,7 +169,7 @@ export default function DailyUpdatePage() {
   }, [currentUser, date]);
 
   useEffect(() => {
-    if (currentUser && hasFullAccess(currentUser.role as UserRole)) {
+    if (currentUser && (currentUser.role === 'SuperAdmin' || currentUser.role === 'Admin' || currentUser.role === 'Manager')) {
       fetchAllDailyReports();
       fetchEmployees();
     }
@@ -186,7 +186,8 @@ export default function DailyUpdatePage() {
       });
 
       if (response.ok) {
-        const reports = await response.json();
+        const result = await response.json();
+        const reports = result.data || [];
         // The API returns an array, but should be only one for (user + date)
         const existing = reports.find((r: DailyReport) => r.date.startsWith(date));
         
@@ -198,7 +199,8 @@ export default function DailyUpdatePage() {
           });
           
           if (projectsResponse.ok) {
-            const prs = await projectsResponse.json();
+            const prsResult = await projectsResponse.json();
+            const prs = prsResult.data || [];
             if (prs.length > 0) {
               setProjectReports(prs.map((p: any) => ({
                 id: p.id.toString(), // Mark as already existing by using its ID
@@ -216,14 +218,17 @@ export default function DailyUpdatePage() {
       }
       
       // If no report or projects found, reset to a clean entry
-      setProjectReports([{
-        id: Date.now().toString(),
-        projectId: 0,
-        description: '',
-        trackerTime: 0,
-        isCoveredWork: false,
-        isExtraWork: false,
-      }]);
+      // Reset form if it was a new clean date
+      if (!viewingReportDetails) {
+        setProjectReports([{
+          id: 'temp_' + Date.now().toString(),
+          projectId: 0,
+          description: '',
+          trackerTime: 0,
+          isCoveredWork: false,
+          isExtraWork: false,
+        }]);
+      }
       setAvailableStatus('present');
     } catch {
       toast.error('Failed to load existing daily report');
@@ -250,15 +255,17 @@ export default function DailyUpdatePage() {
     try {
       const token = localStorage.getItem('session_token');
 
-      // Check if user has full access (admin, hr_manager, cms_administrator)
-      if (currentUser && hasFullAccess(currentUser.role as UserRole)) {
+      // Check if user has admin-level access using new RBAC system
+      const isAdmin = currentUser && (currentUser.role === 'SuperAdmin' || currentUser.role === 'Admin' || currentUser.role === 'Manager');
+      
+      if (isAdmin) {
         // Fetch all projects for admin roles
         const response = await fetch('/api/projects?limit=100', {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (response.ok) {
-          const data = await response.json();
-          setProjects(data);
+          const result = await response.json();
+          setProjects(result.data || []);
         }
       } else {
         // Fetch only assigned projects for other roles
@@ -267,7 +274,8 @@ export default function DailyUpdatePage() {
         });
 
         if (memberResponse.ok) {
-          const members = await memberResponse.json();
+          const membersResult = await memberResponse.json();
+          const members = membersResult.data || [];
           const userProjectIds = members
             .filter((m: any) => m.userId === currentUser?.id)
             .map((m: any) => m.projectId);
@@ -277,7 +285,8 @@ export default function DailyUpdatePage() {
           });
 
           if (projectsResponse.ok) {
-            const allProjects = await projectsResponse.json();
+            const allProjectsResult = await projectsResponse.json();
+            const allProjects = allProjectsResult.data || [];
             const filteredProjects = allProjects.filter((p: Project) =>
               userProjectIds.includes(p.id)
             );
@@ -296,15 +305,17 @@ export default function DailyUpdatePage() {
     try {
       const token = localStorage.getItem('session_token');
 
-      // Check if user has full access (admin, hr_manager, cms_administrator)
-      if (currentUser && hasFullAccess(currentUser.role as UserRole)) {
+      // Check if user has admin-level access using new RBAC system
+      const isAdmin = currentUser && (currentUser.role === 'SuperAdmin' || currentUser.role === 'Admin' || currentUser.role === 'Manager');
+      
+      if (isAdmin) {
         // Fetch all projects for admin roles (larger limit for filters)
         const response = await fetch('/api/projects?limit=1000', {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (response.ok) {
-          const data = await response.json();
-          setProjectsList(data);
+          const result = await response.json();
+          setProjectsList(result.data || []);
         }
       } else {
         // For other roles, fetch only assigned projects
@@ -323,7 +334,8 @@ export default function DailyUpdatePage() {
           });
 
           if (projectsResponse.ok) {
-            const allProjects = await projectsResponse.json();
+            const result = await projectsResponse.json();
+            const allProjects = result.data || [];
             const filteredProjects = allProjects.filter((p: Project) =>
               userProjectIds.includes(p.id)
             );
@@ -341,15 +353,17 @@ export default function DailyUpdatePage() {
     try {
       const token = localStorage.getItem('session_token');
 
-      // Check if user has full access (admin, hr_manager, cms_administrator)
-      if (currentUser && hasFullAccess(currentUser.role as UserRole)) {
+      // Check if user has admin-level access using new RBAC system
+      const isAdmin = currentUser && (currentUser.role === 'SuperAdmin' || currentUser.role === 'Admin' || currentUser.role === 'Manager');
+      
+      if (isAdmin) {
         // Fetch all projects for admin roles
         const response = await fetch(`/api/projects?limit=${pageSize}&offset=${projectsPage * pageSize}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (response.ok) {
-          const data = await response.json();
-          setTabProjects(data);
+          const result = await response.json();
+          setTabProjects(result.data || []);
         }
       } else {
         // For other roles, fetch only assigned projects
@@ -358,7 +372,8 @@ export default function DailyUpdatePage() {
         });
 
         if (memberResponse.ok) {
-          const members = await memberResponse.json();
+          const result = await memberResponse.json();
+          const members = result.data || [];
           const userProjectIds = members
             .filter((m: any) => m.userId === currentUser?.id)
             .map((m: any) => m.projectId);
@@ -368,7 +383,8 @@ export default function DailyUpdatePage() {
           });
 
           if (projectsResponse.ok) {
-            const allProjects = await projectsResponse.json();
+            const result = await projectsResponse.json();
+            const allProjects = result.data || [];
             const filteredProjects = allProjects.filter((p: Project) =>
               userProjectIds.includes(p.id)
             );
@@ -390,7 +406,8 @@ export default function DailyUpdatePage() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
-        const employeesData = await response.json();
+        const empResult = await response.json();
+        const employeesData = empResult.data || [];
 
         // Fetch user details for all employees
         const usersResponse = await fetch('/api/users?limit=100', {
@@ -398,7 +415,8 @@ export default function DailyUpdatePage() {
         });
 
         if (usersResponse.ok) {
-          const usersData = await usersResponse.json();
+          const usersResult = await usersResponse.json();
+          const usersData = usersResult.data || [];
 
           // Merge employee and user data
           const enrichedEmployees = employeesData.map((emp: any) => {
@@ -436,8 +454,8 @@ export default function DailyUpdatePage() {
       });
 
       if (response.ok) {
-        const data = await response.json();
-        setAllDailyReports(data);
+        const result = await response.json();
+        setAllDailyReports(result.data || []);
       }
     } catch {
       toast.error('Failed to load daily reports');
@@ -454,8 +472,8 @@ export default function DailyUpdatePage() {
       });
 
       if (response.ok) {
-        const data = await response.json();
-        setReportProjects(data);
+        const result = await response.json();
+        setReportProjects(result.data || []);
       }
     } catch {
       toast.error('Failed to load report details');
@@ -493,7 +511,7 @@ export default function DailyUpdatePage() {
 
   const addProjectReport = () => {
     setProjectReports([...projectReports, {
-      id: Date.now().toString(),
+      id: 'temp_' + Date.now().toString(),
       projectId: 0,
       description: '',
       trackerTime: 0,
@@ -548,46 +566,49 @@ export default function DailyUpdatePage() {
 
       const dailyReport = await reportResponse.json();
 
-      // Create project reports
+      // Create or Update project reports
       for (const pr of projectReports) {
-        // Skip projects that are already submitted (fetched from DB)
-        if ((pr as any).isSubmitted) continue;
-
-        await fetch('/api/daily-report-projects', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            dailyReportId: dailyReport.id,
-            projectId: pr.projectId,
-            description: pr.description,
-            trackerTime: pr.trackerTime,
-            isCoveredWork: pr.isCoveredWork,
-            isExtraWork: pr.isExtraWork,
-          }),
-        });
+        // If it does NOT have a temp_ prefix, it's an existing DB record, use PUT
+        if (!pr.id.toString().startsWith('temp_')) {
+           await fetch(`/api/daily-report-projects?id=${pr.id}`, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              projectId: pr.projectId,
+              description: pr.description,
+              trackerTime: pr.trackerTime,
+              isCoveredWork: pr.isCoveredWork,
+              isExtraWork: pr.isExtraWork,
+            }),
+          });
+        } else {
+          await fetch('/api/daily-report-projects', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              dailyReportId: dailyReport.id,
+              projectId: pr.projectId,
+              description: pr.description,
+              trackerTime: pr.trackerTime,
+              isCoveredWork: pr.isCoveredWork,
+              isExtraWork: pr.isExtraWork,
+            }),
+          });
+        }
       }
 
       toast.success('Daily report details saved successfully!');
       fetchExistingReport(); // Refresh the form with saved data
 
-      toast.success('Daily report submitted successfully!');
-
-      // Reset form
-      setProjectReports([{
-        id: '1',
-        projectId: 0,
-        description: '',
-        trackerTime: 0,
-        isCoveredWork: false,
-        isExtraWork: false,
-      }]);
-      setDate(new Date().toISOString().split('T')[0]);
       setAvailableStatus('present');
 
-      if (currentUser && hasFullAccess(currentUser.role as UserRole)) {
+      if (currentUser && (currentUser.role === 'SuperAdmin' || currentUser.role === 'Admin' || currentUser.role === 'Manager')) {
         fetchAllDailyReports();
       }
       fetchMyHistory(); // Refresh history for everyone
@@ -621,10 +642,11 @@ export default function DailyUpdatePage() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
-        const data = await response.json();
-        setExtraWorkReports(data);
+        const result = await response.json();
+        const dataArr = result.data || [];
+        setExtraWorkReports(dataArr);
         // Simple heuristic for total: if we got less than pageSize, we're on last page
-        setExtraWorkTotal(extraWorkPage * pageSize + data.length + (data.length === pageSize ? 1 : 0));
+        setExtraWorkTotal(extraWorkPage * pageSize + dataArr.length + (dataArr.length === pageSize ? 1 : 0));
       }
     } catch {
       toast.error('Failed to load extra work reports');
@@ -656,9 +678,10 @@ export default function DailyUpdatePage() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
-        const data = await response.json();
-        setCoveredWorkReports(data);
-        setCoveredWorkTotal(coveredWorkPage * pageSize + data.length + (data.length === pageSize ? 1 : 0));
+        const result = await response.json();
+        const dataArr = result.data || [];
+        setCoveredWorkReports(dataArr);
+        setCoveredWorkTotal(coveredWorkPage * pageSize + dataArr.length + (dataArr.length === pageSize ? 1 : 0));
       }
     } catch {
       toast.error('Failed to load covered work reports');
@@ -703,12 +726,13 @@ export default function DailyUpdatePage() {
       });
 
       if (response.ok) {
-        let data = await response.json();
-        if (hasFullAccess(currentUser.role as UserRole)) {
-          data = data.filter((r: DailyReport) => r.userId === currentUser.id);
+        const result = await response.json();
+        let reports = result.data || [];
+        if (currentUser && (currentUser.role === 'SuperAdmin' || currentUser.role === 'Admin' || currentUser.role === 'Manager')) {
+          reports = reports.filter((r: DailyReport) => r.userId === currentUser.id);
         }
-        setMyHistoryReports(data);
-        setHistoryTotal(historyPage * pageSize + data.length + (data.length === pageSize ? 1 : 0));
+        setMyHistoryReports(reports);
+        setHistoryTotal(historyPage * pageSize + reports.length + (reports.length === pageSize ? 1 : 0));
       }
     } catch {
       toast.error('Failed to load history');
@@ -748,13 +772,22 @@ export default function DailyUpdatePage() {
     return 'Unknown Employee';
   };
 
-  const isAdmin = currentUser && hasFullAccess(currentUser.role as UserRole);
+  const isAdmin = currentUser && (currentUser.role === 'SuperAdmin' || currentUser.role === 'Admin' || currentUser.role === 'Manager');
 
   useEffect(() => {
     if (currentUser) {
       fetchTabProjects();
     }
   }, [currentUser, projectsPage]);
+
+  if (!currentUser || loading) {
+    return (
+      <div className="space-y-6">
+        <PageHeaderSkeleton />
+        <TabsSkeleton count={isAdmin ? 6 : 5} />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -774,6 +807,7 @@ export default function DailyUpdatePage() {
           {isAdmin && <TabsTrigger value="all-reports"><Users className="mr-2 h-4 w-4" />All Reports</TabsTrigger>}
           <TabsTrigger value="daily-report">Daily Report</TabsTrigger>
           <TabsTrigger value="my-history">My History</TabsTrigger>
+
           <TabsTrigger value="extra-work">Extra Work</TabsTrigger>
           <TabsTrigger value="covered-work">Covered Work</TabsTrigger>
           <TabsTrigger value="projects">Projects</TabsTrigger>
@@ -1057,18 +1091,41 @@ export default function DailyUpdatePage() {
                           </div>
 
                           <div className="space-y-2">
-                            <Label>Tracker Time (minutes) *</Label>
-                            <div className="relative">
-                              <Clock className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                              <Input
-                                type="number"
-                                min="0"
-                                value={pr.trackerTime || ''}
-                                onChange={(e) => updateProjectReport(pr.id, 'trackerTime', parseInt(e.target.value) || 0)}
-                                className="pl-8"
-                                placeholder="e.g., 480 (8 hours)"
-                                required
-                              />
+                            <Label>Tracker Time *</Label>
+                            <div className="flex gap-2 items-center">
+                              <div className="relative flex-1">
+                                <Clock className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  value={Math.floor(pr.trackerTime / 60) || ''}
+                                  onChange={(e) => {
+                                    const h = parseInt(e.target.value) || 0;
+                                    const m = pr.trackerTime % 60;
+                                    updateProjectReport(pr.id, 'trackerTime', h * 60 + m);
+                                  }}
+                                  className="pl-8"
+                                  placeholder="Hours"
+                                />
+                                <span className="absolute right-2 top-2 text-xs text-muted-foreground">h</span>
+                              </div>
+                              <div className="relative flex-1">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  max="59"
+                                  value={pr.trackerTime % 60 || ''}
+                                  onChange={(e) => {
+                                    const h = Math.floor(pr.trackerTime / 60);
+                                    let m = parseInt(e.target.value) || 0;
+                                    if (m > 59) m = 59;
+                                    updateProjectReport(pr.id, 'trackerTime', h * 60 + m);
+                                  }}
+                                  className="pr-6"
+                                  placeholder="Mins"
+                                />
+                                <span className="absolute right-2 top-2 text-xs text-muted-foreground">m</span>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1090,7 +1147,6 @@ export default function DailyUpdatePage() {
                               id={`covered-${pr.id}`}
                               checked={pr.isCoveredWork}
                               onCheckedChange={(checked) => updateProjectReport(pr.id, 'isCoveredWork', checked)}
-                              disabled={(pr as any).isSubmitted}
                             />
                             <Label htmlFor={`covered-${pr.id}`} className="font-normal">
                               Is Covered Work?
@@ -1102,18 +1158,11 @@ export default function DailyUpdatePage() {
                               id={`extra-${pr.id}`}
                               checked={pr.isExtraWork}
                               onCheckedChange={(checked) => updateProjectReport(pr.id, 'isExtraWork', checked)}
-                              disabled={(pr as any).isSubmitted}
                             />
                             <Label htmlFor={`extra-${pr.id}`} className="font-normal">
                               Is Extra Work?
                             </Label>
                           </div>
-
-                          {(pr as any).isSubmitted && (
-                            <Badge variant="secondary" className="ml-auto bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
-                              Already Submitted
-                            </Badge>
-                          )}
                         </div>
                       </div>
                     </Card>
@@ -1263,7 +1312,7 @@ export default function DailyUpdatePage() {
                             {getProjectName(report.projectId)}
                           </TableCell>
                           <TableCell>{report.description}</TableCell>
-                          <TableCell>{(report.trackerTime / 60).toFixed(1)}</TableCell>
+                          <TableCell>{Math.floor(report.trackerTime / 60)}h {report.trackerTime % 60}m</TableCell>
                           <TableCell>{new Date(report.createdAt).toLocaleDateString()}</TableCell>
                         </TableRow>
                       ))
@@ -1424,7 +1473,7 @@ export default function DailyUpdatePage() {
                             {getProjectName(report.projectId)}
                           </TableCell>
                           <TableCell>{report.description}</TableCell>
-                          <TableCell>{(report.trackerTime / 60).toFixed(1)}</TableCell>
+                          <TableCell>{Math.floor(report.trackerTime / 60)}h {report.trackerTime % 60}m</TableCell>
                           <TableCell>{new Date(report.createdAt).toLocaleDateString()}</TableCell>
                         </TableRow>
                       ))
@@ -1727,7 +1776,7 @@ export default function DailyUpdatePage() {
                         <p className="text-sm text-muted-foreground mb-2">{rp.description}</p>
                         <div className="flex items-center gap-2 text-sm">
                           <Clock className="h-3 w-3" />
-                          <span>{(rp.trackerTime / 60).toFixed(1)} hours</span>
+                          <span>{Math.floor(rp.trackerTime / 60)}h {rp.trackerTime % 60}m</span>
                         </div>
                       </Card>
                     ))}

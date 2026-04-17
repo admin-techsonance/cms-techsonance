@@ -147,6 +147,14 @@ export function AppRuntimeProvider({ children }: Props) {
         nextHeaders.set('Authorization', `Bearer ${token}`);
       }
 
+      // WARNING: When uploading files (FormData), `new Request()` binds a random boundary to the Content-Type.
+      // If we blindly pass this frozen boundary via `nextHeaders` to `originalFetch`, it will mismatch the newly
+      // generated boundary for the actual payload, causing 500 "no boundary found" errors.
+      if (init?.body instanceof FormData || request.body instanceof FormData) {
+        nextHeaders.delete('content-type');
+        nextHeaders.delete('Content-Type');
+      }
+
       const doFetch = () => originalFetch(input, {
         ...init,
         headers: nextHeaders,
